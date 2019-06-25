@@ -1,0 +1,55 @@
+program = import* decl* call_expr?
+import = 'import' qualified_ident* 'from' STRING
+qualified_ident = IDENT ('.' IDENT)*
+decl = 'public'? (namespace | type | binding)
+namespace = 'namespace' qualified_ident decl_block
+decl_block = '{' decl* '}'
+type = 'type' qualified_ident '=' type_cases decl_block?
+type_cases = IDENT+ ('|' IDENT+)*
+binding = 'let' pattern '=' block
+
+pattern = const_literal |
+	wildcard_pattern |
+	name_pattern |
+	list_pattern |
+	type_pattern |
+wildcard_pattern = '_'
+name_pattern = IDENT
+list_pattern = '[' pattern+ ']'
+type_pattern = '(' qualified_ident pattern+ ')'
+
+block = binding* expr
+expr = call_expr | qualified_ident | lambda | list_expr | const_literal
+call_expr = '(' ('.' | expr) expr* ')'
+lambda = '{' pattern* '->' block '}'
+list_expr = '[' block+ ']'
+const_literal = NUMBER | STRING | '()' | '[]'
+
+IDENT = [^\(\)\[\]\.]+
+NUMBER = \d+(\.\d*)?
+STRING = \'[^\n\r]*?\'|\"[^\n\r]*?\"
+
+COMMENT = #.*?(?=\n|$)
+
+KEYWORDS:
+	import
+	from
+	public
+	namespace
+	type
+	let
+	method
+	impl
+
+SYMBOLS:
+	.
+	{
+	}
+	()
+	(
+	)
+	[]
+	[
+	]
+	=
+	->
