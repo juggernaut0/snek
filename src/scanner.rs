@@ -1,5 +1,5 @@
 use std::iter::Peekable;
-use std::str::Chars;
+use std::str::CharIndices;
 
 use crate::scanner::TokenName::*;
 use crate::parse::ParseError;
@@ -7,19 +7,25 @@ use crate::parse::ParseError;
 type ScanResult = Result<Token, ParseError>;
 
 pub struct Scanner<'a> {
-    chars: Peekable<Chars<'a>>,
+    src: &'a str,
+    chars: Peekable<CharIndices<'a>>,
     current_line: u32,
     start_col: u32,
-    current_col: u32
+    current_col: u32,
+    start_index: usize,
+    current_index: usize
 }
 
 impl<'a> Scanner<'a> {
     pub fn new(src: &str) -> Scanner {
         Scanner {
-            chars: src.chars().peekable(),
+            src,
+            chars: src.char_indices().peekable(),
             current_line: 1,
             start_col: 1,
-            current_col: 1
+            current_col: 1,
+            start_index: 0,
+            current_index: 0
         }
     }
 
@@ -38,23 +44,11 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    fn match_token(&mut self) -> ScanResult {
-        self.start_col = self.current_col;
-        match self.peek() {
-            Some(c) => {
-                match c {
-                    '#' => self.match_comment(),
-                    c if c.is_ascii_digit() => self.match_number(),
-                    c if is_whitespace(c) => self.match_whitespace(),
-                    c if c == '\n' => self.match_newline(),
-                    _ => unimplemented!("Default")
-                }
-            },
-            None => self.token(EOF, String::new())
-        }
-    }
 
-    fn token(&self, name: TokenName, value: String) -> ScanResult {
+    // ===== Result constructors =====
+
+    fn token(&self, name: TokenName) -> ScanResult {
+        let value = (&self.src[self.start_index..self.current_index]).to_string();
         Ok(Token { name, value, line: self.current_line, col: self.start_col })
     }
 
@@ -66,16 +60,19 @@ impl<'a> Scanner<'a> {
     // ===== Matching utility functions =====
 
     fn peek(&mut self) -> Option<char> {
-        self.chars.peek().copied()
+        self.chars.peek().map(|(_, c)| *c)
     }
 
     // called when EOF is acceptable
     fn advance(&mut self) -> Option<char> {
-        let c = self.chars.next();
-        if c.is_some() {
-            self.current_col += 1
+        let ic = self.chars.next();
+        if let Some((i, c)) = ic {
+            self.current_col += 1;
+            // i is the index of the char we just advanced past, so we need to add c.len
+            // to get the index of the current
+            self.current_index = i + c.len_utf8()
         }
-        c
+        ic.map(|(_, c)| c)
     }
 
     // called when EOF is *not* expected (i.e. in the middle of an incomplete token)
@@ -100,34 +97,10 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    fn consume_into(&mut self, value: &mut String) -> Result<(), ParseError> {
+    fn require(&mut self, f: impl Fn(char) -> bool, message: String) -> Result<(), ParseError> {
         let c = self.consume()?;
-        value.push(c);
-        Ok(())
-    }
-
-    fn consume_into_if(&mut self, value: &mut String, f: impl FnOnce(char) -> bool) -> bool {
-        if let Some(c) = self.peek().filter(|it| f(*it)) {
-            value.push(c);
-            self.advance();
-            return true
-        } else {
-            return false
-        }
-    }
-
-    fn consume_into_while(&mut self, value: &mut String, f: impl Fn(char) -> bool) {
-        loop {
-            if !self.consume_into_if(value, |it| f(it)) {
-                break
-            }
-        }
-    }
-
-    fn consume_if_match(&mut self, expect: char) -> Result<(), ParseError> {
-        let c = self.consume()?;
-        if expect != c {
-            Err(self.error(format!("Expected {}, got {}", expect, c)))
+        if !f(c) {
+            Err(self.error(message))
         } else {
             Ok(())
         }
@@ -136,31 +109,60 @@ impl<'a> Scanner<'a> {
 
     // ===== Scanning functions =====
 
+    fn match_token(&mut self) -> ScanResult {
+        self.start_col = self.current_col;
+        self.start_index = self.current_index;
+        match self.peek() {
+            Some(c) => {
+                match c {
+                    '#' => self.match_comment(),
+                    c if c.is_ascii_digit() => self.match_number(),
+                    c if c == '\'' || c == '"' => self.match_string(),
+                    c if starts_symbol(c) => self.match_symbol(),
+                    c if is_whitespace(c) => self.match_whitespace(),
+                    c if c == '\n' => self.match_newline(),
+                    _ => unimplemented!("Default")
+                }
+            },
+            None => self.token(EOF)
+        }
+    }
+
     fn match_comment(&mut self) -> ScanResult {
-        self.consume_if_match('#')?;
+        self.consume()?;
         self.consume_while(|c| c != '\n');
-        self.token(IGNORE, String::new())
+        self.token(IGNORE)
     }
 
     fn match_number(&mut self) -> ScanResult {
-        let mut value = String::new();
-        self.consume_into(&mut value)?;
-        self.consume_into_while(&mut value, |it| it.is_ascii_digit());
-        if self.consume_into_if(&mut value, |it| it == '.') {
-            self.consume_into_while(&mut value, |it| it.is_ascii_digit());
+        self.consume()?;
+        self.consume_while(|it| it.is_ascii_digit());
+        if self.consume_if(|it| it == '.') {
+            self.consume_while(|it| it.is_ascii_digit());
         }
-        self.token(NUMBER, value)
+        self.token(NUMBER)
+    }
+
+    fn match_string(&mut self) -> ScanResult {
+        let start = self.consume()?;
+        self.consume_while(|c| c != '\n' && c != start);
+        self.require(|c| c == start, format!("Expected {}", start))?;
+        self.token(STRING)
+    }
+
+    fn match_symbol(&mut self) -> ScanResult {
+        unimplemented!()
     }
 
     fn match_whitespace(&mut self) -> ScanResult {
         self.consume()?;
         self.consume_while(is_whitespace);
-        self.token(IGNORE, String::new())
+        self.token(IGNORE)
     }
 
     fn match_newline(&mut self) -> ScanResult {
         self.consume()?;
-        self.token(NEWLINE, String::new())
+        self.token(NEWLINE)
     }
 }
 
@@ -192,4 +194,19 @@ impl Token {
 
 fn is_whitespace(c: char) -> bool {
     c == ' ' || c == '\t' || c == '\r'
+}
+
+fn starts_symbol(c: char) -> bool {
+    c == '.'
+        || c == '{'
+        || c == '}'
+        || c == '('
+        || c == ')'
+        || c == '['
+        || c == ']'
+        || c == '='
+        || c == '-'
+        || c == '+'
+        || c == '*'
+        || c == '/'
 }
