@@ -3,9 +3,18 @@ mod parse;
 
 fn main() {
     let src = "\
-# comment 1
-123.45   87 'hello'
-1. \"str\"
-# comment2 5.6 \"";
+let a = \"global\"
+let _ = (println a)
+let main = { ->
+  let f = { -> (println a) }
+  let _ = (f) # this should error with \"a used before definition\" instead of printing \"global\"
+  let a = \"local\"
+  let _ = (f)
+  f
+}
+let _ = ((main))
+let x = 5
+let b = true && false
+";
     parse::parse(src);
 }

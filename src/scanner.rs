@@ -4,7 +4,7 @@ use std::str::CharIndices;
 use crate::scanner::TokenName::*;
 use crate::parse::ParseError;
 
-type ScanResult = Result<Token, ParseError>;
+type ScanResult<'a> = Result<Token<'a>, ParseError>;
 
 pub struct Scanner<'a> {
     src: &'a str,
@@ -29,7 +29,7 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    pub fn get_token(&mut self) -> ScanResult {
+    pub fn get_token(&mut self) -> ScanResult<'a> {
         loop {
             let t = self.match_token()?;
             if t.name == IGNORE {
@@ -47,8 +47,12 @@ impl<'a> Scanner<'a> {
 
     // ===== Result constructors =====
 
-    fn token(&self, name: TokenName) -> ScanResult {
-        let value = (&self.src[self.start_index..self.current_index]).to_string();
+    fn value(&self) -> &'a str {
+        &self.src[self.start_index..self.current_index]
+    }
+
+    fn token(&self, name: TokenName) -> ScanResult<'a> {
+        let value = self.value();
         Ok(Token { name, value, line: self.current_line, col: self.start_col })
     }
 
@@ -97,19 +101,19 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    fn require(&mut self, f: impl Fn(char) -> bool, message: String) -> Result<(), ParseError> {
+    fn require(&mut self, f: impl Fn(char) -> bool, message: &str) -> Result<char, ParseError> {
         let c = self.consume()?;
         if !f(c) {
-            Err(self.error(message))
+            Err(self.error(message.to_string()))
         } else {
-            Ok(())
+            Ok(c)
         }
     }
 
 
     // ===== Scanning functions =====
 
-    fn match_token(&mut self) -> ScanResult {
+    fn match_token(&mut self) -> ScanResult<'a> {
         self.start_col = self.current_col;
         self.start_index = self.current_index;
         match self.peek() {
@@ -121,20 +125,20 @@ impl<'a> Scanner<'a> {
                     c if starts_symbol(c) => self.match_symbol(),
                     c if is_whitespace(c) => self.match_whitespace(),
                     c if c == '\n' => self.match_newline(),
-                    _ => unimplemented!("Default")
+                    _ => self.match_ident()
                 }
             },
             None => self.token(EOF)
         }
     }
 
-    fn match_comment(&mut self) -> ScanResult {
+    fn match_comment(&mut self) -> ScanResult<'a> {
         self.consume()?;
         self.consume_while(|c| c != '\n');
         self.token(IGNORE)
     }
 
-    fn match_number(&mut self) -> ScanResult {
+    fn match_number(&mut self) -> ScanResult<'a> {
         self.consume()?;
         self.consume_while(|it| it.is_ascii_digit());
         if self.consume_if(|it| it == '.') {
@@ -143,26 +147,62 @@ impl<'a> Scanner<'a> {
         self.token(NUMBER)
     }
 
-    fn match_string(&mut self) -> ScanResult {
+    fn match_string(&mut self) -> ScanResult<'a> {
         let start = self.consume()?;
         self.consume_while(|c| c != '\n' && c != start);
-        self.require(|c| c == start, format!("Expected {}", start))?;
+        self.require(|c| c == start, &format!("Expected {}", start))?;
         self.token(STRING)
     }
 
-    fn match_symbol(&mut self) -> ScanResult {
-        unimplemented!()
+    fn match_symbol(&mut self) -> ScanResult<'a> {
+        match self.consume()? {
+            '-' => { self.consume_if(|c| c == '>'); }
+            '<' => { self.consume_if(|c| c == '='); }
+            '>' => { self.consume_if(|c| c == '='); }
+            '=' => { self.consume_if(|c| c == '='); }
+            '!' => { self.consume_if(|c| c == '>'); }
+            '&' => { self.require(|c| c == '&', "Expected &"); }
+            '|' => { self.require(|c| c == '|', "Expected |"); }
+            _ => {}
+        }
+        self.token(SYMBOL)
     }
 
-    fn match_whitespace(&mut self) -> ScanResult {
+    fn match_whitespace(&mut self) -> ScanResult<'a> {
         self.consume()?;
         self.consume_while(is_whitespace);
         self.token(IGNORE)
     }
 
-    fn match_newline(&mut self) -> ScanResult {
+    fn match_newline(&mut self) -> ScanResult<'a> {
         self.consume()?;
         self.token(NEWLINE)
+    }
+
+    fn match_ident(&mut self) -> ScanResult<'a> {
+        self.consume()?;
+        self.consume_while(|c| {
+            c != '#'
+                && !c.is_ascii_digit()
+                && c != '\''
+                && c != '"'
+                && !starts_symbol(c)
+                && !c.is_ascii_whitespace()
+        });
+        let value = self.value();
+        match value {
+            "import"
+            | "from"
+            | "public"
+            | "namespace"
+            | "type"
+            | "let"
+            | "method"
+            | "impl"
+            | "true"
+            | "false" => self.token(KEYWORD),
+            _ => self.token(IDENT)
+        }
     }
 }
 
@@ -179,14 +219,14 @@ pub enum TokenName {
 }
 
 #[derive(Debug)]
-pub struct Token {
+pub struct Token<'a> {
     name: TokenName,
-    value: String,
+    value: &'a str,
     line: u32,
     col: u32
 }
 
-impl Token {
+impl<'a> Token<'a> {
     pub fn name(&self) -> TokenName {
         self.name
     }
@@ -209,4 +249,9 @@ fn starts_symbol(c: char) -> bool {
         || c == '+'
         || c == '*'
         || c == '/'
+        || c == '<'
+        || c == '>'
+        || c == '!'
+        || c == '&'
+        || c == '|'
 }

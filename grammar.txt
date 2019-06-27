@@ -6,7 +6,7 @@ namespace = 'namespace' qualified_ident decl_block
 decl_block = '{' decl* '}'
 type = 'type' qualified_ident '=' type_cases decl_block?
 type_cases = IDENT+ ('|' IDENT+)*
-binding = 'let' pattern '=' block
+binding = 'let' pattern '=' expr
 
 pattern = const_literal |
 	wildcard_pattern |
@@ -15,15 +15,19 @@ pattern = const_literal |
 	type_pattern |
 wildcard_pattern = '_'
 name_pattern = IDENT
-list_pattern = '[' pattern+ ']'
-type_pattern = '(' qualified_ident pattern+ ')'
+list_pattern = '[' pattern* ']'
+type_pattern = '(' qualified_ident pattern* ')'
 
-block = binding* expr
-expr = call_expr | qualified_ident | lambda | list_expr | const_literal
+block = (binding | call_expr | binary_expr)* expr
+expr = call_expr | binary_expr | qualified_ident | lambda | list_expr | const_literal
 call_expr = '(' ('.' | expr) expr* ')'
+binary_expr = '(' unary_expr (binary_op unary_expr)* ')'
+binary_op = '+' | '-' | '*' | '/' | '<=' | '<' | '>=' | '>' | '==' | '!=' | '&&' | '||'
+unary_expr = unary_op? expr
+unary_op = '+' | '-' | '!'
 lambda = '{' pattern* '->' block '}'
-list_expr = '[' block+ ']'
-const_literal = NUMBER | STRING | '()' | '[]'
+list_expr = '[' expr* ']'
+const_literal = NUMBER | STRING | 'true' | 'false' | '(' ')'
 
 IDENT = [^\(\)\[\]\.]+
 NUMBER = \d+(\.\d*)?
@@ -40,6 +44,8 @@ KEYWORDS:
 	let
 	method
 	impl
+	true
+	false
 
 SYMBOLS:
 	.
@@ -49,9 +55,18 @@ SYMBOLS:
 	)
 	[
 	]
-	=
 	->
 	+
 	-
 	*
 	/
+	<=
+	<
+	>=
+	>
+	==
+	=
+	!=
+	!
+	&&
+	||
