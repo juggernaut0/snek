@@ -1,8 +1,10 @@
 mod scanner;
-mod parse;
+mod parser;
 
 fn main() {
     let src = "\
+import from 'foo'
+
 let a = \"global\"
 let _ = (println a)
 let main = { ->
@@ -16,5 +18,10 @@ let _ = ((main))
 let x = 5
 let b = true && false
 ";
-    parse::parse(src);
+    match parser::parse(src) {
+        Ok(_) => {} // TODO execution
+        Err(errs) => {
+            errs.iter().for_each(|e| eprintln!("[{}:{}] [ERROR] {}", e.line(), e.col(), e.message()))
+        }
+    }
 }

@@ -1,10 +1,10 @@
 program = import* decl* call_expr?
-import = 'import' qualified_ident* 'from' STRING
-qualified_ident = IDENT ('.' IDENT)*
+import = 'import' qualified_name* 'from' STRING
+qualified_name = IDENT ('.' IDENT)*
 decl = 'public'? (namespace | type | binding)
-namespace = 'namespace' qualified_ident decl_block
+namespace = 'namespace' qualified_name decl_block
 decl_block = '{' decl* '}'
-type = 'type' qualified_ident '=' type_cases decl_block?
+type = 'type' qualified_name '=' type_cases decl_block?
 type_cases = IDENT+ ('|' IDENT+)*
 binding = 'let' pattern '=' expr
 
@@ -16,10 +16,10 @@ pattern = const_literal |
 wildcard_pattern = '_'
 name_pattern = IDENT
 list_pattern = '[' pattern* ']'
-type_pattern = '(' qualified_ident pattern* ')'
+type_pattern = '(' qualified_name pattern* ')'
 
 block = (binding | call_expr | binary_expr)* expr
-expr = call_expr | binary_expr | qualified_ident | lambda | list_expr | const_literal
+expr = call_expr | binary_expr | qualified_name | lambda | list_expr | const_literal
 call_expr = '(' ('.' | expr) expr* ')'
 binary_expr = '(' unary_expr (binary_op unary_expr)* ')'
 binary_op = '+' | '-' | '*' | '/' | '<=' | '<' | '>=' | '>' | '==' | '!=' | '&&' | '||'

@@ -2,7 +2,7 @@ use std::iter::Peekable;
 use std::str::CharIndices;
 
 use crate::scanner::TokenName::*;
-use crate::parse::ParseError;
+use crate::parser::ParseError;
 
 type ScanResult<'a> = Result<Token<'a>, ParseError>;
 
@@ -161,8 +161,8 @@ impl<'a> Scanner<'a> {
             '>' => { self.consume_if(|c| c == '='); }
             '=' => { self.consume_if(|c| c == '='); }
             '!' => { self.consume_if(|c| c == '>'); }
-            '&' => { self.require(|c| c == '&', "Expected &"); }
-            '|' => { self.require(|c| c == '|', "Expected |"); }
+            '&' => { self.require(|c| c == '&', "Expected &")?; }
+            '|' => { self.require(|c| c == '|', "Expected |")?; }
             _ => {}
         }
         self.token(SYMBOL)
@@ -229,6 +229,30 @@ pub struct Token<'a> {
 impl<'a> Token<'a> {
     pub fn name(&self) -> TokenName {
         self.name
+    }
+
+    pub fn value(&self) -> &'a str {
+        self.value
+    }
+
+    pub fn line(&self) -> u32 {
+        self.line
+    }
+
+    pub fn col(&self) -> u32 {
+        self.col
+    }
+
+    pub fn matches(&self, name: TokenName) -> Option<&'a str> {
+        if self.name == name {
+            Some(self.value)
+        } else {
+            None
+        }
+    }
+
+    pub fn matches_value(&self, name: TokenName, value: &str) -> bool {
+        self.name == name && self.value == value
     }
 }
 
