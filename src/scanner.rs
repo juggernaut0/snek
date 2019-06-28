@@ -160,9 +160,9 @@ impl<'a> Scanner<'a> {
             '<' => { self.consume_if(|c| c == '='); }
             '>' => { self.consume_if(|c| c == '='); }
             '=' => { self.consume_if(|c| c == '='); }
-            '!' => { self.consume_if(|c| c == '>'); }
+            '!' => { self.consume_if(|c| c == '='); }
             '&' => { self.require(|c| c == '&', "Expected &")?; }
-            '|' => { self.require(|c| c == '|', "Expected |")?; }
+            '|' => { self.consume_if(|c| c == '|'); }
             _ => {}
         }
         self.token(SYMBOL)

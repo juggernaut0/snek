@@ -99,14 +99,14 @@ impl<'a> Parser<'a> {
         let decls = self.decls();
         let root_namespace = Namespace { name: QName { parts: Vec::new() }, public: true, decls };
         // TODO call
-        let current = self.current.matches(EOF);
-        if self.errors.is_empty() && current.is_some() {
+        let at_end = self.current.matches(EOF).is_some();
+        if self.errors.is_empty() && at_end {
             Ok(Ast {
                 imports,
                 root_namespace
             })
         } else {
-            if current.is_none() {
+            if !at_end {
                 self.error_at_current("EOF")
             }
             Err(self.errors)

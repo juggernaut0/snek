@@ -4,7 +4,7 @@ qualified_name = IDENT ('.' IDENT)*
 decl = 'public'? (namespace | type | binding)
 namespace = 'namespace' qualified_name decl_block
 decl_block = '{' decl* '}'
-type = 'type' qualified_name '=' type_cases decl_block?
+type = 'type' IDENT (IDENT* | '=' type_cases) decl_block?
 type_cases = IDENT+ ('|' IDENT+)*
 binding = 'let' pattern '=' expr
 
@@ -69,4 +69,5 @@ SYMBOLS:
 	!=
 	!
 	&&
+	|
 	||
