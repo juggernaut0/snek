@@ -4,6 +4,7 @@ mod parser;
 fn main() {
     let src = "\
 import from 'foo'
+import hello.dog from 'bar'
 
 let a = \"global\"
 let _ = (println a)

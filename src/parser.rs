@@ -1,14 +1,21 @@
-use crate::scanner::{Scanner, Token, TokenName::*};
+use crate::scanner::{Scanner, Token, TokenName::*, TokenName};
 
 const MAX_ERRORS: usize = 500;
 
 pub fn parse(src: &str) -> Result<Ast, Vec<ParseError>> {
     let mut scanner = Scanner::new(src);
     loop {
-        let t = scanner.get_token().unwrap();
-        println!("{:?}", t);
-        if t.name() == EOF {
-            break;
+        let rt = scanner.get_token();
+        match rt {
+            Ok(t) => {
+                println!("{:?}", t);
+                if t.name() == EOF {
+                    break;
+                }
+            }
+            Err(e) => {
+                eprintln!("{:?}", e);
+            }
         }
     }
     Parser::new(Scanner::new(src)).parse()
@@ -41,13 +48,25 @@ impl ParseError {
 
 pub struct Ast {
     imports: Vec<Import>,
-    //rootNamespace: NameSpace,
+    root_namespace: Namespace,
     //expr: CallExpr
 }
 
 pub struct Import {
     filename: String,
     names: Vec<QName>
+}
+
+pub struct Namespace {
+    name: QName,
+    public: bool,
+    decls: Vec<Decl>
+}
+
+enum Decl {
+    Namespace(Namespace),
+    //Type(Type),
+    //Binding(Binding)
 }
 
 pub struct QName {
@@ -77,11 +96,14 @@ impl<'a> Parser<'a> {
 
     fn parse(mut self) -> Result<Ast, Vec<ParseError>> {
         let imports = self.imports();
-        // TODO decls & call
+        let decls = self.decls();
+        let root_namespace = Namespace { name: QName { parts: Vec::new() }, public: true, decls };
+        // TODO call
         let current = self.current.matches(EOF);
         if self.errors.is_empty() && current.is_some() {
             Ok(Ast {
-                imports
+                imports,
+                root_namespace
             })
         } else {
             if current.is_none() {
@@ -93,6 +115,7 @@ impl<'a> Parser<'a> {
 
     fn error(&mut self, error: ParseError) {
         if self.errors.len() == MAX_ERRORS {
+            eprintln!("{:?}", self.errors);
             panic!("Error limit reached")
         }
         self.errors.push(error)
@@ -140,28 +163,97 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn require(&mut self, expected: &str, token_name: TokenName) -> Option<&'a str> {
+        match self.current.matches(token_name) {
+            Some(value) => {
+                self.advance();
+                Some(value)
+            }
+            None => {
+                self.error_at_current(expected);
+                self.advance();
+                self.synchronize();
+                None
+            }
+        }
+    }
+
+    fn synchronize(&mut self) {
+        loop {
+            let current = &self.current;
+            if current.matches_value(KEYWORD, "import")
+                || current.matches_value(KEYWORD, "public")
+                || current.matches_value(KEYWORD, "namespace")
+                || current.matches_value(KEYWORD, "type")
+                || current.matches_value(KEYWORD, "let")
+                || current.matches(EOF).is_some() {
+                break;
+            }
+            self.advance();
+        }
+    }
+
     fn imports(&mut self) -> Vec<Import> {
         let mut imports = Vec::new();
         while self.current.matches_value(KEYWORD, "import") {
             self.advance(); // advance past "import"
             let mut names = Vec::new();
             while !self.current.matches_value(KEYWORD, "from") {
-                names.push(self.qualified_name());
+                match self.qualified_name() {
+                    Some(qname) => names.push(qname),
+                    None => continue
+                }
             }
             self.advance(); // advance past "from"
-            match self.current.matches(STRING) {
-                Some(filename) => {
-                    imports.push(Import { filename: filename.to_string(), names });
-                    self.advance();
-                }
-                None => self.error_at_current("string literal") // TODO synchronize
+            if let Some(filename) = self.require("string literal", STRING) {
+                imports.push(Import { filename: filename.to_string(), names });
             }
-
         }
         imports
     }
 
-    fn qualified_name(&mut self) -> QName {
-        unimplemented!() // TODO qualified_name
+    fn qualified_name(&mut self) -> Option<QName> {
+        let mut parts = Vec::new();
+        let ident = self.require("identifier", IDENT)?;
+        parts.push(ident.to_string());
+        while self.current.matches_value(SYMBOL, ".") {
+            self.advance(); // advance past "."
+            let ident = self.require("identifier", IDENT)?;
+            parts.push(ident.to_string())
+        }
+        Some(QName { parts })
+    }
+
+    fn decls(&mut self) -> Vec<Decl> {
+        let mut decls = Vec::new();
+        while self.current.matches_value(KEYWORD, "public")
+            || self.current.matches_value(KEYWORD, "namespace")
+            || self.current.matches_value(KEYWORD, "type")
+            || self.current.matches_value(KEYWORD, "let") {
+            match self.decl() {
+                Some(decl) => decls.push(decl),
+                None => continue
+            }
+        }
+        decls
+    }
+
+    fn decl(&mut self) -> Option<Decl> {
+        let public = self.current.matches_value(KEYWORD, "public");
+        if public {
+            self.advance();
+        }
+        if self.current.matches_value(KEYWORD, "namespace") {
+            self.namespace(public).map(|ns| Decl::Namespace(ns))
+        } else { // TODO recognize type and let
+            self.error_at_current("namespace, type, or binding");
+            self.advance();
+            self.synchronize();
+            None
+        }
+    }
+
+    fn namespace(&mut self, public: bool) -> Option<Namespace> {
+        unimplemented!()
     }
 }
