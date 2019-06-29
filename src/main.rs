@@ -11,7 +11,7 @@ type Option = Some x | None
 
 namespace foo {
   public let x = 5
-  let b = true && false
+  let b = (true && false)
   let 5 = 6
   public type Pair a b
 }

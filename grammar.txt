@@ -23,7 +23,7 @@ expr = call_expr | binary_expr | qualified_name | lambda | list_expr | const_lit
 call_expr = '(' ('.' | expr) expr* ')'
 binary_expr = '(' unary_expr (binary_op unary_expr)* ')'
 binary_op = '+' | '-' | '*' | '/' | '<=' | '<' | '>=' | '>' | '==' | '!=' | '&&' | '||'
-unary_expr = unary_op? expr
+unary_expr = unary_op* expr
 unary_op = '+' | '-' | '!'
 lambda = '{' pattern* '->' block '}'
 list_expr = '[' expr* ']'

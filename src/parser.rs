@@ -4,7 +4,7 @@ use crate::ast::*;
 const MAX_ERRORS: usize = 500;
 
 pub fn parse(src: &str) -> Result<Ast, Vec<ParseError>> {
-    let mut scanner = Scanner::new(src);
+    /*let mut scanner = Scanner::new(src);
     loop {
         let rt = scanner.get_token();
         match rt {
@@ -18,7 +18,7 @@ pub fn parse(src: &str) -> Result<Ast, Vec<ParseError>> {
                 eprintln!("{:?}", e);
             }
         }
-    }
+    }*/
     Parser::new(Scanner::new(src)).parse()
 }
 
@@ -68,7 +68,7 @@ impl<'a> Parser<'a> {
 
     fn parse(mut self) -> Result<Ast, Vec<ParseError>> {
         let imports = self.imports();
-        let decls = self.decls();
+        let decls = self.decls(true);
         let root_namespace = Namespace { name: QName { parts: Vec::new() }, public: true, decls };
         // TODO call
         let at_end = self.current.matches(EOF).is_some();
@@ -93,16 +93,6 @@ impl<'a> Parser<'a> {
         self.errors.push(error)
     }
 
-    fn error_at(& mut self, token: &Token, expected: &str) {
-        let message = format!("Expected {}, got {}", expected, token.value());
-        let error = ParseError {
-            message,
-            line: token.line(),
-            col: token.col()
-        };
-        self.error(error)
-    }
-
     fn error_at_current(&mut self, expected: &str) {
         let token = &self.current;
         let message = format!("Expected {}, got '{}'", expected, token.value());
@@ -111,7 +101,24 @@ impl<'a> Parser<'a> {
             line: token.line(),
             col: token.col()
         };
-        self.error(error)
+        self.error(error);
+        self.advance();
+        self.synchronize();
+    }
+
+    fn synchronize(&mut self) {
+        loop {
+            let current = &self.current;
+            if current.matches_value(KEYWORD, "import")
+                || current.matches_value(KEYWORD, "public")
+                || current.matches_value(KEYWORD, "namespace")
+                || current.matches_value(KEYWORD, "type")
+                || current.matches_value(KEYWORD, "let")
+                || current.matches(EOF).is_some() {
+                break;
+            }
+            self.advance();
+        }
     }
 
     fn extract<'b>(&mut self, scan_result: Result<Token<'b>, ParseError>) -> Option<Token<'b>> {
@@ -159,8 +166,6 @@ impl<'a> Parser<'a> {
             }
             None => {
                 self.error_at_current(expected);
-                self.advance();
-                self.synchronize();
                 None
             }
         }
@@ -172,24 +177,7 @@ impl<'a> Parser<'a> {
             Some(())
         } else {
             self.error_at_current(value);
-            self.advance();
-            self.synchronize();
             None
-        }
-    }
-
-    fn synchronize(&mut self) {
-        loop {
-            let current = &self.current;
-            if current.matches_value(KEYWORD, "import")
-                || current.matches_value(KEYWORD, "public")
-                || current.matches_value(KEYWORD, "namespace")
-                || current.matches_value(KEYWORD, "type")
-                || current.matches_value(KEYWORD, "let")
-                || current.matches(EOF).is_some() {
-                break;
-            }
-            self.advance();
         }
     }
 
@@ -224,7 +212,7 @@ impl<'a> Parser<'a> {
         Some(QName { parts })
     }
 
-    fn decls(&mut self) -> Vec<Decl> {
+    fn decls(&mut self, top_level: bool) -> Vec<Decl> {
         let mut decls = Vec::new();
         while self.current.matches_value(KEYWORD, "public")
             || self.current.matches_value(KEYWORD, "namespace")
@@ -233,6 +221,13 @@ impl<'a> Parser<'a> {
             match self.decl() {
                 Some(decl) => decls.push(decl),
                 None => continue
+            }
+            if top_level
+                && !(self.current.matches_value(KEYWORD, "public")
+                || self.current.matches_value(KEYWORD, "namespace")
+                || self.current.matches_value(KEYWORD, "type")
+                || self.current.matches_value(KEYWORD, "let")) {
+                self.error_at_current("declaration or call");
             }
         }
         decls
@@ -248,8 +243,6 @@ impl<'a> Parser<'a> {
             self.binding(public).map(|b| Decl::Binding(b))
         } else {
             self.error_at_current("namespace, type, or binding");
-            self.advance();
-            self.synchronize();
             None
         }
     }
@@ -258,7 +251,7 @@ impl<'a> Parser<'a> {
         self.advance(); // advance past "namespace"
         let name = self.qualified_name()?;
         self.require_value(SYMBOL, "{")?;
-        let decls = self.decls();
+        let decls = self.decls(false);
         self.require_value(SYMBOL, "}")?;
         Some(Namespace { name, public, decls })
     }
@@ -282,7 +275,7 @@ impl<'a> Parser<'a> {
             cases.push(TypeCase { name: name.to_string(), num_params })
         }
         let namespace = if self.advance_if_matches_value(SYMBOL, "{") {
-            let decls = self.decls();
+            let decls = self.decls(false);
             self.require_value(SYMBOL, "}")?;
             Some(Namespace { name: QName { parts: vec!(name.to_string()) }, public, decls })
         } else {
@@ -309,25 +302,51 @@ impl<'a> Parser<'a> {
     }
 
     fn pattern(&mut self) -> Option<Pattern> {
-        // TODO const, list, type patterns
+        // TODO (), list, type patterns
         if self.advance_if_matches_value(IDENT, "_") {
             Some(Pattern::Wildcard)
         } else if let Some(name) = self.advance_if_matches(IDENT) {
             Some(Pattern::Name(name.to_string()))
+        } else if let Some(l) = self.literal() {
+            Some(Pattern::Constant(l))
         } else {
             self.error_at_current("pattern");
-            self.synchronize();
             None
         }
     }
 
     fn expr(&mut self) -> Option<Expr> {
-        // TODO call, binary, lambda, list, const exprs
+        // TODO call, binary, lambda, list exprs
         if self.current.matches(IDENT).is_some() {
             self.qualified_name().map(|qn| Expr::QName(qn))
+        } else if let Some(l) = self.literal() {
+            Some(Expr::Constant(l))
+        } else if self.current.matches_value(SYMBOL, "(") {
+            self.call_expr()
         } else {
             self.error_at_current("expression");
-            self.synchronize();
+            None
+        }
+    }
+
+    fn call_expr(&mut self) -> Option<Expr> {
+        self.advance(); // advance past "("
+        if self.current.matches_value(SYMBOL, ")") {
+            return Some(Expr::Constant(Literal { lit_type: LiteralType::UNIT, value: "".to_string() }))
+        }
+        unimplemented!()
+    }
+
+    fn literal(&mut self) -> Option<Literal> {
+        if let Some(v) = self.advance_if_matches(STRING) {
+            Some(Literal { lit_type: LiteralType::STRING, value: v.to_string() })
+        } else if let Some(v) = self.advance_if_matches(NUMBER) {
+            Some(Literal { lit_type: LiteralType::NUMBER, value: v.to_string() })
+        } else if self.advance_if_matches_value(KEYWORD, "true") {
+            Some(Literal { lit_type: LiteralType::BOOL, value: "true".to_string() })
+        } else if self.advance_if_matches_value(KEYWORD, "false") {
+            Some(Literal { lit_type: LiteralType::BOOL, value: "false".to_string() })
+        } else {
             None
         }
     }
