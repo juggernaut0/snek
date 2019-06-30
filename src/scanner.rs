@@ -254,6 +254,10 @@ impl<'a> Token<'a> {
     pub fn matches_value(&self, name: TokenName, value: &str) -> bool {
         self.name == name && self.value == value
     }
+
+    pub fn is_eof(&self) -> bool {
+        self.name == EOF
+    }
 }
 
 fn is_whitespace(c: char) -> bool {

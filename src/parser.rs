@@ -4,21 +4,6 @@ use crate::ast::*;
 const MAX_ERRORS: usize = 500;
 
 pub fn parse(src: &str) -> Result<Ast, Vec<ParseError>> {
-    /*let mut scanner = Scanner::new(src);
-    loop {
-        let rt = scanner.get_token();
-        match rt {
-            Ok(t) => {
-                println!("{:?}", t);
-                if t.name() == EOF {
-                    break;
-                }
-            }
-            Err(e) => {
-                eprintln!("{:?}", e);
-            }
-        }
-    }*/
     Parser::new(Scanner::new(src)).parse()
 }
 
@@ -61,7 +46,7 @@ impl<'a> Parser<'a> {
                 current: t,
                 errors: Vec::new()
             },
-            Err(_) => unimplemented!() // TODO handle error on first token
+            Err(_) => unreachable!() // first token cannot be an error
         }
 
     }
@@ -70,12 +55,17 @@ impl<'a> Parser<'a> {
         let imports = self.imports();
         let decls = self.decls(true);
         let root_namespace = Namespace { name: QName { parts: Vec::new() }, public: true, decls };
-        // TODO call
-        let at_end = self.current.matches(EOF).is_some();
+        let expr = if !self.current.is_eof() {
+            self.call_expr()
+        } else {
+            None
+        };
+        let at_end = self.current.is_eof();
         if self.errors.is_empty() && at_end {
             Ok(Ast {
                 imports,
-                root_namespace
+                root_namespace,
+                expr
             })
         } else {
             if !at_end {
@@ -95,14 +85,14 @@ impl<'a> Parser<'a> {
 
     fn error_at_current(&mut self, expected: &str) {
         let token = &self.current;
-        let message = format!("Expected {}, got '{}'", expected, token.value());
+        let message = format!("{} expected, got '{}'", expected, if token.is_eof() { "end of file" } else { token.value() });
         let error = ParseError {
             message,
             line: token.line(),
             col: token.col()
         };
         self.error(error);
-        self.advance();
+        //self.advance();
         self.synchronize();
     }
 
@@ -114,7 +104,7 @@ impl<'a> Parser<'a> {
                 || current.matches_value(KEYWORD, "namespace")
                 || current.matches_value(KEYWORD, "type")
                 || current.matches_value(KEYWORD, "let")
-                || current.matches(EOF).is_some() {
+                || current.is_eof() {
                 break;
             }
             self.advance();
@@ -226,7 +216,9 @@ impl<'a> Parser<'a> {
                 && !(self.current.matches_value(KEYWORD, "public")
                 || self.current.matches_value(KEYWORD, "namespace")
                 || self.current.matches_value(KEYWORD, "type")
-                || self.current.matches_value(KEYWORD, "let")) {
+                || self.current.matches_value(KEYWORD, "let")
+                || self.current.matches_value(SYMBOL, "(")
+                || self.current.is_eof()) {
                 self.error_at_current("declaration or call");
             }
         }
@@ -302,27 +294,60 @@ impl<'a> Parser<'a> {
     }
 
     fn pattern(&mut self) -> Option<Pattern> {
-        // TODO (), list, type patterns
         if self.advance_if_matches_value(IDENT, "_") {
             Some(Pattern::Wildcard)
         } else if let Some(name) = self.advance_if_matches(IDENT) {
             Some(Pattern::Name(name.to_string()))
         } else if let Some(l) = self.literal() {
             Some(Pattern::Constant(l))
+        } else if self.current.matches_value(SYMBOL, "(") {
+            self.type_pattern()
+        } else if self.advance_if_matches_value(SYMBOL, "[") {
+            let mut patterns = Vec::new();
+            while !self.current.matches_value(SYMBOL, "]") {
+                let pattern = self.pattern()?;
+                patterns.push(pattern);
+            }
+            self.advance(); // advance past "]"
+            Some(Pattern::List(patterns))
         } else {
             self.error_at_current("pattern");
             None
         }
     }
 
+    fn type_pattern(&mut self) -> Option<Pattern> {
+        self.advance(); // advance past "("
+        if self.advance_if_matches_value(SYMBOL, ")") {
+            return Some(Pattern::Constant(Literal { lit_type: LiteralType::UNIT, value: "".to_string() }))
+        }
+        let qname = self.qualified_name()?;
+        let mut patterns = Vec::new();
+        while !self.current.matches_value(SYMBOL, ")") {
+            let pattern = self.pattern()?;
+            patterns.push(pattern);
+        }
+        self.advance(); // advance past ")"
+        Some(Pattern::Type(qname, patterns))
+    }
+
     fn expr(&mut self) -> Option<Expr> {
-        // TODO call, binary, lambda, list exprs
         if self.current.matches(IDENT).is_some() {
             self.qualified_name().map(|qn| Expr::QName(qn))
         } else if let Some(l) = self.literal() {
             Some(Expr::Constant(l))
         } else if self.current.matches_value(SYMBOL, "(") {
             self.call_expr()
+        } else if self.current.matches_value(SYMBOL, "{") {
+            self.lambda_expr()
+        } else if self.advance_if_matches_value(SYMBOL, "[") {
+            let mut exprs = Vec::new();
+            while !self.current.matches_value(SYMBOL, "]") {
+                let expr = self.expr()?;
+                exprs.push(expr);
+            }
+            self.advance(); // advance past "]"
+            Some(Expr::List(exprs))
         } else {
             self.error_at_current("expression");
             None
@@ -334,7 +359,102 @@ impl<'a> Parser<'a> {
         if self.current.matches_value(SYMBOL, ")") {
             return Some(Expr::Constant(Literal { lit_type: LiteralType::UNIT, value: "".to_string() }))
         }
-        unimplemented!()
+        let first = self.unary()?;
+        match first {
+            Expr::Unary(_, _) => self.finish_binary(first),
+            _ if self.peek_binary_op().is_some() => self.finish_binary(first),
+            _ => {
+                let mut args = Vec::new();
+                while !self.current.matches_value(SYMBOL, ")") {
+                    let expr = self.expr()?;
+                    args.push(expr);
+                }
+                self.require_value(SYMBOL, ")")?;
+                Some(Expr::Call(CallExpr { callee: Box::new(first), args }))
+            }
+        }
+    }
+
+    fn finish_binary(&mut self, first: Expr) -> Option<Expr> {
+        let mut res = first;
+        while !self.advance_if_matches_value(SYMBOL, ")") {
+            let op = self.binary_op()?;
+            let second = self.binary(op.precedence())?;
+            res = Expr::Binary(op, Box::new(res), Box::new(second));
+        }
+        return Some(res);
+    }
+
+    fn binary(&mut self, prec: u32) -> Option<Expr> {
+        let first = self.unary()?;
+        if let Some(op) = self.peek_binary_op().filter(|o| o.precedence() > prec) {
+            self.advance(); // advance past binary_op
+            let second = self.binary(op.precedence())?;
+            Some(Expr::Binary(op, Box::new(first), Box::new(second)))
+        } else {
+            Some(first)
+        }
+    }
+
+    fn unary(&mut self) -> Option<Expr> {
+        if let Some(op) = self.unary_op() {
+            let expr = self.expr()?;
+            Some(Expr::Unary(op, Box::new(expr)))
+        } else {
+            self.expr()
+        }
+    }
+
+    fn unary_op(&mut self) -> Option<UnaryOp> {
+        if self.advance_if_matches_value(SYMBOL, "+") {
+            Some(UnaryOp::PLUS)
+        } else if self.advance_if_matches_value(SYMBOL, "-") {
+            Some(UnaryOp::MINUS)
+        } else if self.advance_if_matches_value(SYMBOL, "!") {
+            Some(UnaryOp::BANG)
+        } else {
+            None
+        }
+    }
+
+    fn peek_binary_op(&self) -> Option<BinaryOp> {
+        if self.current.matches_value(SYMBOL, "+") {
+            Some(BinaryOp::PLUS)
+        } else if self.current.matches_value(SYMBOL, "-") {
+            Some(BinaryOp::MINUS)
+        } else if self.current.matches_value(SYMBOL, "*") {
+            Some(BinaryOp::TIMES)
+        } else if self.current.matches_value(SYMBOL, "/") {
+            Some(BinaryOp::DIV)
+        } else if self.current.matches_value(SYMBOL, "&&") {
+            Some(BinaryOp::AND)
+        } else if self.current.matches_value(SYMBOL, "||") {
+            Some(BinaryOp::OR)
+        } else if self.current.matches_value(SYMBOL, "<") {
+            Some(BinaryOp::LT)
+        } else if self.current.matches_value(SYMBOL, ">") {
+            Some(BinaryOp::GT)
+        } else if self.current.matches_value(SYMBOL, "<=") {
+            Some(BinaryOp::LEQ)
+        } else if self.current.matches_value(SYMBOL, ">=") {
+            Some(BinaryOp::GEQ)
+        } else if self.current.matches_value(SYMBOL, "==") {
+            Some(BinaryOp::EQ)
+        } else if self.current.matches_value(SYMBOL, "!=") {
+            Some(BinaryOp::NEQ)
+        } else {
+            None
+        }
+    }
+
+    fn binary_op(&mut self) -> Option<BinaryOp> {
+        let op = self.peek_binary_op();
+        if op.is_some() {
+            self.advance();
+        } else {
+            self.error_at_current("binary operator");
+        }
+        op
     }
 
     fn literal(&mut self) -> Option<Literal> {
@@ -348,6 +468,30 @@ impl<'a> Parser<'a> {
             Some(Literal { lit_type: LiteralType::BOOL, value: "false".to_string() })
         } else {
             None
+        }
+    }
+
+    fn lambda_expr(&mut self) -> Option<Expr> {
+        self.advance(); // advance past "{"
+        let mut params = Vec::new();
+        while !self.current.matches_value(SYMBOL, "->") {
+            let param = self.pattern()?;
+            params.push(param);
+        }
+        self.advance(); // advance past "->"
+        let mut bindings = Vec::new();
+        loop {
+            let binding = if self.current.matches_value(KEYWORD, "let") {
+                self.binding(false)?
+            } else {
+                let expr = self.expr()?;
+                if self.current.matches_value(SYMBOL, "}") {
+                    self.advance();
+                    return Some(Expr::Lambda(LambdaExpr { params, bindings, expr: Box:: new(expr) }))
+                }
+                Binding { public: false, pattern: Pattern::Wildcard, expr }
+            };
+            bindings.push(binding);
         }
     }
 }
