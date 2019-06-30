@@ -227,10 +227,6 @@ pub struct Token<'a> {
 }
 
 impl<'a> Token<'a> {
-    pub fn name(&self) -> TokenName {
-        self.name
-    }
-
     pub fn value(&self) -> &'a str {
         self.value
     }
