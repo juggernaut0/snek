@@ -12,12 +12,13 @@ mod debug;
 fn main() {
     id_box::test();
     let src = "\
-let (Some (Pair _ [() i])) = [1 (a b) (a + b)]\
+(1 + 2 * 3 * 4 - 5 * (f x))\
 ";
     match parser::parse(src) {
         Ok(ast) => {
             // TODO execution
-            debug::AstPrinter::new().print_ast(&ast)
+            debug::AstPrinter::new().print_ast(&ast);
+            let res = resolver::Resolver::new(&ast);
         }
         Err(errs) => {
             errs.iter().for_each(|e| eprintln!("[{}:{}] [ERROR] {}", e.line(), e.col(), e.message()));

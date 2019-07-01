@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 pub struct Ast {
     pub imports: Vec<Import>,
     pub root_namespace: Namespace,
@@ -41,22 +43,37 @@ pub struct Binding {
 
 pub enum Pattern {
     Wildcard,
-    Name(String),
+    Name(Rc<NamePattern>),
     Constant(Literal),
     Type(QName, Vec<Pattern>),
     List(Vec<Pattern>)
 }
 
-pub enum Expr {
+#[derive(Eq, PartialEq, Hash)]
+pub struct NamePattern {
+    pub line: u32,
+    pub col: u32,
+    pub name: String
+}
+
+pub struct Expr {
+    pub line: u32,
+    pub col: u32,
+    pub expr_type: ExprType
+}
+
+pub enum ExprType {
     QName(QName),
     Constant(Literal),
     Unary(UnaryOp, Box<Expr>),
     Binary(BinaryOp, Box<Expr>, Box<Expr>),
     Call(CallExpr),
     Lambda(LambdaExpr),
-    List(Vec<Expr>)
+    List(Vec<Expr>),
+    Dot
 }
 
+#[derive(Eq, PartialEq, Hash)]
 pub struct QName {
     pub parts: Vec<String>
 }

@@ -1,5 +1,6 @@
 use crate::scanner::{Scanner, Token, TokenName::*, TokenName};
 use crate::ast::*;
+use std::rc::Rc;
 
 const MAX_ERRORS: usize = 500;
 
@@ -49,6 +50,10 @@ impl<'a> Parser<'a> {
             Err(_) => unreachable!() // first token cannot be an error
         }
 
+    }
+
+    fn pos(&self) -> (u32, u32) {
+        (self.current.line(), self.current.col())
     }
 
     fn parse(mut self) -> Result<Ast, Vec<ParseError>> {
@@ -296,8 +301,10 @@ impl<'a> Parser<'a> {
     fn pattern(&mut self) -> Option<Pattern> {
         if self.advance_if_matches_value(IDENT, "_") {
             Some(Pattern::Wildcard)
-        } else if let Some(name) = self.advance_if_matches(IDENT) {
-            Some(Pattern::Name(name.to_string()))
+        } else if let Some(name) = self.current.matches(IDENT) {
+            let (line, col) = self.pos();
+            self.advance();
+            Some(Pattern::Name(Rc::new(NamePattern { line, col, name: name.to_string() })))
         } else if let Some(l) = self.literal() {
             Some(Pattern::Constant(l))
         } else if self.current.matches_value(SYMBOL, "(") {
@@ -332,10 +339,11 @@ impl<'a> Parser<'a> {
     }
 
     fn expr(&mut self) -> Option<Expr> {
+        let (line, col) = self.pos();
         if self.current.matches(IDENT).is_some() {
-            self.qualified_name().map(|qn| Expr::QName(qn))
+            self.qualified_name().map(|qn| Expr { line, col, expr_type: ExprType::QName(qn) })
         } else if let Some(l) = self.literal() {
-            Some(Expr::Constant(l))
+            Some(Expr { line, col, expr_type: ExprType::Constant(l) })
         } else if self.current.matches_value(SYMBOL, "(") {
             self.call_expr()
         } else if self.current.matches_value(SYMBOL, "{") {
@@ -347,7 +355,7 @@ impl<'a> Parser<'a> {
                 exprs.push(expr);
             }
             self.advance(); // advance past "]"
-            Some(Expr::List(exprs))
+            Some(Expr { line, col, expr_type: ExprType::List(exprs) })
         } else {
             self.error_at_current("expression");
             None
@@ -355,13 +363,21 @@ impl<'a> Parser<'a> {
     }
 
     fn call_expr(&mut self) -> Option<Expr> {
+        let (line, col) = self.pos();
         self.advance(); // advance past "("
         if self.current.matches_value(SYMBOL, ")") {
-            return Some(Expr::Constant(Literal { lit_type: LiteralType::UNIT, value: "".to_string() }))
+            let expr_type = ExprType::Constant(Literal { lit_type: LiteralType::UNIT, value: "".to_string() });
+            return Some(Expr { line, col, expr_type })
         }
-        let first = self.unary()?;
-        match first {
-            Expr::Unary(_, _) => self.finish_binary(first),
+        let first = if self.advance_if_matches_value(SYMBOL, ".") {
+            let expr_type = ExprType::Dot;
+            let (line, col) = self.pos();
+            Expr { line, col, expr_type }
+        } else {
+            self.unary()?
+        };
+        match first.expr_type {
+            ExprType::Unary(_, _) => self.finish_binary(first),
             _ if self.peek_binary_op().is_some() => self.finish_binary(first),
             _ => {
                 let mut args = Vec::new();
@@ -370,36 +386,43 @@ impl<'a> Parser<'a> {
                     args.push(expr);
                 }
                 self.require_value(SYMBOL, ")")?;
-                Some(Expr::Call(CallExpr { callee: Box::new(first), args }))
+                let expr_type = ExprType::Call(CallExpr { callee: Box::new(first), args });
+                Some(Expr { line, col, expr_type })
             }
         }
     }
 
     fn finish_binary(&mut self, first: Expr) -> Option<Expr> {
+        let (line, col) = (first.line, first.col);
         let mut res = first;
         while !self.advance_if_matches_value(SYMBOL, ")") {
             let op = self.binary_op()?;
             let second = self.binary(op.precedence())?;
-            res = Expr::Binary(op, Box::new(res), Box::new(second));
+            let expr_type = ExprType::Binary(op, Box::new(res), Box::new(second));
+            res = Expr { line, col, expr_type };
         }
-        return Some(res);
+        Some(res)
     }
 
     fn binary(&mut self, prec: u32) -> Option<Expr> {
+        let (line, col) = self.pos();
         let first = self.unary()?;
-        if let Some(op) = self.peek_binary_op().filter(|o| o.precedence() > prec) {
+        let mut res = first;
+        while let Some(op) = self.peek_binary_op().filter(|o| o.precedence() > prec) {
             self.advance(); // advance past binary_op
             let second = self.binary(op.precedence())?;
-            Some(Expr::Binary(op, Box::new(first), Box::new(second)))
-        } else {
-            Some(first)
+            let expr_type = ExprType::Binary(op, Box::new(res), Box::new(second));
+            res = Expr { line, col, expr_type }
         }
+        Some(res)
     }
 
     fn unary(&mut self) -> Option<Expr> {
+        let (line, col) = self.pos();
         if let Some(op) = self.unary_op() {
             let expr = self.expr()?;
-            Some(Expr::Unary(op, Box::new(expr)))
+            let expr_type = ExprType::Unary(op, Box::new(expr));
+            Some(Expr { line, col, expr_type })
         } else {
             self.expr()
         }
@@ -472,6 +495,7 @@ impl<'a> Parser<'a> {
     }
 
     fn lambda_expr(&mut self) -> Option<Expr> {
+        let (line, col) = self.pos();
         self.advance(); // advance past "{"
         let mut params = Vec::new();
         while !self.current.matches_value(SYMBOL, "->") {
@@ -485,9 +509,9 @@ impl<'a> Parser<'a> {
                 self.binding(false)?
             } else {
                 let expr = self.expr()?;
-                if self.current.matches_value(SYMBOL, "}") {
-                    self.advance();
-                    return Some(Expr::Lambda(LambdaExpr { params, bindings, expr: Box:: new(expr) }))
+                if self.advance_if_matches_value(SYMBOL, "}") {
+                    let expr_type = ExprType::Lambda(LambdaExpr { params, bindings, expr: Box:: new(expr) });
+                    return Some(Expr { line, col, expr_type })
                 }
                 Binding { public: false, pattern: Pattern::Wildcard, expr }
             };

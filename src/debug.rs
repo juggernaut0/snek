@@ -86,7 +86,7 @@ impl AstPrinter {
     fn print_pattern(&mut self, pattern: &Pattern) {
         match pattern {
             Pattern::Wildcard => self.print("pattern wildcard"),
-            Pattern::Name(n) => self.print(&format!("pattern name = {}", n)),
+            Pattern::Name(n) => self.print(&format!("pattern name = {}", n.name)),
             Pattern::Constant(l) => {
                 self.print_open("pattern constant");
                 self.print_literal(l);
@@ -106,37 +106,40 @@ impl AstPrinter {
     }
 
     fn print_expr(&mut self, expr: &Expr) {
-        match expr {
-            Expr::QName(qn) => self.print_qname(qn),
-            Expr::Constant(l) => self.print_literal(l),
-            Expr::Unary(op, e1) => {
+        match &expr.expr_type {
+            ExprType::QName(qn) => self.print_qname(qn),
+            ExprType::Constant(l) => self.print_literal(l),
+            ExprType::Unary(op, e1) => {
                 self.print_open(&format!("unary op = {:?}", op));
                 self.print_expr(e1);
                 self.print_close();
             },
-            Expr::Binary(op, e1, e2) => {
+            ExprType::Binary(op, e1, e2) => {
                 self.print_open(&format!("binary op = {:?}", op));
                 self.print_expr(e1);
                 self.print_expr(e2);
                 self.print_close();
             },
-            Expr::Call(ce) => {
+            ExprType::Call(ce) => {
                 self.print_open("call");
                 self.print_expr(&ce.callee);
                 self.print_all(&ce.args);
                 self.print_close();
             },
-            Expr::Lambda(le) => {
+            ExprType::Lambda(le) => {
                 self.print_open("lambda");
                 self.print_all(&le.params);
                 self.print_all(&le.bindings);
                 self.print_expr(&le.expr);
                 self.print_close();
             },
-            Expr::List(es) => {
+            ExprType::List(es) => {
                 self.print_open("list");
                 self.print_all(es);
                 self.print_close();
+            },
+            ExprType::Dot => {
+                self.print("dot")
             }
         }
     }
