@@ -1,7 +1,6 @@
 use std::process::exit;
 
 mod ast;
-mod id_box;
 mod parser;
 mod resolver;
 mod scanner;
@@ -10,9 +9,11 @@ mod scanner;
 mod debug;
 
 fn main() {
-    id_box::test();
     let src = "\
-(1 + 2 * 3 * 4 - 5 * (f x))\
+let f = { x -> (x + 1) }
+let x = 6
+let math = (1 + 2 * 3 * 4 - 5 * (f x))\
+(println math)
 ";
     match parser::parse(src) {
         Ok(ast) => {
