@@ -1,6 +1,7 @@
 use std::process::exit;
 
 mod ast;
+mod opcode;
 mod parser;
 mod resolver;
 mod scanner;

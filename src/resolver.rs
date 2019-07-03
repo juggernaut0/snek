@@ -2,26 +2,28 @@ use std::collections::HashMap;
 use crate::ast::*;
 use std::rc::Rc;
 
-#[derive(Eq, PartialEq, Hash, Clone)]
+pub type LocalId = u16;
+
+#[derive(Clone)]
 pub struct Declaration {
     name: Rc<NamePattern>,
-    id: u32
+    id: LocalId
 }
 
 impl Declaration {
-    pub fn name(&self) -> &String {
+    fn name(&self) -> &String {
         &self.name.name
     }
 }
 
 #[derive(Eq, PartialEq, Hash)]
-pub struct QNameExpr {
+struct QNameExpr {
     line: u32,
     col: u32
 }
 
 impl QNameExpr {
-    pub fn from(expr: &Expr) -> Option<QNameExpr> {
+    fn from(expr: &Expr) -> Option<QNameExpr> {
         if let ExprType::QName(_) = expr.expr_type {
             Some(QNameExpr {
                 line: expr.line,
@@ -34,9 +36,9 @@ impl QNameExpr {
 }
 
 pub struct Resolver {
-    declarations: HashMap<Rc<NamePattern>, u32>,
-    usages: HashMap<QNameExpr, (u32, String)>,
-    declaration_id_seq: u32
+    declarations: HashMap<Rc<NamePattern>, LocalId>,
+    usages: HashMap<QNameExpr, (LocalId, String)>,
+    declaration_id_seq: u16
 }
 
 impl Resolver {
@@ -49,6 +51,15 @@ impl Resolver {
         };
         r.resolve(ast);
         r
+    }
+
+    pub fn get_declaration(&self, name: &Rc<NamePattern>) -> LocalId {
+        *self.declarations.get(name).unwrap()
+    }
+
+    pub fn get_usage(&self, expr: &Expr) -> Option<&(LocalId, String)> {
+        let k = QNameExpr::from(expr)?;
+        self.usages.get(&k)
     }
 
     fn resolve(&mut self, ast: &Ast) {
