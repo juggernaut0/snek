@@ -37,7 +37,7 @@ impl QNameExpr {
 
 pub struct Resolver {
     declarations: HashMap<Rc<NamePattern>, LocalId>,
-    usages: HashMap<QNameExpr, (LocalId, String)>,
+    usages: HashMap<QNameExpr, (LocalId, Rc<String>)>,
     declaration_id_seq: u16
 }
 
@@ -54,10 +54,10 @@ impl Resolver {
     }
 
     pub fn get_declaration(&self, name: &Rc<NamePattern>) -> LocalId {
-        *self.declarations.get(name).unwrap()
+        *self.declarations.get(name).expect("unknown declaration")
     }
 
-    pub fn get_usage(&self, expr: &Expr) -> Option<&(LocalId, String)> {
+    pub fn get_usage(&self, expr: &Expr) -> Option<&(LocalId, Rc<String>)> {
         let k = QNameExpr::from(expr)?;
         self.usages.get(&k)
     }
@@ -162,7 +162,7 @@ impl Resolver {
 
     fn add_usage(&mut self, qname: &Expr, declaration: &Declaration) {
        let qne = QNameExpr::from(qname).unwrap(); // only called with a QName Expr
-        self.usages.insert(qne, (declaration.id, declaration.name().clone()));
+        self.usages.insert(qne, (declaration.id, Rc::new(declaration.name().clone())));
     }
 }
 

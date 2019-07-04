@@ -1,6 +1,6 @@
 use crate::ast::*;
 use std::fmt::{Display, Error, Formatter};
-use crate::opcode::OpCode;
+use crate::opcode::{OpCode, Code};
 use crate::value::Value;
 
 pub struct AstPrinter {
@@ -207,24 +207,11 @@ impl Display for QName {
     }
 }
 
-pub fn print_opcode(opcode: &OpCode) {
-    match opcode {
-        OpCode::NoOp => println!("NoOp"),
-        OpCode::Fail(s) => println!("Fail({:?})", s),
-        OpCode::Pop => println!("Pop"),
-        OpCode::Duplicate => println!("Duplicate"),
-        OpCode::Swap => println!("Swap"),
-        OpCode::Decompose(_, _) => {},
-        OpCode::Jump(_) => {},
-        OpCode::LoadConstant(v) => {
-            let v: &Value = &v;
-            let s = match v {
-                Value::Unit => "()".to_string(),
-                Value::Number(n) => (*n).to_string(),
-                Value::Boolean(b) => (*b).to_string(),
-            };
-            println!("LoadConstant({})", s)
-        },
-        OpCode::MakeNamespace(_, _) => {},
+pub fn print_code(code: &Code) {
+    let mut ip: usize = 0;
+    while ip < code.len() {
+        let (opcode, d) = code.get_op_code(ip);
+        println!("{}\t{:?}", ip, opcode);
+        ip += d;
     }
 }

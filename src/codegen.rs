@@ -1,10 +1,9 @@
 use crate::opcode::{Code, CodeBuilder};
 use crate::ast::*;
 use crate::resolver::Resolver;
-use crate::opcode::OpCode::{MakeNamespace, Pop, LoadConstant};
+use crate::opcode::OpCode::*;
 use std::rc::Rc;
 use crate::value::Value;
-use std::str::ParseBoolError;
 
 pub fn compile(ast: &Ast) -> Result<Code, Vec<CompileError>> {
     CodeGenerator::new(Resolver::new(ast)).compile(ast)
@@ -52,7 +51,7 @@ impl CodeGenerator {
     }
 
     fn gen_import(&mut self, import: &Import) {
-        unimplemented!("gen_import")
+        unimplemented!("gen_import") // TODO
     }
 
     fn gen_decl(&mut self, decl: &Decl, parent: &Vec<String>) {
@@ -78,13 +77,13 @@ impl CodeGenerator {
     }
 
     fn gen_type(&mut self, type_decl: &Type, parent: &Vec<String>) {
-        unimplemented!("gen_type")
+        unimplemented!("gen_type") // TODO
     }
 
     fn gen_binding(&mut self, binding: &Binding) {
         self.gen_expr(&binding.expr);
         if binding.public {
-            unimplemented!("public bindings")
+            unimplemented!("public bindings") // TODO
         } else {
             self.gen_pattern(&binding.pattern)
         }
@@ -92,23 +91,43 @@ impl CodeGenerator {
 
     fn gen_expr(&mut self, expr: &Expr) {
         match &expr.expr_type {
-            ExprType::QName(qn) => self.gen_name(qn),
+            ExprType::QName(_) => self.gen_name(expr),
             ExprType::Constant(lit) => self.gen_literal(lit),
             ExprType::Unary(op, e) => {
                 self.gen_expr(e);
-                // TODO gen unary op
-            }
+                // TODO switch on ops
+                // TODO dedup operator names
+                self.code.add_op_code(LoadName(Rc::new(vec!("ops".to_string(), "unary_plus".to_string()))));
+                self.code.add_op_code(Call(1));
+            },
             ExprType::Binary(op, e1, e2) => {
                 self.gen_expr(e1);
                 self.gen_expr(e2);
-                self.code.add_op_code(Pop) // TODO add binary op
+                // TODO switch on ops
+                // TODO dedup operator names
+                // TODO control flow for && and ||
+                self.code.add_op_code(LoadName(Rc::new(vec!("ops".to_string(), "plus".to_string()))));
+                self.code.add_op_code(Call(2));
+            },
+            ExprType::Call(ce) => {
+                for e in &ce.args {
+                    self.gen_expr(e);
+                }
+                self.gen_expr(&ce.callee);
+                self.code.add_op_code(Call(ce.args.len() as u16));
             }
-            _ => unimplemented!("gen_expr")
+            _ => unimplemented!("gen_expr") // TODO
         }
     }
 
-    fn gen_name(&mut self, qname: &QName) {
-        unimplemented!("gen_name")
+    fn gen_name(&mut self, qname: &Expr) {
+        if let Some((id, name)) = self.resolver.get_usage(qname) {
+            self.code.add_op_code(LoadLocal(Rc::clone(name), *id));
+        } else if let ExprType::QName(qn) = &qname.expr_type {
+            self.code.add_op_code(LoadName(Rc::new(qn.parts.clone())));
+        } else {
+            unreachable!()
+        }
     }
 
     fn gen_literal(&mut self, literal: &Literal) {
@@ -121,10 +140,11 @@ impl CodeGenerator {
                         0.0
                     }
                 };
-                self.code.add_op_code(LoadConstant(Rc::new(Value::Number(val))))
+                self.code.add_op_code(LoadConstant(Value::Number(val)))
             },
             LiteralType::STRING => {
-                unimplemented!("string literal")
+                let val = literal.value.trim_matches(|c| c == '\'' || c == '"').to_string();
+                self.code.add_op_code(LoadConstant(Value::String(Rc::new(val))));
             },
             LiteralType::BOOL => {
                 let val = match literal.value.parse::<bool>() {
@@ -134,15 +154,22 @@ impl CodeGenerator {
                         false
                     }
                 };
-                self.code.add_op_code(LoadConstant(Rc::new(Value::Boolean(val))))
+                self.code.add_op_code(LoadConstant(Value::Boolean(val)))
             },
             LiteralType::UNIT => {
-                self.code.add_op_code(LoadConstant(Rc::new(Value::Unit)))
+                self.code.add_op_code(LoadConstant(Value::Unit))
             },
         }
     }
 
     fn gen_pattern(&mut self, pattern: &Pattern) {
-        unimplemented!("gen_pattern")
+        match pattern {
+            Pattern::Wildcard => self.code.add_op_code(Pop),
+            Pattern::Name(name) => {
+                let id = self.resolver.get_declaration(name);
+                self.code.add_op_code(SaveLocal(id));
+            },
+            _ => unimplemented!("gen_pattern") // TODO
+        }
     }
 }

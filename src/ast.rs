@@ -117,14 +117,14 @@ pub enum BinaryOp {
 impl BinaryOp {
     pub fn precedence(&self) -> u32 {
         match self {
-            BinaryOp::EQ => 1,
-            BinaryOp::NEQ => 1,
-            BinaryOp::LT => 1,
-            BinaryOp::GT => 1,
-            BinaryOp::LEQ => 1,
-            BinaryOp::GEQ => 1,
-            BinaryOp::AND => 2,
-            BinaryOp::OR => 2,
+            BinaryOp::AND => 1,
+            BinaryOp::OR => 1,
+            BinaryOp::EQ => 2,
+            BinaryOp::NEQ => 2,
+            BinaryOp::LT => 2,
+            BinaryOp::GT => 2,
+            BinaryOp::LEQ => 2,
+            BinaryOp::GEQ => 2,
             BinaryOp::PLUS => 3,
             BinaryOp::MINUS => 3,
             BinaryOp::TIMES => 4,

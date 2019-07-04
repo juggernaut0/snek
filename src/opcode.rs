@@ -7,11 +7,10 @@ use crate::value::Value;
 
 type StringId = u16;
 type Name = Vec<String>;
-type NameId = u16;
 type LabelId = u16;
-type ConstId = u16;
 type TypeId = u16;
 
+#[derive(Debug)]
 pub enum OpCode {
     NoOp,
     Fail(Rc<String>),
@@ -21,14 +20,14 @@ pub enum OpCode {
     Decompose(Rc<Name>, u16),
     Jump(LabelId),
     /*Match(MatchPattern),
-    JumpIfMatch(MatchPattern, u16),
-    LoadLocal(LocalId),
-    LoadName(NameId),*/
-    LoadConstant(Rc<Value>),
-    /*SaveLocal(LocalId),
-    SaveNamespace(StringId, NameId),
+    JumpIfMatch(MatchPattern, u16),*/
+    LoadLocal(Rc<String>, LocalId),
+    LoadName(Rc<Name>),
+    LoadConstant(Value),
+    SaveLocal(LocalId),
+    /*SaveNamespace(StringId, NameId),*/
     Call(u16),
-    TailCall,
+    /*TailCall,
     MakeClosure(ConstId),*/
     MakeNamespace(Rc<Name>, bool),
     /*MakeType(NameId, TypeId),
@@ -45,9 +44,10 @@ pub struct CodeBuilder {
     ops: Vec<u16>,
     strings: Vec<Rc<String>>,
     names: Vec<Rc<Name>>,
-    constants: Vec<Rc<Value>>,
+    constants: Vec<Value>,
     //types: Vec<TypeDecl>,
     labels: HashMap<LabelId, usize>, // labelId to index in ops
+    locals: HashMap<LocalId, Rc<String>>,
     label_seq: u16
 }
 
@@ -75,10 +75,27 @@ impl CodeBuilder {
                 self.add_op(5);
                 self.add_op(label);
             },
+            LoadLocal(name, id) => {
+                self.add_op(8);
+                self.add_op(id);
+                self.locals.insert(id, name);
+            },
+            LoadName(name) => {
+                self.add_op(9);
+                self.add_name_op(name);
+            }
             LoadConstant(value) => {
                 self.add_op(10);
                 self.add_constant_op(value);
             },
+            SaveLocal(id) => {
+                self.add_op(11);
+                self.add_op(id);
+            }
+            Call(nargs) => {
+                self.add_op(13);
+                self.add_op(nargs);
+            }
             _ => unimplemented!("add_op_code")
         }
     }
@@ -96,14 +113,18 @@ impl CodeBuilder {
     }
 
     fn add_name_op(&mut self, n: Rc<Name>) {
-        if self.names.len() >= std::u16::MAX as usize {
-            panic!("Too many names in Code")
+        if let Some((i, _)) = self.names.iter().enumerate().find(|(i, e)| e == &&n) {
+            self.add_op(i as u16);
+        } else {
+            if self.names.len() >= std::u16::MAX as usize {
+                panic!("Too many names in Code")
+            }
+            self.add_op(self.names.len() as u16);
+            self.names.push(n);
         }
-        self.add_op(self.names.len() as u16);
-        self.names.push(n);
     }
 
-    fn add_constant_op(&mut self, c: Rc<Value>) {
+    fn add_constant_op(&mut self, c: Value) {
         if self.constants.len() >= std::u16::MAX as usize {
             panic!("Too many constants in Code")
         }
@@ -127,12 +148,14 @@ impl CodeBuilder {
         self.names.shrink_to_fit();
         self.constants.shrink_to_fit();
         self.labels.shrink_to_fit();
+        self.locals.shrink_to_fit();
         Code {
             ops: self.ops,
             strings: self.strings,
             names: self.names,
             constants: self.constants,
             labels: self.labels,
+            locals: self.locals
         }
     }
 }
@@ -141,8 +164,9 @@ pub struct Code {
     ops: Vec<u16>,
     strings: Vec<Rc<String>>,
     names: Vec<Rc<Name>>,
-    constants: Vec<Rc<Value>>,
+    constants: Vec<Value>,
     labels: HashMap<LabelId, usize>, // labelId to index in ops
+    locals: HashMap<LocalId, Rc<String>>,
 }
 
 impl Code {
@@ -151,10 +175,26 @@ impl Code {
         match opcode {
             0 => (NoOp, 1),
             2 => (Pop, 1),
+            8 => {
+                let id = self.ops[index + 1];
+                let name = Rc::clone(self.locals.get(&id).unwrap());
+                (LoadLocal(name, id), 2)
+            }
+            9 => {
+                let name = Rc::clone(self.get_arg(&self.names, index, 1));
+                (LoadName(name), 2)
+            },
             10 => {
-                let ci = self.ops[index + 1] as usize;
-                let v = Rc::clone(&self.constants[ci]);
+                let v = self.get_arg(&self.constants, index, 1).clone();
                 (LoadConstant(v), 2)
+            },
+            11 => {
+                let id = self.ops[index + 1];
+                (SaveLocal(id), 2)
+            }
+            13 => {
+                let nargs = self.ops[index + 1];
+                (Call(nargs), 2)
             }
             _ => unimplemented!("get_op_code: {}", opcode)
         }
@@ -162,5 +202,9 @@ impl Code {
 
     pub fn len(&self) -> usize {
         self.ops.len()
+    }
+
+    fn get_arg<'a, T>(&self, vec: &'a Vec<T>, index: usize, offset: usize) -> &'a T {
+        &vec[self.ops[index + offset] as usize]
     }
 }
