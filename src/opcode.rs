@@ -46,7 +46,7 @@ pub struct CodeBuilder {
     names: Vec<Rc<Name>>,
     constants: Vec<Value>,
     //types: Vec<TypeDecl>,
-    labels: HashMap<LabelId, usize>, // labelId to index in ops
+    labels: HashMap<LabelId, usize>, // labelId to ip
     locals: HashMap<LocalId, Rc<String>>,
     label_seq: u16
 }
@@ -113,7 +113,7 @@ impl CodeBuilder {
     }
 
     fn add_name_op(&mut self, n: Rc<Name>) {
-        if let Some((i, _)) = self.names.iter().enumerate().find(|(i, e)| e == &&n) {
+        if let Some((i, _)) = self.names.iter().enumerate().find(|(_, e)| e == &&n) {
             self.add_op(i as u16);
         } else {
             if self.names.len() >= std::u16::MAX as usize {
