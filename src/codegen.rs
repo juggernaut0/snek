@@ -6,7 +6,7 @@ use std::rc::Rc;
 use crate::value::Value;
 
 pub fn compile(ast: &Ast) -> Result<Code, Vec<CompileError>> {
-    CodeGenerator::new(Resolver::new(ast)).compile(ast)
+    AstCodeGenerator::new(Resolver::new(ast)).compile(ast)
 }
 
 pub struct CompileError {
@@ -14,19 +14,27 @@ pub struct CompileError {
     line: u32
 }
 
+impl CompileError {
+    fn message(&self) -> &String {
+        &self.message
+    }
+
+    fn line(&self) -> u32 {
+        self.line
+    }
+}
+
 type CodeGenResult = Result<(), CompileError>;
 
-struct CodeGenerator {
+struct AstCodeGenerator {
     resolver: Resolver,
-    code: CodeBuilder,
     errors: Vec<CompileError>
 }
 
-impl CodeGenerator {
-    fn new(resolver: Resolver) -> CodeGenerator {
-        CodeGenerator {
+impl AstCodeGenerator {
+    fn new(resolver: Resolver) -> AstCodeGenerator {
+        AstCodeGenerator {
             resolver,
-            code: CodeBuilder::new(),
             errors: Vec::new()
         }
     }
@@ -36,17 +44,37 @@ impl CodeGenerator {
     }
 
     fn compile(mut self, ast: &Ast) -> Result<Code, Vec<CompileError>> {
+        let mut gen = CodeGenerator::from(&mut self);
+        gen.gen_ast(ast);
+        let code = gen.code;
+        if self.errors.is_empty() {
+            Ok(code.finalize())
+        } else {
+            Err(self.errors)
+        }
+    }
+}
+
+struct CodeGenerator<'a> {
+    base: &'a mut AstCodeGenerator,
+    code: CodeBuilder
+}
+
+impl<'a> CodeGenerator<'a> {
+    fn from(base: &mut AstCodeGenerator) -> CodeGenerator {
+        CodeGenerator {
+            base,
+            code: CodeBuilder::new()
+        }
+    }
+
+    fn gen_ast(&mut self, ast: &Ast) {
         for import in &ast.imports {
             self.gen_import(import);
         }
         self.gen_namespace(&ast.root_namespace, &Vec::new());
         if let Some(expr) = &ast.expr {
             self.gen_expr(expr);
-        }
-        if self.errors.is_empty() {
-            Ok(self.code.finalize())
-        } else {
-            Err(self.errors)
         }
     }
 
@@ -111,18 +139,37 @@ impl CodeGenerator {
                 self.code.add_op_code(Call(2));
             },
             ExprType::Call(ce) => {
+                if let ExprType::QName(qn) = &ce.callee.expr_type {
+                    if qn.parts.len() == 1 && &qn.parts[0] == "match" {
+                        unimplemented!("match expr") // TODO
+                    }
+                }
                 for e in &ce.args {
                     self.gen_expr(e);
                 }
                 self.gen_expr(&ce.callee);
                 self.code.add_op_code(Call(ce.args.len() as u16));
+            },
+            ExprType::Lambda(le) => {
+                if le.params.len() > std::u16::MAX as usize {
+                    self.base.error("Too many parameters for function");
+                }
+                let mut code = CodeGenerator::from(&mut self.base);
+                for p in &le.params {
+                    code.gen_pattern(p);
+                }
+                for b in &le.bindings {
+                    code.gen_binding(b);
+                }
+                code.gen_expr(&le.expr);
+                self.code.add_op_code(MakeClosure(Rc::new(code.code.finalize()), le.params.len() as u16))
             }
             _ => unimplemented!("gen_expr") // TODO
         }
     }
 
     fn gen_name(&mut self, qname: &Expr) {
-        if let Some((id, name)) = self.resolver.get_usage(qname) {
+        if let Some((id, name)) = self.base.resolver.get_usage(qname) {
             self.code.add_op_code(LoadLocal(Rc::clone(name), *id));
         } else if let ExprType::QName(qn) = &qname.expr_type {
             self.code.add_op_code(LoadName(Rc::new(qn.parts.clone())));
@@ -137,7 +184,7 @@ impl CodeGenerator {
                 let val = match literal.value.parse::<f64>() {
                     Ok(n) => n,
                     Err(e) => {
-                        self.error(&e.to_string());
+                        self.base.error(&e.to_string());
                         0.0
                     }
                 };
@@ -151,7 +198,7 @@ impl CodeGenerator {
                 let val = match literal.value.parse::<bool>() {
                     Ok(n) => n,
                     Err(e) => {
-                        self.error(&e.to_string());
+                        self.base.error(&e.to_string());
                         false
                     }
                 };
@@ -167,7 +214,7 @@ impl CodeGenerator {
         match pattern {
             Pattern::Wildcard => self.code.add_op_code(Pop),
             Pattern::Name(name) => {
-                let id = self.resolver.get_declaration(name);
+                let id = self.base.resolver.get_declaration(name);
                 self.code.add_op_code(SaveLocal(id));
             },
             _ => unimplemented!("gen_pattern") // TODO

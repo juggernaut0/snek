@@ -60,15 +60,15 @@ impl Interpreter {
                 Call(nargs) => {
                     let f = self.pop()?;
                     if let Value::Function(fv) = f {
-                        let func_args = fv.num_args();
-                        if nargs == func_args {
+                        let func_params = fv.num_params();
+                        if nargs == func_params {
                             match fv.func_type() {
-                                FunctionType::Compiled(_) => unimplemented!("compiled functions"),
+                                FunctionType::Compiled(_) => unimplemented!("compiled functions"), // TODO
                                 FunctionType::Native(f) => f(self)?,
-                                FunctionType::Partial(_, _) => unimplemented!("partial functions"),
+                                FunctionType::Partial(_, _) => unimplemented!("partial functions"), // TODO
                             }
-                        } else if nargs < func_args {
-                            unimplemented!("partial functions")
+                        } else if nargs < func_params {
+                            unimplemented!("partial functions") // TODO
                         } else {
                             return Err(self.error(format!("Too many arguments passed for function")))
                         }
@@ -76,7 +76,7 @@ impl Interpreter {
                         return Err(self.error(format!("Can only call functions, got {:?}", f)))
                     }
                 }
-                _ => unimplemented!()
+                _ => unimplemented!("unsupported opcode @ {}: {:?}", ip - d, opcode)
             }
         }
         Ok(())

@@ -4,6 +4,7 @@ use std::rc::Rc;
 use crate::opcode::OpCode::*;
 use crate::resolver::LocalId;
 use crate::value::Value;
+use std::fmt::{Debug, Error, Formatter};
 
 type StringId = u16;
 type Name = Vec<String>;
@@ -27,8 +28,8 @@ pub enum OpCode {
     SaveLocal(LocalId),
     /*SaveNamespace(StringId, NameId),*/
     Call(u16),
-    /*TailCall,
-    MakeClosure(ConstId),*/
+    /*TailCall,*/
+    MakeClosure(Rc<Code>, u16),
     MakeNamespace(Rc<Name>, bool),
     /*MakeType(NameId, TypeId),
     ImportAll(StringId),
@@ -47,6 +48,7 @@ pub struct CodeBuilder {
     strings: Vec<Rc<String>>,
     names: Vec<Rc<Name>>,
     constants: Vec<Value>,
+    codes: Vec<Rc<Code>>,
     //types: Vec<TypeDecl>,
     labels: HashMap<LabelId, usize>, // labelId to ip
     locals: HashMap<LocalId, Rc<String>>,
@@ -93,11 +95,16 @@ impl CodeBuilder {
             SaveLocal(id) => {
                 self.add_op(11);
                 self.add_op(id);
-            }
+            },
             Call(nargs) => {
                 self.add_op(13);
                 self.add_op(nargs);
-            }
+            },
+            MakeClosure(code, nparams) => {
+                self.add_op(15);
+                self.add_code_op(code);
+                self.add_op(nparams);
+            },
             _ => unimplemented!("add_op_code")
         }
     }
@@ -108,7 +115,7 @@ impl CodeBuilder {
 
     fn add_string_op(&mut self, s: Rc<String>) {
         if self.strings.len() >= std::u16::MAX as usize {
-            panic!("Too many strings in Code")
+            panic!("Too many strings in Code") // TODO replace these panics with CompileError
         }
         self.add_op(self.strings.len() as u16);
         self.strings.push(s);
@@ -132,6 +139,14 @@ impl CodeBuilder {
         }
         self.add_op(self.constants.len() as u16);
         self.constants.push(c);
+    }
+
+    fn add_code_op(&mut self, code: Rc<Code>) {
+        if self.codes.len() >= std::u16::MAX as usize {
+            panic!("Too many functions in Code")
+        }
+        self.add_op(self.codes.len() as u16);
+        self.codes.push(code);
     }
 
     pub fn set_line(&mut self, line: u32) {
@@ -161,6 +176,7 @@ impl CodeBuilder {
         self.strings.shrink_to_fit();
         self.names.shrink_to_fit();
         self.constants.shrink_to_fit();
+        self.codes.shrink_to_fit();
         self.labels.shrink_to_fit();
         self.locals.shrink_to_fit();
         Code {
@@ -169,6 +185,7 @@ impl CodeBuilder {
             strings: self.strings,
             names: self.names,
             constants: self.constants,
+            codes: self.codes,
             labels: self.labels,
             locals: self.locals
         }
@@ -181,6 +198,7 @@ pub struct Code {
     strings: Vec<Rc<String>>,
     names: Vec<Rc<Name>>,
     constants: Vec<Value>,
+    codes: Vec<Rc<Code>>,
     labels: HashMap<LabelId, usize>, // labelId to index in ops
     locals: HashMap<LocalId, Rc<String>>,
 }
@@ -211,6 +229,11 @@ impl Code {
             13 => {
                 let nargs = self.ops[index + 1];
                 (Call(nargs), 2)
+            },
+            15 => {
+                let code = Rc::clone(self.get_arg(&self.codes, index, 1));
+                let nparams = self.ops[index + 1];
+                (MakeClosure(code, nparams), 3)
             }
             _ => unimplemented!("get_op_code: {}", opcode)
         }
@@ -230,7 +253,6 @@ impl Code {
             }
             return last
         }
-        unreachable!()
     }
 
     pub fn len(&self) -> usize {
@@ -239,5 +261,11 @@ impl Code {
 
     fn get_arg<'a, T>(&self, vec: &'a Vec<T>, index: usize, offset: usize) -> &'a T {
         &vec[self.ops[index + offset] as usize]
+    }
+}
+
+impl Debug for Code {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        write!(f, "<Code>")
     }
 }

@@ -16,8 +16,7 @@ mod value;
 mod debug;
 
 fn main() {
-    println!("sizeof(Value) = {}", size_of::<value::Value>());
-    let mut args = env::args();
+    let args = env::args();
     let path = args.skip(1).next(); // TODO grab script dir for imports
     if let Some(p) = path {
         run_from_file(&p);

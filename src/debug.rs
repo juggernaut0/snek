@@ -210,6 +210,7 @@ impl Display for QName {
 pub fn print_code(code: &Code) {
     let mut ip: usize = 0;
     let mut last_line = 0;
+    let mut funcs = Vec::new();
     while ip < code.len() {
         let (opcode, d) = code.get_op_code(ip);
         let line = code.get_line(ip);
@@ -220,5 +221,12 @@ pub fn print_code(code: &Code) {
             println!("\t{}\t{:?}", ip, opcode);
         }
         ip += d;
+        if let OpCode::MakeClosure(code, _) = opcode {
+            funcs.push((code, line));
+        }
+    }
+    for (c, line) in funcs {
+        println!("\nFunction @ line {}", line);
+        print_code(&c);
     }
 }

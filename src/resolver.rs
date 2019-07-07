@@ -122,8 +122,9 @@ impl Resolver {
                 self.add_declarations(&declarations);
                 let lambda_scope = Scope::new(&declarations, Some(scope));
                 for b in &le.bindings {
-                    self.resolve_usages_expr(&b.expr, &lambda_scope)
+                    self.resolve_usages_expr(&b.expr, &lambda_scope);
                 }
+                self.resolve_usages_expr(&le.expr, &lambda_scope);
             }
             ExprType::Constant(_) | ExprType::Dot => {} // No action
         }
