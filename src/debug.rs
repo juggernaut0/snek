@@ -209,9 +209,16 @@ impl Display for QName {
 
 pub fn print_code(code: &Code) {
     let mut ip: usize = 0;
+    let mut last_line = 0;
     while ip < code.len() {
         let (opcode, d) = code.get_op_code(ip);
-        println!("{}\t{:?}", ip, opcode);
+        let line = code.get_line(ip);
+        if last_line != line {
+            last_line = line;
+            println!("{}\t{}\t{:?}", line, ip, opcode);
+        } else {
+            println!("\t{}\t{:?}", ip, opcode);
+        }
         ip += d;
     }
 }

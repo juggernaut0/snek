@@ -90,6 +90,7 @@ impl CodeGenerator {
     }
 
     fn gen_expr(&mut self, expr: &Expr) {
+        self.code.set_line(expr.line);
         match &expr.expr_type {
             ExprType::QName(_) => self.gen_name(expr),
             ExprType::Constant(lit) => self.gen_literal(lit),

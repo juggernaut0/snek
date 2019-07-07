@@ -42,6 +42,8 @@ enum MatchPattern {
 #[derive(Default)]
 pub struct CodeBuilder {
     ops: Vec<u16>,
+    lines: Vec<(usize, u32)>,
+    current_line: (usize, u32),
     strings: Vec<Rc<String>>,
     names: Vec<Rc<Name>>,
     constants: Vec<Value>,
@@ -132,6 +134,16 @@ impl CodeBuilder {
         self.constants.push(c);
     }
 
+    pub fn set_line(&mut self, line: u32) {
+        let len = self.ops.len();
+        if len == self.current_line.0 { // no ops have been added since last set
+            self.current_line.1 = line // overwrite line
+        } else if line != self.current_line.1 {
+            self.lines.push(self.current_line);
+            self.current_line = (len, line)
+        }
+    }
+
     pub fn create_label(&mut self) -> LabelId {
         let id = self.label_seq;
         self.label_seq += 1;
@@ -144,6 +156,8 @@ impl CodeBuilder {
 
     pub fn finalize(mut self) -> Code {
         self.ops.shrink_to_fit();
+        self.lines.push(self.current_line);
+        self.lines.shrink_to_fit();
         self.strings.shrink_to_fit();
         self.names.shrink_to_fit();
         self.constants.shrink_to_fit();
@@ -151,6 +165,7 @@ impl CodeBuilder {
         self.locals.shrink_to_fit();
         Code {
             ops: self.ops,
+            lines: self.lines,
             strings: self.strings,
             names: self.names,
             constants: self.constants,
@@ -162,6 +177,7 @@ impl CodeBuilder {
 
 pub struct Code {
     ops: Vec<u16>,
+    lines: Vec<(usize, u32)>,
     strings: Vec<Rc<String>>,
     names: Vec<Rc<Name>>,
     constants: Vec<Value>,
@@ -198,6 +214,23 @@ impl Code {
             }
             _ => unimplemented!("get_op_code: {}", opcode)
         }
+    }
+
+    pub fn get_line(&self, index: usize) -> u32 {
+        let mut iter = self.lines.iter();
+        let mut last = iter.next().unwrap().1; // guaranteed to have at least one element
+        loop {
+            if let Some((i, line)) = iter.next() {
+                if *i == index {
+                    return *line
+                } else if *i < index {
+                    last = *line;
+                    continue
+                }
+            }
+            return last
+        }
+        unreachable!()
     }
 
     pub fn len(&self) -> usize {
