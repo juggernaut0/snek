@@ -1,5 +1,7 @@
-use std::process::exit;
+use std::env;
+use std::fs;
 use std::mem::size_of;
+use std::process::exit;
 
 mod ast;
 mod codegen;
@@ -15,25 +17,25 @@ mod debug;
 
 fn main() {
     println!("sizeof(Value) = {}", size_of::<value::Value>());
+    let mut args = env::args();
+    let path = args.skip(1).next(); // TODO grab script dir for imports
+    if let Some(p) = path {
+        run_from_file(&p);
+    } else {
+        unimplemented!("repl") // TODO
+    }
+}
 
-    let src = "\
-#let f = { x -> (x + 1) }
-#let x = 6
-#let math = (1 + 2 * 3 * 4 - 5 * (f x))
-#(println math)
-#let _ = 'hello'
-#let a = 3
-#let result = (true && 1*2 + a*b*5 - 0 == 12)
-#(println result)
-(println (1 + 2))
-";
-    let ast = match parser::parse(src) {
+fn run_from_file(path: &str) {
+    let src = fs::read_to_string(&path).expect("could not read file");
+    let ast = match parser::parse(&src) {
         Ok(ast) => ast,
         Err(errs) => {
             errs.iter().for_each(|e| eprintln!("[{}:{}] [ERROR] {}", e.line(), e.col(), e.message()));
             exit(1)
         }
     };
+    drop(src); // no need to keep in memory after this point
     debug::AstPrinter::new().print_ast(&ast);
     let code = match codegen::compile(&ast) {
         Ok(code) => code,

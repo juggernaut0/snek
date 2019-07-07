@@ -1,0 +1,8 @@
+let fib = { n ->
+  (match (n <= 2)
+    { true -> 1 }
+    { _ -> ((fib (n - 1)) + (fib (n - 2))) }
+  )
+}
+
+(println (fib 35))
