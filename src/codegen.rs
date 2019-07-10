@@ -124,19 +124,34 @@ impl<'a> CodeGenerator<'a> {
             ExprType::Constant(lit) => self.gen_literal(lit),
             ExprType::Unary(op, e) => {
                 self.gen_expr(e);
-                // TODO switch on ops
-                // TODO dedup operator names
-                self.code.add_op_code(LoadName(Rc::new(vec!("ops".to_string(), "unary_plus".to_string()))));
-                self.code.add_op_code(Call(1));
+                match op {
+                    UnaryOp::PLUS => self.gen_ops_call("unary_plus", 1),
+                    UnaryOp::MINUS => self.gen_ops_call("unary_minus", 1),
+                    UnaryOp::BANG => self.gen_ops_call("bang", 1),
+                }
             },
             ExprType::Binary(op, e1, e2) => {
                 self.gen_expr(e1);
                 self.gen_expr(e2);
-                // TODO switch on ops
-                // TODO dedup operator names
+                // TODO compare ops
                 // TODO control flow for && and ||
-                self.code.add_op_code(LoadName(Rc::new(vec!("ops".to_string(), "plus".to_string()))));
-                self.code.add_op_code(Call(2));
+                match op {
+                    BinaryOp::PLUS => self.gen_ops_call("plus", 2),
+                    BinaryOp::MINUS => self.gen_ops_call("minus", 2),
+                    BinaryOp::TIMES => self.gen_ops_call("times", 2),
+                    BinaryOp::DIV => self.gen_ops_call("div", 2),
+                    BinaryOp::LT => unimplemented!("comp ops"),
+                    BinaryOp::GT => unimplemented!("comp ops"),
+                    BinaryOp::LEQ => unimplemented!("comp ops"),
+                    BinaryOp::GEQ => unimplemented!("comp ops"),
+                    BinaryOp::EQ => self.gen_ops_call("eq", 2),
+                    BinaryOp::NEQ => {
+                        self.gen_ops_call("eq", 2);
+                        self.gen_ops_call("bang", 1);
+                    },
+                    BinaryOp::AND => unimplemented!("logical ops"),
+                    BinaryOp::OR => unimplemented!("logical ops"),
+                }
             },
             ExprType::Call(ce) => {
                 if let ExprType::QName(qn) = &ce.callee.expr_type {
@@ -166,6 +181,12 @@ impl<'a> CodeGenerator<'a> {
             }
             _ => unimplemented!("gen_expr") // TODO
         }
+    }
+
+    fn gen_ops_call(&mut self, name: &str, arity: u16) {
+        // TODO dedup operator name vectors to prevent unnecessary allocations
+        self.code.add_op_code(LoadName(Rc::new(vec!("ops".to_string(), name.to_string()))));
+        self.code.add_op_code(Call(arity));
     }
 
     fn gen_name(&mut self, qname: &Expr) {

@@ -138,14 +138,37 @@ fn make_builtins() -> Namespace {
     root
 }
 
+macro_rules! make_binary_op {
+    ($oper: tt) => {
+        Value::Function(Rc::new(FunctionValue::from_closure(|int| {
+            let b = int.pop_number()?;
+            let a = int.pop_number()?;
+            Ok(int.exec_stack.push(Value::Number(a $oper b)))
+        }, 2)))
+    };
+}
+
 fn make_ops() -> Namespace {
     let mut ops = Namespace::default();
-    let ops_plus = Value::Function(Rc::new(FunctionValue::from_closure(|int| {
-        let b = int.pop_number()?;
-        let a = int.pop_number()?;
-        Ok(int.exec_stack.push(Value::Number(a + b)))
+    ops.values.insert("plus".to_string(), make_binary_op!(+));
+    ops.values.insert("minus".to_string(), make_binary_op!(-));
+    ops.values.insert("times".to_string(), make_binary_op!(*));
+    ops.values.insert("div".to_string(), make_binary_op!(/));
+
+    let eq = Value::Function(Rc::new(FunctionValue::from_closure(|int| {
+        let b = int.pop()?;
+        let a = int.pop()?;
+        let is_eq = match (a, b) { // TODO object values
+            (Value::Unit, Value::Unit) => true,
+            (Value::Number(n1), Value::Number(n2)) => n1 == n2,
+            (Value::Boolean(b1), Value::Boolean(b2)) => b1 == b2,
+            (Value::String(s1), Value::String(s2)) => s1 == s2,
+            _ => false
+        };
+        Ok(int.exec_stack.push(Value::Boolean(is_eq)))
     }, 2)));
-    ops.values.insert("plus".to_string(), ops_plus);
+    ops.values.insert("eq".to_string(), eq);
+
     ops
 }
 

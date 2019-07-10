@@ -1,4 +1,5 @@
 let a = (10 * 7)
 let b = (a*0.5 + 9/3)
 let c = (a*a - b*b)
-(println (c == 60))
+let d = 3456
+(println (c == d))
