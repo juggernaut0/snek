@@ -1,10 +1,10 @@
 use std::collections::HashMap;
+use std::fmt::{Debug, Error, Formatter};
 use std::rc::Rc;
 
 use crate::opcode::OpCode::*;
 use crate::resolver::LocalId;
 use crate::value::Value;
-use std::fmt::{Debug, Error, Formatter};
 
 type StringId = u16;
 type Name = Vec<String>;

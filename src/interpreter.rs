@@ -3,6 +3,7 @@ use crate::opcode::OpCode::*;
 use crate::value::{Value, FunctionValue, FunctionType};
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::cell::RefCell;
 
 pub fn execute(code: &Code) {
     match Interpreter::new().run(code) {
@@ -19,14 +20,16 @@ pub struct RuntimeError {
 
 pub struct Interpreter {
     exec_stack: Vec<Value>,
-    root_namespace: Namespace
+    root_namespace: Namespace,
+    root_environment: Environment,
 }
 
 impl Interpreter {
     fn new() -> Interpreter {
         Interpreter {
             exec_stack: Vec::new(),
-            root_namespace: make_builtins()
+            root_namespace: make_builtins(),
+            root_environment: Environment::default(),
         }
     }
 
@@ -40,6 +43,11 @@ impl Interpreter {
                 Pop => {
                     let _ = self.pop()?;
                 },
+                LoadLocal(name, id) => {
+                    // TODO replace with call_stack environment
+                    let v = self.root_environment.load(id).ok_or(self.error(format!("Variable '{}' accessed before assignment", name)))?;
+                    self.exec_stack.push(v);
+                }
                 LoadName(name) => {
                     let mut ns = &self.root_namespace;
                     for part in &name[0..(name.len()-1)] {
@@ -57,23 +65,28 @@ impl Interpreter {
                     }
                 }
                 LoadConstant(v) => self.exec_stack.push(v),
+                SaveLocal(id) => {
+                    let v = self.pop()?;
+                    self.root_environment.save(id, v); // TODO replace with call_stack environment
+                },
                 Call(nargs) => {
                     let f = self.pop()?;
-                    if let Value::Function(fv) = f {
-                        let func_params = fv.num_params();
-                        if nargs == func_params {
-                            match fv.func_type() {
-                                FunctionType::Compiled(_) => unimplemented!("compiled functions"), // TODO
-                                FunctionType::Native(f) => f(self)?,
-                                FunctionType::Partial(_, _) => unimplemented!("partial functions"), // TODO
-                            }
-                        } else if nargs < func_params {
-                            unimplemented!("partial functions") // TODO
-                        } else {
-                            return Err(self.error(format!("Too many arguments passed for function")))
-                        }
+                    let fv = if let Value::Function(fv) = f {
+                        fv
                     } else {
                         return Err(self.error(format!("Can only call functions, got {:?}", f)))
+                    };
+                    let func_params = fv.num_params();
+                    if nargs == func_params {
+                        match fv.func_type() {
+                            FunctionType::Compiled(_) => unimplemented!("compiled functions"), // TODO
+                            FunctionType::Native(f) => f(self)?,
+                            FunctionType::Partial(_, _) => unimplemented!("partial functions"), // TODO
+                        }
+                    } else if nargs < func_params {
+                        unimplemented!("partial functions") // TODO
+                    } else {
+                        return Err(self.error(format!("Too many arguments passed for function")))
                     }
                 }
                 _ => unimplemented!("unsupported opcode @ {}: {:?}", ip - d, opcode)
@@ -117,7 +130,7 @@ fn make_builtins() -> Namespace {
 
     let println = Value::Function(Rc::new(FunctionValue::from_closure(|int| {
         let v = int.pop()?;
-        println!("{:?}", v); // TODO real stringify
+        println!("{}", v);
         Ok(int.exec_stack.push(Value::Unit))
     }, 1)));
     root.values.insert("println".to_string(), println);
@@ -134,4 +147,34 @@ fn make_ops() -> Namespace {
     }, 2)));
     ops.values.insert("plus".to_string(), ops_plus);
     ops
+}
+
+// TODO find a faster implementation than this
+#[derive(Default)]
+pub struct Environment {
+    parent: Option<Rc<RefCell<Environment>>>,
+    bindings: HashMap<u16, Value>
+}
+
+impl Environment {
+    fn new(parent: Option<Rc<RefCell<Environment>>>) -> Environment {
+        Environment {
+            parent,
+            bindings: HashMap::new()
+        }
+    }
+
+    fn save(&mut self, slot: u16, value: Value) {
+        self.bindings.insert(slot, value);
+    }
+
+    fn load(&self, slot: u16) -> Option<Value> {
+        if let Some(v) = self.bindings.get(&slot) {
+            v.clone().into()
+        } else if let Some(p) = &self.parent {
+            p.borrow().load(slot)
+        } else {
+            None
+        }
+    }
 }

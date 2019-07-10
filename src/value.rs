@@ -1,7 +1,9 @@
+use std::cell::RefCell;
+use std::fmt::{Debug, Display, Error, Formatter};
 use std::rc::Rc;
-use std::fmt::{Debug, Display, Formatter, Error};
+
+use crate::interpreter::{Environment, Interpreter, RuntimeError};
 use crate::opcode::Code;
-use crate::interpreter::{Interpreter, RuntimeError};
 
 #[derive(Clone)]
 pub enum Value {
@@ -65,4 +67,5 @@ pub enum FunctionType {
 
 pub struct CompiledFunction {
     code: Rc<Code>,
+    environment: Rc<RefCell<Environment>>,
 }
