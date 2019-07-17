@@ -1,6 +1,5 @@
 use std::env;
 use std::fs;
-use std::mem::size_of;
 use std::process::exit;
 
 mod ast;

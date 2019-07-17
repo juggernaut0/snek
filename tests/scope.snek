@@ -1,0 +1,36 @@
+let a = "global"
+let main = { ->
+  let f = { -> (println a) }
+  #(f) # this should error with "a used before definition" instead of printing "global"
+  let a = "local"
+  (f)
+  (test "param")
+  f
+}
+let test = { param ->
+  let before = 0
+  let f = { ->
+    let inside = 1
+    (println param)
+    (println before)
+    (println inside)
+    (println after)
+    (println a)
+    let inside2 = 2
+    ()
+  }
+  let after = 3
+  (f)
+  ()
+}
+let closed? = (main)
+(closed?)
+
+# Expected output:
+# local
+# param
+# 0
+# 1
+# 3
+# global
+# local

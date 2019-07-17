@@ -1,6 +1,6 @@
 use crate::opcode::Code;
 use crate::opcode::OpCode::*;
-use crate::value::{Value, FunctionValue, FunctionType};
+use crate::value::{Value, FunctionValue, FunctionType, CompiledFunction};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
@@ -20,16 +20,18 @@ pub struct RuntimeError {
 
 pub struct Interpreter {
     exec_stack: Vec<Value>,
+    call_stack: Vec<CallFrame>,
     root_namespace: Namespace,
-    root_environment: Environment,
+    environments: Vec<Rc<Environment>>,
 }
 
 impl Interpreter {
     fn new() -> Interpreter {
         Interpreter {
             exec_stack: Vec::new(),
+            call_stack: vec![CallFrame { environment: Rc::new(Environment::default()) }],
             root_namespace: make_builtins(),
-            root_environment: Environment::default(),
+            environments: Vec::new(),
         }
     }
 
@@ -44,8 +46,7 @@ impl Interpreter {
                     let _ = self.pop()?;
                 },
                 LoadLocal(name, id) => {
-                    // TODO replace with call_stack environment
-                    let v = self.root_environment.load(id).ok_or(self.error(format!("Variable '{}' accessed before assignment", name)))?;
+                    let v = self.get_env().load(id).ok_or(self.error(format!("Variable '{}' accessed before assignment", name)))?;
                     self.exec_stack.push(v);
                 }
                 LoadName(name) => {
@@ -67,7 +68,7 @@ impl Interpreter {
                 LoadConstant(v) => self.exec_stack.push(v),
                 SaveLocal(id) => {
                     let v = self.pop()?;
-                    self.root_environment.save(id, v); // TODO replace with call_stack environment
+                    self.get_env().save(id, v);
                 },
                 Call(nargs) => {
                     let f = self.pop()?;
@@ -79,7 +80,14 @@ impl Interpreter {
                     let func_params = fv.num_params();
                     if nargs == func_params {
                         match fv.func_type() {
-                            FunctionType::Compiled(_) => unimplemented!("compiled functions"), // TODO
+                            FunctionType::Compiled(cf) => {
+                                let environment = self.new_env(cf.environment());
+                                let frame = CallFrame { environment };
+                                self.call_stack.push(frame);
+                                self.run(cf.code())?;
+                                self.call_stack.pop().unwrap();
+                                // TODO cleanup_envs
+                            },
                             FunctionType::Native(f) => f(self)?,
                             FunctionType::Partial(_, _) => unimplemented!("partial functions"), // TODO
                         }
@@ -88,6 +96,12 @@ impl Interpreter {
                     } else {
                         return Err(self.error(format!("Too many arguments passed for function")))
                     }
+                },
+                MakeClosure(code, nparams) => {
+                    let cf = CompiledFunction::new(code, &self.get_env());
+                    let fv = Rc::new(FunctionValue::new(FunctionType::Compiled(cf), nparams));
+                    let f = Value::Function(fv);
+                    self.exec_stack.push(f);
                 }
                 _ => unimplemented!("unsupported opcode @ {}: {:?}", ip - d, opcode)
             }
@@ -105,6 +119,10 @@ impl Interpreter {
         println!("[DEBUG] {:?}", self.exec_stack)
     }
 
+    fn get_env(&self) -> &Rc<Environment> {
+        &self.call_stack.last().unwrap().environment
+    }
+
     fn pop(&mut self) -> Result<Value, RuntimeError> {
         self.exec_stack.pop().ok_or_else(|| { self.error("Cannot pop empty stack".to_string()) })
     }
@@ -115,12 +133,93 @@ impl Interpreter {
             _ => Err(self.error("Expected a number".to_string()))
         }
     }
+
+    fn new_env(&mut self, parent: Rc<Environment>) -> Rc<Environment> {
+        let env = Rc::new(Environment::new_child(parent));
+        self.environments.push(Rc::clone(&env));
+        env
+    }
+
+    fn cleanup_envs(&mut self) {
+        unimplemented!("cleanup_envs") // TODO
+    }
+}
+
+struct CallFrame {
+    environment: Rc<Environment>
 }
 
 #[derive(Default)]
 struct Namespace {
     values: HashMap<String, Value>,
     subnames: HashMap<String, Namespace>
+}
+
+// TODO find a faster implementation than this (Vec instead of HashMap)
+// NOTE this implementation is safe in a single thread
+#[derive(Default)]
+pub struct Environment {
+    parent: Option<Rc<Environment>>,
+    bindings: RefCell<HashMap<u16, Value>>,
+    marked: RefCell<bool>,
+}
+
+impl Environment {
+    fn new_child(parent: Rc<Environment>) -> Environment {
+        Environment {
+            parent: Some(parent),
+            //bindings: RefCell::new(vec![Value::Uninitialized; size]),
+            bindings: RefCell::new(HashMap::new()),
+            marked: RefCell::new(false)
+        }
+    }
+
+    /*fn save(&self, slot: u16, value: Value) {
+        let i = slot as usize - self.offset;
+        self.bindings.borrow_mut()[i] = value;
+    }
+
+    fn load(&self, slot: u16) -> Option<Value> {
+        if slot as usize > self.offset {
+            let i = slot as usize - self.offset;
+            let v = &self.bindings.borrow()[i];
+            if let Value::Uninitialized = v {
+                None
+            } else {
+                Some(v.clone())
+            }
+        } else if let Some(p) = self.parent {
+            p.load(slot)
+        } else {
+            None
+        }
+    }*/
+
+    fn save(&self, slot: u16, value: Value) {
+        self.bindings.borrow_mut().insert(slot, value);
+    }
+
+    fn load(&self, slot: u16) -> Option<Value> {
+        if let Some(v) = self.bindings.borrow().get(&slot) {
+            Some(v.clone())
+        } else if let Some(p) = &self.parent {
+            p.load(slot)
+        } else {
+            None
+        }
+    }
+
+    fn mark(&self) {
+        *self.marked.borrow_mut() = true;
+    }
+
+    fn unmark(&self) {
+        *self.marked.borrow_mut() = false;
+    }
+
+    fn marked(&self) -> bool {
+        *self.marked.borrow()
+    }
 }
 
 fn make_builtins() -> Namespace {
@@ -170,34 +269,4 @@ fn make_ops() -> Namespace {
     ops.values.insert("eq".to_string(), eq);
 
     ops
-}
-
-// TODO find a faster implementation than this
-#[derive(Default)]
-pub struct Environment {
-    parent: Option<Rc<RefCell<Environment>>>,
-    bindings: HashMap<u16, Value>
-}
-
-impl Environment {
-    fn new(parent: Option<Rc<RefCell<Environment>>>) -> Environment {
-        Environment {
-            parent,
-            bindings: HashMap::new()
-        }
-    }
-
-    fn save(&mut self, slot: u16, value: Value) {
-        self.bindings.insert(slot, value);
-    }
-
-    fn load(&self, slot: u16) -> Option<Value> {
-        if let Some(v) = self.bindings.get(&slot) {
-            v.clone().into()
-        } else if let Some(p) = &self.parent {
-            p.borrow().load(slot)
-        } else {
-            None
-        }
-    }
 }

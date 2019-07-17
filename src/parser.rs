@@ -365,7 +365,7 @@ impl<'a> Parser<'a> {
     fn call_expr(&mut self) -> Option<Expr> {
         let (line, col) = self.pos();
         self.advance(); // advance past "("
-        if self.current.matches_value(SYMBOL, ")") {
+        if self.advance_if_matches_value(SYMBOL, ")") {
             let expr_type = ExprType::Constant(Literal { lit_type: LiteralType::UNIT, value: "".to_string() });
             return Some(Expr { line, col, expr_type })
         }

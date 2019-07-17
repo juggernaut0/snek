@@ -183,7 +183,7 @@ impl<'a> Scanner<'a> {
         self.consume()?;
         self.consume_while(|c| {
             c != '#'
-                && !c.is_ascii_digit()
+                //&& !c.is_ascii_digit()
                 && c != '\''
                 && c != '"'
                 && !starts_symbol(c)

@@ -1,0 +1,19 @@
+type Node data left right
+
+let make_fun = { mul ->
+	let f = { (Node data left right) ->
+		(match left
+			{ (Some node) -> (f node) }
+			{ (None) -> () }
+		)
+		(println (mul * data))
+		(match right
+			{ (Some node) -> (f node) }
+			{ (None) -> () }
+		)
+	}
+	f
+}
+let tree = (Node 2 (Some (Node 1 None None)) (Some (Node 3 None None)))
+let fun = (make_fun 2)
+(fun tree)

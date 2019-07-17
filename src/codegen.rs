@@ -75,6 +75,7 @@ impl<'a> CodeGenerator<'a> {
         self.gen_namespace(&ast.root_namespace, &Vec::new());
         if let Some(expr) = &ast.expr {
             self.gen_expr(expr);
+            self.code.add_op_code(Pop)
         }
     }
 
@@ -156,7 +157,8 @@ impl<'a> CodeGenerator<'a> {
             ExprType::Call(ce) => {
                 if let ExprType::QName(qn) = &ce.callee.expr_type {
                     if qn.parts.len() == 1 && &qn.parts[0] == "match" {
-                        unimplemented!("match expr") // TODO
+                        self.gen_match(ce);
+                        return;
                     }
                 }
                 for e in &ce.args {
@@ -168,6 +170,7 @@ impl<'a> CodeGenerator<'a> {
             ExprType::Lambda(le) => {
                 if le.params.len() > std::u16::MAX as usize {
                     self.base.error("Too many parameters for function");
+                    return;
                 }
                 let mut code = CodeGenerator::from(&mut self.base);
                 for p in &le.params {
@@ -187,6 +190,28 @@ impl<'a> CodeGenerator<'a> {
         // TODO dedup operator name vectors to prevent unnecessary allocations
         self.code.add_op_code(LoadName(Rc::new(vec!("ops".to_string(), name.to_string()))));
         self.code.add_op_code(Call(arity));
+    }
+
+    fn gen_match(&mut self, expr: &CallExpr) {
+        unimplemented!("match expr"); // TODO
+        if expr.args.len() == 0 {
+            self.base.error("Match expression must have a parameter");
+            return;
+        }
+
+        self.gen_expr(&expr.args[0]);
+
+        for case in &expr.args[1..] {
+            if let ExprType::Lambda(le) = &case.expr_type {
+                if le.params.len() != 1 {
+                    self.base.error("Every case in a match expression must have exactly one parameter");
+                    continue;
+                }
+                self.code.add_op_code(Duplicate);
+            } else {
+                self.base.error("Every case in a match expression must be a lambda expression");
+            }
+        }
     }
 
     fn gen_name(&mut self, qname: &Expr) {

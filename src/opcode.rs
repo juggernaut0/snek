@@ -179,6 +179,7 @@ impl CodeBuilder {
         self.codes.shrink_to_fit();
         self.labels.shrink_to_fit();
         self.locals.shrink_to_fit();
+        // TODO populate locals_offset & locals_size
         Code {
             ops: self.ops,
             lines: self.lines,
@@ -187,7 +188,7 @@ impl CodeBuilder {
             constants: self.constants,
             codes: self.codes,
             labels: self.labels,
-            locals: self.locals
+            locals: self.locals,
         }
     }
 }
@@ -232,7 +233,7 @@ impl Code {
             },
             15 => {
                 let code = Rc::clone(self.get_arg(&self.codes, index, 1));
-                let nparams = self.ops[index + 1];
+                let nparams = self.ops[index + 2];
                 (MakeClosure(code, nparams), 3)
             }
             _ => unimplemented!("get_op_code: {}", opcode)

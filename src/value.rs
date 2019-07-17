@@ -1,12 +1,13 @@
 use std::cell::RefCell;
 use std::fmt::{Debug, Display, Error, Formatter};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use crate::interpreter::{Environment, Interpreter, RuntimeError};
 use crate::opcode::Code;
 
 #[derive(Clone)]
 pub enum Value {
+    Uninitialized,
     Unit,
     Number(f64),
     Boolean(bool),
@@ -18,11 +19,12 @@ pub enum Value {
 impl Display for Value {
     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
         match self {
+            Value::Uninitialized => write!(f, "Uninitialized"),
             Value::Unit => write!(f, "()"),
             Value::Number(n) => write!(f, "{}", n),
             Value::Boolean(b) => write!(f, "{}", b),
             Value::String(s) => write!(f, "{}", s),
-            Value::Function(_) => write!(f, "<function>") // TODO line number
+            Value::Function(_) => write!(f, "<function>"), // TODO line number
         }
     }
 }
@@ -67,5 +69,23 @@ pub enum FunctionType {
 
 pub struct CompiledFunction {
     code: Rc<Code>,
-    environment: Rc<RefCell<Environment>>,
+    environment: Weak<Environment>,
 }
+
+impl CompiledFunction {
+    pub fn new(code: Rc<Code>, environment: &Rc<Environment>) -> CompiledFunction {
+        CompiledFunction {
+            code,
+            environment: Rc::downgrade(environment),
+        }
+    }
+
+    pub fn code(&self) -> &Code {
+        &self.code
+    }
+
+    pub fn environment(&self) -> Rc<Environment> {
+        self.environment.upgrade().unwrap()
+    }
+}
+
