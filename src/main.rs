@@ -34,7 +34,9 @@ fn run_from_file(path: &str) {
         }
     };
     drop(src); // no need to keep in memory after this point
-    debug::AstPrinter::new().print_ast(&ast);
+    #[cfg(debug_assertions)] {
+        debug::AstPrinter::new().print_ast(&ast);
+    }
     let code = match codegen::compile(&ast) {
         Ok(code) => code,
         Err(errs) => {
@@ -42,6 +44,8 @@ fn run_from_file(path: &str) {
             exit(1)
         }
     };
-    debug::print_code(&code);
+    #[cfg(debug_assertions)] {
+        debug::print_code(&code);
+    }
     interpreter::execute(&code);
 }

@@ -193,7 +193,6 @@ impl<'a> CodeGenerator<'a> {
     }
 
     fn gen_match(&mut self, expr: &CallExpr) {
-        unimplemented!("match expr"); // TODO
         if expr.args.len() == 0 {
             self.base.error("Match expression must have a parameter");
             return;
@@ -201,17 +200,58 @@ impl<'a> CodeGenerator<'a> {
 
         self.gen_expr(&expr.args[0]);
 
+        let mut labels = Vec::new();
+        let mut ends = Vec::new();
         for case in &expr.args[1..] {
+            self.code.set_line(case.line);
+            for l in &labels {
+                self.code.attach_label(*l);
+            }
+            labels.clear();
             if let ExprType::Lambda(le) = &case.expr_type {
                 if le.params.len() != 1 {
                     self.base.error("Every case in a match expression must have exactly one parameter");
                     continue;
                 }
-                self.code.add_op_code(Duplicate);
+                let pattern = &le.params[0];
+                match pattern {
+                    Pattern::Wildcard => {},
+                    Pattern::Name(_) => {
+                        unimplemented!()
+                    },
+                    Pattern::Constant(l) => {
+                        self.code.add_op_code(Duplicate);
+                        self.gen_literal(l);
+                        self.gen_ops_call("eq", 2);
+                        let l = self.code.add_jump_op(JumpIfFalse(0));
+                        labels.push(l);
+                    },
+                    Pattern::Type(_, _) => {
+                        unimplemented!("type matching") // TODO
+                    },
+                    Pattern::List(_) => {
+                        unimplemented!("type matching")
+                    },
+                }
+                self.code.add_op_code(Pop);
+                for b in &le.bindings {
+                    self.gen_binding(b);
+                }
+                self.gen_expr(&le.expr);
+                let l = self.code.add_jump_op(Jump(0));
+                ends.push(l);
             } else {
                 self.base.error("Every case in a match expression must be a lambda expression");
             }
         }
+        for l in labels {
+            self.code.attach_label(l);
+        }
+        self.code.add_op_code(Fail(Rc::new("No match".to_string())));
+        for l in ends {
+            self.code.attach_label(l);
+        }
+        self.code.add_op_code(NoOp);
     }
 
     fn gen_name(&mut self, qname: &Expr) {

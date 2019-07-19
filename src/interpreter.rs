@@ -1,9 +1,11 @@
-use crate::opcode::Code;
+use crate::opcode::{Code, OpCode};
 use crate::opcode::OpCode::*;
 use crate::value::{Value, FunctionValue, FunctionType, CompiledFunction};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
+use std::time::Duration;
+use std::mem::Discriminant;
 
 pub fn execute(code: &Code) {
     match Interpreter::new().run(code) {
@@ -23,6 +25,8 @@ pub struct Interpreter {
     call_stack: Vec<CallFrame>,
     root_namespace: Namespace,
     environments: Vec<Rc<Environment>>,
+    decode_time: Duration,
+    exec_time: HashMap<Discriminant<OpCode>, Duration>,
 }
 
 impl Interpreter {
@@ -32,6 +36,8 @@ impl Interpreter {
             call_stack: vec![CallFrame { environment: Rc::new(Environment::default()) }],
             root_namespace: make_builtins(),
             environments: Vec::new(),
+            decode_time: Duration::new(0, 0),
+            exec_time: HashMap::new(),
         }
     }
 
@@ -42,13 +48,29 @@ impl Interpreter {
             ip += d;
             match opcode {
                 NoOp => (),
+                Fail(msg) => {
+                    return Err(self.error(String::clone(&msg)))
+                }
                 Pop => {
                     let _ = self.pop()?;
                 },
+                Duplicate => {
+                    let v = self.peek()?;
+                    self.exec_stack.push(v);
+                },
+                Jump(d) => {
+                    ip += d as usize;
+                },
+                JumpIfFalse(d) => {
+                    let b = self.pop_bool()?;
+                    if !b {
+                        ip += d as usize;
+                    }
+                }
                 LoadLocal(name, id) => {
                     let v = self.get_env().load(id).ok_or(self.error(format!("Variable '{}' accessed before assignment", name)))?;
                     self.exec_stack.push(v);
-                }
+                },
                 LoadName(name) => {
                     let mut ns = &self.root_namespace;
                     for part in &name[0..(name.len()-1)] {
@@ -64,7 +86,7 @@ impl Interpreter {
                     } else {
                         return Err(self.error(format!("No such value: {}", last)))
                     }
-                }
+                },
                 LoadConstant(v) => self.exec_stack.push(v),
                 SaveLocal(id) => {
                     let v = self.pop()?;
@@ -86,7 +108,7 @@ impl Interpreter {
                                 self.call_stack.push(frame);
                                 self.run(cf.code())?;
                                 self.call_stack.pop().unwrap();
-                                // TODO cleanup_envs
+                                self.cleanup_envs(); // TODO run this less often
                             },
                             FunctionType::Native(f) => f(self)?,
                             FunctionType::Partial(_, _) => unimplemented!("partial functions"), // TODO
@@ -123,6 +145,10 @@ impl Interpreter {
         &self.call_stack.last().unwrap().environment
     }
 
+    fn peek(&self) -> Result<Value, RuntimeError> {
+        self.exec_stack.last().cloned().ok_or_else(|| { self.error("Cannot peek empty stack".to_string()) })
+    }
+
     fn pop(&mut self) -> Result<Value, RuntimeError> {
         self.exec_stack.pop().ok_or_else(|| { self.error("Cannot pop empty stack".to_string()) })
     }
@@ -134,6 +160,13 @@ impl Interpreter {
         }
     }
 
+    fn pop_bool(&mut self) -> Result<bool, RuntimeError> {
+        match self.pop()? {
+            Value::Boolean(b) => Ok(b),
+            _ => Err(self.error("Expected a boolean".to_string()))
+        }
+    }
+
     fn new_env(&mut self, parent: Rc<Environment>) -> Rc<Environment> {
         let env = Rc::new(Environment::new_child(parent));
         self.environments.push(Rc::clone(&env));
@@ -141,7 +174,37 @@ impl Interpreter {
     }
 
     fn cleanup_envs(&mut self) {
-        unimplemented!("cleanup_envs") // TODO
+        fn mark_value(v: &Value) {
+            if let Value::Function(fv) = v {
+                if let FunctionType::Compiled(cf) = fv.func_type() {
+                    mark_env(cf.environment());
+                }
+            }
+        }
+        fn mark_env(e: Rc<Environment>) {
+            if e.marked() {
+                return;
+            }
+            e.mark();
+            for v in e.values() {
+                mark_value(&v);
+            }
+        }
+        for cf in &self.call_stack {
+            mark_env(cf.environment.clone())
+        }
+        for v in &self.exec_stack {
+            mark_value(v)
+        }
+        let mut i = 0;
+        while i < self.environments.len() {
+            let e = &self.environments[i];
+            if !e.marked() {
+                self.environments.swap_remove(i);
+            } else {
+                i += 1;
+            }
+        }
     }
 }
 
@@ -207,6 +270,10 @@ impl Environment {
         } else {
             None
         }
+    }
+
+    fn values(&self) -> Vec<Value> {
+        self.bindings.borrow().values().cloned().collect()
     }
 
     fn mark(&self) {

@@ -18,10 +18,10 @@ pub enum OpCode {
     Pop,
     Duplicate,
     Swap,
+    TypeCheck(Rc<Name>),
     Decompose(Rc<Name>, u16),
-    Jump(LabelId),
-    /*Match(MatchPattern),
-    JumpIfMatch(MatchPattern, u16),*/
+    Jump(u16),
+    JumpIfFalse(u16),
     LoadLocal(Rc<String>, LocalId),
     LoadName(Rc<Name>),
     LoadConstant(Value),
@@ -36,9 +36,27 @@ pub enum OpCode {
     ImportNames(StringId, Vec<NameId>)*/
 }
 
-enum MatchPattern {
-    // TODO
-}
+const NO_OP_CODE: u16 = 0;
+const FAIL_CODE: u16 = 1;
+const POP_CODE: u16 = 2;
+const DUPLICATE_CODE: u16 = 3;
+const SWAP_CODE: u16 = 4;
+const TYPE_CHECK_CODE: u16 = 5;
+const DECOMPOSE_CODE: u16 = 6;
+const JUMP_CODE: u16 = 7;
+const JUMP_IF_FALSE_CODE: u16 = 8;
+const LOAD_LOCAL_CODE: u16 = 9;
+const LOAD_NAME_CODE: u16 = 10;
+const LOAD_CONSTANT_CODE: u16 = 11;
+const SAVE_LOCAL_CODE: u16 = 12;
+const SAVE_NAMESPACE_CODE: u16 = 13;
+const CALL_CODE: u16 = 14;
+const TAIL_CALL_CODE: u16 = 15;
+const MAKE_CLOSURE_CODE: u16 = 16;
+const MAKE_NAMESPACE_CODE: u16 = 17;
+const MAKE_TYPE_CODE: u16 = 18;
+const IMPORT_ALL_CODE: u16 = 19;
+const IMPORT_NAMES_CODE: u16 = 20;
 
 #[derive(Default)]
 pub struct CodeBuilder {
@@ -50,9 +68,8 @@ pub struct CodeBuilder {
     constants: Vec<Value>,
     codes: Vec<Rc<Code>>,
     //types: Vec<TypeDecl>,
-    labels: HashMap<LabelId, usize>, // labelId to ip
+    labels: Vec<usize>, // labelId to ip
     locals: HashMap<LocalId, Rc<String>>,
-    label_seq: u16
 }
 
 impl CodeBuilder {
@@ -62,46 +79,45 @@ impl CodeBuilder {
 
     pub fn add_op_code(&mut self, op_code: OpCode) {
         match op_code {
-            NoOp => self.add_op(0),
+            NoOp => self.add_op(NO_OP_CODE),
             Fail(msg) => {
-                self.add_op(1);
+                self.add_op(FAIL_CODE);
                 self.add_string_op(msg);
             },
-            Pop => self.add_op(2),
-            Duplicate => self.add_op(3),
-            Swap => self.add_op(4),
-            Decompose(name, size) => {
-                self.add_op(5);
-                self.add_name_op(name);
-                self.add_op(size);
+            Pop => self.add_op(POP_CODE),
+            Duplicate => self.add_op(DUPLICATE_CODE),
+            Swap => self.add_op(SWAP_CODE),
+            Jump(d) => {
+                self.add_op(JUMP_CODE);
+                self.add_op(d);
             },
-            Jump(label) => {
-                self.add_op(5);
-                self.add_op(label);
-            },
+            JumpIfFalse(d) => {
+                self.add_op(JUMP_IF_FALSE_CODE);
+                self.add_op(d);
+            }
             LoadLocal(name, id) => {
-                self.add_op(8);
+                self.add_op(LOAD_LOCAL_CODE);
                 self.add_op(id);
                 self.locals.insert(id, name);
             },
             LoadName(name) => {
-                self.add_op(9);
+                self.add_op(LOAD_NAME_CODE);
                 self.add_name_op(name);
-            }
+            },
             LoadConstant(value) => {
-                self.add_op(10);
+                self.add_op(LOAD_CONSTANT_CODE);
                 self.add_constant_op(value);
             },
             SaveLocal(id) => {
-                self.add_op(11);
+                self.add_op(SAVE_LOCAL_CODE);
                 self.add_op(id);
             },
             Call(nargs) => {
-                self.add_op(13);
+                self.add_op(CALL_CODE);
                 self.add_op(nargs);
             },
             MakeClosure(code, nparams) => {
-                self.add_op(15);
+                self.add_op(MAKE_CLOSURE_CODE);
                 self.add_code_op(code);
                 self.add_op(nparams);
             },
@@ -159,14 +175,18 @@ impl CodeBuilder {
         }
     }
 
-    pub fn create_label(&mut self) -> LabelId {
-        let id = self.label_seq;
-        self.label_seq += 1;
-        id
+    pub fn add_jump_op(&mut self, jump_op: OpCode) -> usize {
+        let i = self.ops.len() + 1;
+        self.add_op_code(jump_op);
+        i
     }
 
-    pub fn attach_label(&mut self, label: LabelId) {
-        self.labels.insert(label, self.ops.len());
+    pub fn attach_label(&mut self, label: usize) {
+        let d = self.ops.len() - label - 1;
+        if d > std::u16::MAX as usize {
+            panic!("Too far to jump")
+        }
+        self.ops[label] = d as u16;
     }
 
     pub fn finalize(mut self) -> Code {
@@ -177,7 +197,6 @@ impl CodeBuilder {
         self.names.shrink_to_fit();
         self.constants.shrink_to_fit();
         self.codes.shrink_to_fit();
-        self.labels.shrink_to_fit();
         self.locals.shrink_to_fit();
         // TODO populate locals_offset & locals_size
         Code {
@@ -187,7 +206,6 @@ impl CodeBuilder {
             names: self.names,
             constants: self.constants,
             codes: self.codes,
-            labels: self.labels,
             locals: self.locals,
         }
     }
@@ -200,7 +218,6 @@ pub struct Code {
     names: Vec<Rc<Name>>,
     constants: Vec<Value>,
     codes: Vec<Rc<Code>>,
-    labels: HashMap<LabelId, usize>, // labelId to index in ops
     locals: HashMap<LocalId, Rc<String>>,
 }
 
@@ -208,30 +225,43 @@ impl Code {
     pub fn get_op_code(&self, index: usize) -> (OpCode, usize) {
         let opcode = self.ops[index];
         match opcode {
-            0 => (NoOp, 1),
-            2 => (Pop, 1),
-            8 => {
+            NO_OP_CODE => (NoOp, 1),
+            FAIL_CODE => {
+                let msg = Rc::clone(self.get_arg(&self.strings, index, 1));
+                (Fail(msg), 2)
+            },
+            POP_CODE => (Pop, 1),
+            DUPLICATE_CODE => (Duplicate, 1),
+            JUMP_CODE => {
+                let d = self.ops[index + 1];
+                (Jump(d), 2)
+            }
+            JUMP_IF_FALSE_CODE => {
+                let d = self.ops[index + 1];
+                (JumpIfFalse(d), 2)
+            }
+            LOAD_LOCAL_CODE => {
                 let id = self.ops[index + 1];
                 let name = Rc::clone(self.locals.get(&id).unwrap());
                 (LoadLocal(name, id), 2)
             }
-            9 => {
+            LOAD_NAME_CODE => {
                 let name = Rc::clone(self.get_arg(&self.names, index, 1));
                 (LoadName(name), 2)
             },
-            10 => {
+            LOAD_CONSTANT_CODE => {
                 let v = self.get_arg(&self.constants, index, 1).clone();
                 (LoadConstant(v), 2)
             },
-            11 => {
+            SAVE_LOCAL_CODE => {
                 let id = self.ops[index + 1];
                 (SaveLocal(id), 2)
             }
-            13 => {
+            CALL_CODE => {
                 let nargs = self.ops[index + 1];
                 (Call(nargs), 2)
             },
-            15 => {
+            MAKE_CLOSURE_CODE => {
                 let code = Rc::clone(self.get_arg(&self.codes, index, 1));
                 let nparams = self.ops[index + 2];
                 (MakeClosure(code, nparams), 3)
