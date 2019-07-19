@@ -4,12 +4,22 @@ use crate::value::{Value, FunctionValue, FunctionType, CompiledFunction};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::time::Duration;
-use std::mem::Discriminant;
+use std::time::{Duration, Instant};
+use std::mem::{Discriminant, discriminant};
+use std::ops::AddAssign;
 
-pub fn execute(code: &Code) {
-    match Interpreter::new().run(code) {
-        Ok(()) => {},
+pub fn execute(code: Rc<Code>) {
+    let mut int = Interpreter::new(code);
+    match int.run() {
+        Ok(()) => {
+            println!("decode: {:?}", int.decode_time);
+            let mut exec_times = int.exec_time.iter().collect::<Vec<_>>();
+            exec_times.sort_by(|(_, a), (_, b)| b.cmp(a));
+            for (d, t) in exec_times {
+                println!("exec {:?}: {:?}", d, t);
+            }
+            println!("gc: {:?}", int.gc_time);
+        },
         Err(e) => {
             eprintln!("[ERROR] {}", e.message)
         }
@@ -25,108 +35,130 @@ pub struct Interpreter {
     call_stack: Vec<CallFrame>,
     root_namespace: Namespace,
     environments: Vec<Rc<Environment>>,
+    env_limit: usize,
+    env_max: usize,
     decode_time: Duration,
     exec_time: HashMap<Discriminant<OpCode>, Duration>,
+    gc_time: Duration,
 }
 
 impl Interpreter {
-    fn new() -> Interpreter {
+    fn new(code: Rc<Code>) -> Interpreter {
         Interpreter {
             exec_stack: Vec::new(),
-            call_stack: vec![CallFrame { environment: Rc::new(Environment::default()) }],
+            call_stack: vec![CallFrame { code, ip: 0, environment: Rc::new(Environment::default()) }],
             root_namespace: make_builtins(),
             environments: Vec::new(),
-            decode_time: Duration::new(0, 0),
+            env_limit: 16,
+            env_max: 1 << 16,
+            decode_time: Duration::default(),
             exec_time: HashMap::new(),
+            gc_time: Duration::default(),
         }
     }
 
-    fn run(&mut self, code: &Code) -> Result<(), RuntimeError> {
-        let mut ip: usize = 0;
-        while ip < code.len() {
-            let (opcode, d) = code.get_op_code(ip);
-            ip += d;
-            match opcode {
-                NoOp => (),
-                Fail(msg) => {
-                    return Err(self.error(String::clone(&msg)))
-                }
-                Pop => {
-                    let _ = self.pop()?;
-                },
-                Duplicate => {
-                    let v = self.peek()?;
-                    self.exec_stack.push(v);
-                },
-                Jump(d) => {
-                    ip += d as usize;
-                },
-                JumpIfFalse(d) => {
-                    let b = self.pop_bool()?;
-                    if !b {
-                        ip += d as usize;
+    fn run(&mut self) -> Result<(), RuntimeError> {
+        while !self.call_stack.is_empty() {
+            let mut frame = self.call_stack.pop().unwrap();
+            while frame.ip < frame.code.len() {
+                let di = Instant::now();
+                let (opcode, d) = frame.code.get_op_code(frame.ip);
+                frame.ip += d;
+                self.decode_time += di.elapsed();
+                let ei = Instant::now();
+                let disc = discriminant(&opcode);
+                match opcode {
+                    NoOp => (),
+                    Fail(msg) => {
+                        return Err(self.error(String::clone(&msg)))
                     }
-                }
-                LoadLocal(name, id) => {
-                    let v = self.get_env().load(id).ok_or(self.error(format!("Variable '{}' accessed before assignment", name)))?;
-                    self.exec_stack.push(v);
-                },
-                LoadName(name) => {
-                    let mut ns = &self.root_namespace;
-                    for part in &name[0..(name.len()-1)] {
-                        if let Some(subname) = ns.subnames.get(part) {
-                            ns = subname
+                    Pop => {
+                        let _ = self.pop()?;
+                    },
+                    Duplicate => {
+                        let v = self.peek()?;
+                        self.exec_stack.push(v);
+                    },
+                    Jump(d) => {
+                        frame.ip += d as usize;
+                    },
+                    JumpIfFalse(d) => {
+                        let b = self.pop_bool()?;
+                        if !b {
+                            frame.ip += d as usize;
+                        }
+                    }
+                    LoadLocal(name, id) => {
+                        let v = frame.environment.load(id).ok_or(self.error(format!("Variable '{}' accessed before assignment", name)))?;
+                        self.exec_stack.push(v);
+                    },
+                    LoadName(name) => {
+                        let mut ns = &self.root_namespace;
+                        for part in &name[0..(name.len() - 1)] {
+                            if let Some(subname) = ns.subnames.get(part) {
+                                ns = subname
+                            } else {
+                                return Err(self.error(format!("No such namespace: {}", part)))
+                            }
+                        }
+                        let last = &name[name.len() - 1];
+                        if let Some(v) = ns.values.get(last) {
+                            self.exec_stack.push(v.clone())
                         } else {
-                            return Err(self.error(format!("No such namespace: {}", part)))
+                            return Err(self.error(format!("No such value: {}", last)))
                         }
-                    }
-                    let last = &name[name.len()-1];
-                    if let Some(v) = ns.values.get(last) {
-                        self.exec_stack.push(v.clone())
-                    } else {
-                        return Err(self.error(format!("No such value: {}", last)))
-                    }
-                },
-                LoadConstant(v) => self.exec_stack.push(v),
-                SaveLocal(id) => {
-                    let v = self.pop()?;
-                    self.get_env().save(id, v);
-                },
-                Call(nargs) => {
-                    let f = self.pop()?;
-                    let fv = if let Value::Function(fv) = f {
-                        fv
-                    } else {
-                        return Err(self.error(format!("Can only call functions, got {:?}", f)))
-                    };
-                    let func_params = fv.num_params();
-                    if nargs == func_params {
-                        match fv.func_type() {
-                            FunctionType::Compiled(cf) => {
-                                let environment = self.new_env(cf.environment());
-                                let frame = CallFrame { environment };
-                                self.call_stack.push(frame);
-                                self.run(cf.code())?;
-                                self.call_stack.pop().unwrap();
-                                self.cleanup_envs(); // TODO run this less often
-                            },
-                            FunctionType::Native(f) => f(self)?,
-                            FunctionType::Partial(_, _) => unimplemented!("partial functions"), // TODO
+                    },
+                    LoadConstant(v) => self.exec_stack.push(v),
+                    SaveLocal(id) => {
+                        let v = self.pop()?;
+                        frame.environment.save(id, v);
+                    },
+                    Call(nargs) => {
+                        let f = self.pop()?;
+                        let fv = if let Value::Function(fv) = f {
+                            fv
+                        } else {
+                            return Err(self.error(format!("Can only call functions, got {:?}", f)))
+                        };
+                        let func_params = fv.num_params();
+                        if nargs == func_params {
+                            match fv.func_type() {
+                                FunctionType::Compiled(cf) => {
+                                    let environment = self.new_env(cf.environment());
+                                    let new_frame = CallFrame { code: Rc::clone(cf.code()), ip: 0, environment };
+                                    self.call_stack.push(frame);
+                                    frame = new_frame;
+                                },
+                                FunctionType::Native(f) => f(self)?,
+                                FunctionType::Partial(_, _) => unimplemented!("partial functions"), // TODO
+                            }
+                        } else if nargs < func_params {
+                            unimplemented!("partial functions") // TODO
+                        } else {
+                            return Err(self.error(format!("Too many arguments passed for function")))
                         }
-                    } else if nargs < func_params {
-                        unimplemented!("partial functions") // TODO
-                    } else {
-                        return Err(self.error(format!("Too many arguments passed for function")))
+                    },
+                    MakeClosure(code, nparams) => {
+                        let cf = CompiledFunction::new(code, &frame.environment);
+                        let fv = Rc::new(FunctionValue::new(FunctionType::Compiled(cf), nparams));
+                        let f = Value::Function(fv);
+                        self.exec_stack.push(f);
                     }
-                },
-                MakeClosure(code, nparams) => {
-                    let cf = CompiledFunction::new(code, &self.get_env());
-                    let fv = Rc::new(FunctionValue::new(FunctionType::Compiled(cf), nparams));
-                    let f = Value::Function(fv);
-                    self.exec_stack.push(f);
+                    _ => unimplemented!("unsupported opcode @ {}: {:?}", frame.ip - d, opcode)
                 }
-                _ => unimplemented!("unsupported opcode @ {}: {:?}", ip - d, opcode)
+                let ed = ei.elapsed();
+                self.exec_time.entry(disc).or_default().add_assign(ed);
             }
+            let gci = Instant::now();
+            // TODO figure out a better strategy for GC
+            if self.environments.len() > self.env_limit {
+                self.cleanup_envs();
+                self.env_limit *= 2;
+                if self.env_limit > self.env_max {
+                    self.env_limit = self.env_max
+                }
+            }
+            self.gc_time += gci.elapsed();
         }
         Ok(())
     }
@@ -139,10 +171,6 @@ impl Interpreter {
 
     fn debug(&self) {
         println!("[DEBUG] {:?}", self.exec_stack)
-    }
-
-    fn get_env(&self) -> &Rc<Environment> {
-        &self.call_stack.last().unwrap().environment
     }
 
     fn peek(&self) -> Result<Value, RuntimeError> {
@@ -209,6 +237,8 @@ impl Interpreter {
 }
 
 struct CallFrame {
+    code: Rc<Code>,
+    ip: usize,
     environment: Rc<Environment>
 }
 

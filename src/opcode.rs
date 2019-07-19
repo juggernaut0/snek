@@ -6,10 +6,7 @@ use crate::opcode::OpCode::*;
 use crate::resolver::LocalId;
 use crate::value::Value;
 
-type StringId = u16;
 type Name = Vec<String>;
-type LabelId = u16;
-type TypeId = u16;
 
 #[derive(Debug)]
 pub enum OpCode {
@@ -26,9 +23,9 @@ pub enum OpCode {
     LoadName(Rc<Name>),
     LoadConstant(Value),
     SaveLocal(LocalId),
-    /*SaveNamespace(StringId, NameId),*/
+    SaveNamespace(Rc<String>, Rc<Name>),
     Call(u16),
-    /*TailCall,*/
+    TailCall,
     MakeClosure(Rc<Code>, u16),
     MakeNamespace(Rc<Name>, bool),
     /*MakeType(NameId, TypeId),

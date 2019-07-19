@@ -1,6 +1,7 @@
 use std::env;
 use std::fs;
 use std::process::exit;
+use std::rc::Rc;
 
 mod ast;
 mod codegen;
@@ -47,5 +48,5 @@ fn run_from_file(path: &str) {
     #[cfg(debug_assertions)] {
         debug::print_code(&code);
     }
-    interpreter::execute(&code);
+    interpreter::execute(Rc::new(code));
 }

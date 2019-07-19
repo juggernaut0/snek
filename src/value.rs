@@ -80,7 +80,7 @@ impl CompiledFunction {
         }
     }
 
-    pub fn code(&self) -> &Code {
+    pub fn code(&self) -> &Rc<Code> {
         &self.code
     }
 
