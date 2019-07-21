@@ -98,7 +98,7 @@ impl<'a> CodeGenerator<'a> {
         let name = Rc::new(name);
 
         if !name.is_empty() {
-            self.code.add_op_code(MakeNamespace(Rc::clone(&name), namespace.public));
+            unimplemented!("MakeNamespace"); // TODO
         }
         for decl in &namespace.decls {
             self.gen_decl(decl, &name);
@@ -187,8 +187,8 @@ impl<'a> CodeGenerator<'a> {
     }
 
     fn gen_ops_call(&mut self, name: &str, arity: u16) {
-        // TODO dedup operator name vectors to prevent unnecessary allocations
-        self.code.add_op_code(LoadName(Rc::new(vec!("ops".to_string(), name.to_string()))));
+        // TODO dedup operator names to prevent unnecessary allocations
+        self.code.add_op_code(LoadName(Rc::new(format!("ops.{}", name))));
         self.code.add_op_code(Call(arity));
     }
 
@@ -256,9 +256,10 @@ impl<'a> CodeGenerator<'a> {
 
     fn gen_name(&mut self, qname: &Expr) {
         if let Some((id, name)) = self.base.resolver.get_usage(qname) {
-            self.code.add_op_code(LoadLocal(Rc::clone(name), *id));
+            self.code.add_op_code(LoadLocal(*id));
+            self.code.set_local_name(*id, name.clone())
         } else if let ExprType::QName(qn) = &qname.expr_type {
-            self.code.add_op_code(LoadName(Rc::new(qn.parts.clone())));
+            self.code.add_op_code(LoadName(Rc::new(qn.parts.join("."))));
         } else {
             unreachable!()
         }

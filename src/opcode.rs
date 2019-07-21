@@ -6,7 +6,7 @@ use crate::opcode::OpCode::*;
 use crate::resolver::LocalId;
 use crate::value::Value;
 
-type Name = Vec<String>;
+type Name = String;
 
 #[derive(Debug)]
 pub enum OpCode {
@@ -19,7 +19,7 @@ pub enum OpCode {
     Decompose(Rc<Name>, u16),
     Jump(u16),
     JumpIfFalse(u16),
-    LoadLocal(Rc<String>, LocalId),
+    LoadLocal(LocalId),
     LoadName(Rc<Name>),
     LoadConstant(Value),
     SaveLocal(LocalId),
@@ -66,7 +66,7 @@ pub struct CodeBuilder {
     codes: Vec<Rc<Code>>,
     //types: Vec<TypeDecl>,
     labels: Vec<usize>, // labelId to ip
-    locals: HashMap<LocalId, Rc<String>>,
+    locals: HashMap<LocalId, String>,
 }
 
 impl CodeBuilder {
@@ -92,10 +92,9 @@ impl CodeBuilder {
                 self.add_op(JUMP_IF_FALSE_CODE);
                 self.add_op(d);
             }
-            LoadLocal(name, id) => {
+            LoadLocal(id) => {
                 self.add_op(LOAD_LOCAL_CODE);
                 self.add_op(id);
-                self.locals.insert(id, name);
             },
             LoadName(name) => {
                 self.add_op(LOAD_NAME_CODE);
@@ -186,6 +185,10 @@ impl CodeBuilder {
         self.ops[label] = d as u16;
     }
 
+    pub fn set_local_name(&mut self, id: LocalId, name: String) {
+        self.locals.insert(id, name);
+    }
+
     pub fn finalize(mut self) -> Code {
         self.ops.shrink_to_fit();
         self.lines.push(self.current_line);
@@ -215,7 +218,7 @@ pub struct Code {
     names: Vec<Rc<Name>>,
     constants: Vec<Value>,
     codes: Vec<Rc<Code>>,
-    locals: HashMap<LocalId, Rc<String>>,
+    locals: HashMap<LocalId, String>,
 }
 
 impl Code {
@@ -239,8 +242,7 @@ impl Code {
             }
             LOAD_LOCAL_CODE => {
                 let id = self.ops[index + 1];
-                let name = Rc::clone(self.locals.get(&id).unwrap());
-                (LoadLocal(name, id), 2)
+                (LoadLocal(id), 2)
             }
             LOAD_NAME_CODE => {
                 let name = Rc::clone(self.get_arg(&self.names, index, 1));
@@ -285,6 +287,10 @@ impl Code {
 
     pub fn len(&self) -> usize {
         self.ops.len()
+    }
+
+    pub fn get_local_name(&self, local: LocalId) -> &String {
+        self.locals.get(&local).unwrap()
     }
 
     fn get_arg<'a, T>(&self, vec: &'a Vec<T>, index: usize, offset: usize) -> &'a T {

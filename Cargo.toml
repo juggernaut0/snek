@@ -5,3 +5,4 @@ authors = ["Tom Warner <tomwamt@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+fnv = "1.0"

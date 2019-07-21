@@ -7,18 +7,25 @@ use std::cell::RefCell;
 use std::time::{Duration, Instant};
 use std::mem::{Discriminant, discriminant};
 use std::ops::AddAssign;
+use fnv::FnvHashMap;
 
 pub fn execute(code: Rc<Code>) {
     let mut int = Interpreter::new(code);
     match int.run() {
         Ok(()) => {
-            println!("decode: {:?}", int.decode_time);
+            /*let mut decode_times = int.decode_time.iter().collect::<Vec<_>>();
+            decode_times.sort_by(|(_, a), (_, b)| b.cmp(a));
+            for (d, t) in decode_times {
+                println!("decode {:?}: {:?}", d, t);
+            }
+
             let mut exec_times = int.exec_time.iter().collect::<Vec<_>>();
             exec_times.sort_by(|(_, a), (_, b)| b.cmp(a));
             for (d, t) in exec_times {
                 println!("exec {:?}: {:?}", d, t);
             }
-            println!("gc: {:?}", int.gc_time);
+
+            println!("gc: {:?}", int.gc_time);*/
         },
         Err(e) => {
             eprintln!("[ERROR] {}", e.message)
@@ -37,9 +44,9 @@ pub struct Interpreter {
     environments: Vec<Rc<Environment>>,
     env_limit: usize,
     env_max: usize,
-    decode_time: Duration,
-    exec_time: HashMap<Discriminant<OpCode>, Duration>,
-    gc_time: Duration,
+    //decode_time: HashMap<Discriminant<OpCode>, Duration>,
+    //exec_time: HashMap<Discriminant<OpCode>, Duration>,
+    //gc_time: Duration,
 }
 
 impl Interpreter {
@@ -51,9 +58,9 @@ impl Interpreter {
             environments: Vec::new(),
             env_limit: 16,
             env_max: 1 << 16,
-            decode_time: Duration::default(),
-            exec_time: HashMap::new(),
-            gc_time: Duration::default(),
+            //decode_time: HashMap::new(),
+            //exec_time: HashMap::new(),
+            //gc_time: Duration::default(),
         }
     }
 
@@ -61,12 +68,13 @@ impl Interpreter {
         while !self.call_stack.is_empty() {
             let mut frame = self.call_stack.pop().unwrap();
             while frame.ip < frame.code.len() {
-                let di = Instant::now();
+                //let di = Instant::now();
                 let (opcode, d) = frame.code.get_op_code(frame.ip);
                 frame.ip += d;
-                self.decode_time += di.elapsed();
-                let ei = Instant::now();
-                let disc = discriminant(&opcode);
+                //let dd = di.elapsed();
+                //let disc = discriminant(&opcode);
+                //self.decode_time.entry(disc).or_default().add_assign(dd);
+                //let ei = Instant::now();
                 match opcode {
                     NoOp => (),
                     Fail(msg) => {
@@ -88,24 +96,17 @@ impl Interpreter {
                             frame.ip += d as usize;
                         }
                     }
-                    LoadLocal(name, id) => {
-                        let v = frame.environment.load(id).ok_or(self.error(format!("Variable '{}' accessed before assignment", name)))?;
+                    LoadLocal(id) => {
+                        let v = frame.environment.load(id)
+                            .ok_or_else(|| self.error(format!("Variable '{}' accessed before assignment", frame.code.get_local_name(id))))?;
                         self.exec_stack.push(v);
                     },
                     LoadName(name) => {
-                        let mut ns = &self.root_namespace;
-                        for part in &name[0..(name.len() - 1)] {
-                            if let Some(subname) = ns.subnames.get(part) {
-                                ns = subname
-                            } else {
-                                return Err(self.error(format!("No such namespace: {}", part)))
-                            }
-                        }
-                        let last = &name[name.len() - 1];
-                        if let Some(v) = ns.values.get(last) {
+                        let name: &String = &name;
+                        if let Some(v) = self.root_namespace.values.get(name) {
                             self.exec_stack.push(v.clone())
                         } else {
-                            return Err(self.error(format!("No such value: {}", last)))
+                            return Err(self.error(format!("No such value: {}", &name)))
                         }
                     },
                     LoadConstant(v) => self.exec_stack.push(v),
@@ -146,10 +147,10 @@ impl Interpreter {
                     }
                     _ => unimplemented!("unsupported opcode @ {}: {:?}", frame.ip - d, opcode)
                 }
-                let ed = ei.elapsed();
-                self.exec_time.entry(disc).or_default().add_assign(ed);
+                //let ed = ei.elapsed();
+                //self.exec_time.entry(disc).or_default().add_assign(ed);
             }
-            let gci = Instant::now();
+            //let gci = Instant::now();
             // TODO figure out a better strategy for GC
             if self.environments.len() > self.env_limit {
                 self.cleanup_envs();
@@ -158,7 +159,7 @@ impl Interpreter {
                     self.env_limit = self.env_max
                 }
             }
-            self.gc_time += gci.elapsed();
+            //self.gc_time += gci.elapsed();
         }
         Ok(())
     }
@@ -245,7 +246,6 @@ struct CallFrame {
 #[derive(Default)]
 struct Namespace {
     values: HashMap<String, Value>,
-    subnames: HashMap<String, Namespace>
 }
 
 // TODO find a faster implementation than this (Vec instead of HashMap)
@@ -253,7 +253,7 @@ struct Namespace {
 #[derive(Default)]
 pub struct Environment {
     parent: Option<Rc<Environment>>,
-    bindings: RefCell<HashMap<u16, Value>>,
+    bindings: RefCell<FnvHashMap<u16, Value>>,
     marked: RefCell<bool>,
 }
 
@@ -262,7 +262,7 @@ impl Environment {
         Environment {
             parent: Some(parent),
             //bindings: RefCell::new(vec![Value::Uninitialized; size]),
-            bindings: RefCell::new(HashMap::new()),
+            bindings: RefCell::new(FnvHashMap::default()),
             marked: RefCell::new(false)
         }
     }
@@ -321,8 +321,7 @@ impl Environment {
 
 fn make_builtins() -> Namespace {
     let mut root = Namespace::default();
-    let ops = make_ops();
-    root.subnames.insert("ops".to_string(), ops);
+    make_ops(&mut root);
 
     let println = Value::Function(Rc::new(FunctionValue::from_closure(|int| {
         let v = int.pop()?;
@@ -344,12 +343,11 @@ macro_rules! make_binary_op {
     };
 }
 
-fn make_ops() -> Namespace {
-    let mut ops = Namespace::default();
-    ops.values.insert("plus".to_string(), make_binary_op!(+));
-    ops.values.insert("minus".to_string(), make_binary_op!(-));
-    ops.values.insert("times".to_string(), make_binary_op!(*));
-    ops.values.insert("div".to_string(), make_binary_op!(/));
+fn make_ops(ns: &mut Namespace) {
+    ns.values.insert("ops.plus".to_string(), make_binary_op!(+));
+    ns.values.insert("ops.minus".to_string(), make_binary_op!(-));
+    ns.values.insert("ops.times".to_string(), make_binary_op!(*));
+    ns.values.insert("ops.div".to_string(), make_binary_op!(/));
 
     let eq = Value::Function(Rc::new(FunctionValue::from_closure(|int| {
         let b = int.pop()?;
@@ -363,7 +361,5 @@ fn make_ops() -> Namespace {
         };
         Ok(int.exec_stack.push(Value::Boolean(is_eq)))
     }, 2)));
-    ops.values.insert("eq".to_string(), eq);
-
-    ops
+    ns.values.insert("ops.eq".to_string(), eq);
 }
