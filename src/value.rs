@@ -16,6 +16,32 @@ pub enum Value {
     // TODO other object types
 }
 
+impl Value {
+    pub fn require_number(self) -> Result<f64, RuntimeError> {
+        if let Value::Number(n) = self {
+            Ok(n)
+        } else {
+            Err(RuntimeError { message: format!("Required number, got {}", self) })
+        }
+    }
+
+    pub fn require_boolean(self) -> Result<bool, RuntimeError> {
+        if let Value::Boolean(b) = self {
+            Ok(b)
+        } else {
+            Err(RuntimeError { message: format!("Required boolean, got {}", self) })
+        }
+    }
+
+    pub fn require_function(self) -> Result<Rc<FunctionValue>, RuntimeError> {
+        if let Value::Function(fv) = self {
+            Ok(fv)
+        } else {
+            Err(RuntimeError { message: format!("Required function, got {}", self) })
+        }
+    }
+}
+
 impl Display for Value {
     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
         match self {

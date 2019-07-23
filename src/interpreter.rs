@@ -34,7 +34,7 @@ pub fn execute(code: Rc<Code>) {
 }
 
 pub struct RuntimeError {
-    message: String
+    pub message: String
 }
 
 pub struct Interpreter {
@@ -91,7 +91,7 @@ impl Interpreter {
                         frame.ip += d as usize;
                     },
                     JumpIfFalse(d) => {
-                        let b = self.pop_bool()?;
+                        let b = self.pop()?.require_boolean()?;
                         if !b {
                             frame.ip += d as usize;
                         }
@@ -115,12 +115,7 @@ impl Interpreter {
                         frame.environment.save(id, v);
                     },
                     Call(nargs) => {
-                        let f = self.pop()?;
-                        let fv = if let Value::Function(fv) = f {
-                            fv
-                        } else {
-                            return Err(self.error(format!("Can only call functions, got {:?}", f)))
-                        };
+                        let fv = self.pop()?.require_function()?;
                         let func_params = fv.num_params();
                         if nargs == func_params {
                             match fv.func_type() {
@@ -180,20 +175,6 @@ impl Interpreter {
 
     fn pop(&mut self) -> Result<Value, RuntimeError> {
         self.exec_stack.pop().ok_or_else(|| { self.error("Cannot pop empty stack".to_string()) })
-    }
-
-    fn pop_number(&mut self) -> Result<f64, RuntimeError> {
-        match self.pop()? {
-            Value::Number(n) => Ok(n),
-            _ => Err(self.error("Expected a number".to_string()))
-        }
-    }
-
-    fn pop_bool(&mut self) -> Result<bool, RuntimeError> {
-        match self.pop()? {
-            Value::Boolean(b) => Ok(b),
-            _ => Err(self.error("Expected a boolean".to_string()))
-        }
     }
 
     fn new_env(&mut self, parent: Rc<Environment>) -> Rc<Environment> {
@@ -336,8 +317,8 @@ fn make_builtins() -> Namespace {
 macro_rules! make_binary_op {
     ($oper: tt) => {
         Value::Function(Rc::new(FunctionValue::from_closure(|int| {
-            let b = int.pop_number()?;
-            let a = int.pop_number()?;
+            let b = int.pop()?.require_number()?;
+            let a = int.pop()?.require_number()?;
             Ok(int.exec_stack.push(Value::Number(a $oper b)))
         }, 2)))
     };
