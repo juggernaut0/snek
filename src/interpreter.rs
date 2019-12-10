@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use std::mem::{Discriminant, discriminant};
 use std::ops::AddAssign;
 use fnv::FnvHashMap;
+use crate::gc::GcRoot;
 
 pub fn execute(code: Rc<Code>) {
     let mut int = Interpreter::new(code);
@@ -38,7 +39,8 @@ pub struct RuntimeError {
 }
 
 pub struct Interpreter {
-    exec_stack: Vec<Value>,
+    gc_root: GcRoot,
+    //exec_stack: Vec<Value>,
     call_stack: Vec<CallFrame>,
     root_namespace: Namespace,
     environments: Vec<Rc<Environment>>,
@@ -52,7 +54,7 @@ pub struct Interpreter {
 impl Interpreter {
     fn new(code: Rc<Code>) -> Interpreter {
         Interpreter {
-            exec_stack: Vec::new(),
+            //exec_stack: Vec::new(),
             call_stack: vec![CallFrame { code, ip: 0, environment: Rc::new(Environment::default()) }],
             root_namespace: make_builtins(),
             environments: Vec::new(),

@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 mod ast;
 mod codegen;
+mod gc;
 mod interpreter;
 mod opcode;
 mod parser;

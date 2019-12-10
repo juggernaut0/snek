@@ -6,17 +6,17 @@ use crate::interpreter::{Environment, Interpreter, RuntimeError};
 use crate::opcode::Code;
 
 #[derive(Clone)]
-pub enum Value {
+pub enum Value<'a> {
     Uninitialized,
     Unit,
     Number(f64),
     Boolean(bool),
-    String(Rc<String>),
-    Function(Rc<FunctionValue>),
+    String(&'a String),
+    Function(&'a FunctionValue),
     // TODO other object types
 }
 
-impl Value {
+impl<'a> Value<'a> {
     pub fn require_number(self) -> Result<f64, RuntimeError> {
         if let Value::Number(n) = self {
             Ok(n)
@@ -33,7 +33,7 @@ impl Value {
         }
     }
 
-    pub fn require_function(self) -> Result<Rc<FunctionValue>, RuntimeError> {
+    pub fn require_function(self) -> Result<&'a FunctionValue, RuntimeError> {
         if let Value::Function(fv) = self {
             Ok(fv)
         } else {
@@ -42,7 +42,7 @@ impl Value {
     }
 }
 
-impl Display for Value {
+impl Display for Value<'_> {
     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
         match self {
             Value::Uninitialized => write!(f, "Uninitialized"),
@@ -55,10 +55,21 @@ impl Display for Value {
     }
 }
 
-impl Debug for Value {
+impl Debug for Value<'_> {
     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
         Display::fmt(self, f)
     }
+}
+
+#[derive(Copy, Clone)]
+pub enum OwnedValue {
+    Uninitialized,
+    Unit,
+    Number(f64),
+    Boolean(bool),
+    String(*const String),
+    Function(*const FunctionValue),
+    // TODO other object types
 }
 
 pub struct FunctionValue {
@@ -90,7 +101,7 @@ impl FunctionValue {
 pub enum FunctionType {
     Compiled(CompiledFunction),
     Native(Box<dyn Fn(&mut Interpreter) -> Result<(), RuntimeError>>),
-    Partial(Rc<FunctionValue>, Vec<Value>)
+    //Partial(&'a FunctionValue<'a>, Vec<Value<'a>>) TODO partial functions
 }
 
 pub struct CompiledFunction {

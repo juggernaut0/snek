@@ -4,7 +4,6 @@ use std::rc::Rc;
 
 use crate::opcode::OpCode::*;
 use crate::resolver::LocalId;
-use crate::value::Value;
 
 type Name = String;
 
@@ -21,7 +20,7 @@ pub enum OpCode {
     JumpIfFalse(u16),
     LoadLocal(LocalId),
     LoadName(Rc<Name>),
-    LoadConstant(Value),
+    LoadConstant(ConstantValue),
     SaveLocal(LocalId),
     SaveNamespace(Rc<String>, Rc<Name>),
     Call(u16),
@@ -62,7 +61,7 @@ pub struct CodeBuilder {
     current_line: (usize, u32),
     strings: Vec<Rc<String>>,
     names: Vec<Rc<Name>>,
-    constants: Vec<Value>,
+    constants: Vec<ConstantValue>,
     codes: Vec<Rc<Code>>,
     //types: Vec<TypeDecl>,
     labels: Vec<usize>, // labelId to ip
@@ -145,7 +144,7 @@ impl CodeBuilder {
         }
     }
 
-    fn add_constant_op(&mut self, c: Value) {
+    fn add_constant_op(&mut self, c: ConstantValue) {
         if self.constants.len() >= std::u16::MAX as usize {
             panic!("Too many constants in Code")
         }
@@ -216,7 +215,7 @@ pub struct Code {
     lines: Vec<(usize, u32)>,
     strings: Vec<Rc<String>>,
     names: Vec<Rc<Name>>,
-    constants: Vec<Value>,
+    constants: Vec<ConstantValue>,
     codes: Vec<Rc<Code>>,
     locals: HashMap<LocalId, String>,
 }
@@ -302,4 +301,12 @@ impl Debug for Code {
     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
         write!(f, "<Code>")
     }
+}
+
+#[derive(Clone)]
+pub enum ConstantValue {
+    Unit,
+    Number(f64),
+    Boolean(bool),
+    String(String),
 }
