@@ -1,23 +1,23 @@
 use crate::value::{Value, FunctionValue};
 use std::collections::HashMap;
-use crate::opcode::ConstantValue;
+use crate::opcode::{ConstantValue, Code};
+use std::cell::RefCell;
+use fnv::FnvHashMap;
+use std::rc::Rc;
 
+#[derive(Default)]
 pub struct GcRoot {
     exec_stack: Vec<OwnedValue>,
-    //call_stack: Vec<CallFrame>,
+    call_stack: Vec<CallFrame>,
     root_namespace: Namespace,
+    environments: Vec<*const Environment>,
     strings: Vec<*const String>,
     functions: Vec<*const FunctionValue>
 }
 
 impl GcRoot {
     pub fn new() -> GcRoot {
-        GcRoot {
-            exec_stack: Vec::new(),
-            root_namespace: Namespace::default(),
-            strings: Vec::new(),
-            functions: Vec::new(),
-        }
+        GcRoot::default()
     }
 
     pub fn allocate(&mut self, obj: impl IntoOwnedValue) -> Value {
@@ -62,7 +62,7 @@ struct Namespace {
 }
 
 #[derive(Copy, Clone)]
-pub enum OwnedValue {
+enum OwnedValue {
     Uninitialized,
     Unit,
     Number(f64),
@@ -96,6 +96,83 @@ impl IntoOwnedValue for ConstantValue {
             ConstantValue::Boolean(b) => OwnedValue::Boolean(b),
             ConstantValue::String(s) => s.into_owned_value(),
         }
+    }
+}
+
+struct CallFrame {
+    code: Rc<Code>,
+    ip: usize,
+    environment: Rc<Environment>
+}
+
+// TODO find a faster implementation than this (Vec instead of HashMap)
+// NOTE this implementation is safe in a single thread
+#[derive(Default)]
+struct Environment {
+    parent: Option<Rc<Environment>>, // TODO maybe not use Rc?
+    bindings: RefCell<FnvHashMap<u16, OwnedValue>>,
+    marked: RefCell<bool>,
+}
+
+impl Environment {
+    fn new_child(parent: Rc<Environment>) -> Environment {
+        Environment {
+            parent: Some(parent),
+            //bindings: RefCell::new(vec![Value::Uninitialized; size]),
+            bindings: RefCell::new(FnvHashMap::default()),
+            marked: RefCell::new(false)
+        }
+    }
+
+    /*fn save(&self, slot: u16, value: Value) {
+        let i = slot as usize - self.offset;
+        self.bindings.borrow_mut()[i] = value;
+    }
+
+    fn load(&self, slot: u16) -> Option<Value> {
+        if slot as usize > self.offset {
+            let i = slot as usize - self.offset;
+            let v = &self.bindings.borrow()[i];
+            if let Value::Uninitialized = v {
+                None
+            } else {
+                Some(v.clone())
+            }
+        } else if let Some(p) = self.parent {
+            p.load(slot)
+        } else {
+            None
+        }
+    }*/
+
+    fn save(&self, slot: u16, value: Value) {
+        self.bindings.borrow_mut().insert(slot, to_owned(value));
+    }
+
+    fn load(&self, slot: u16) -> Option<Value> {
+        if let Some(&v) = self.bindings.borrow().get(&slot) {
+            Some(to_value(v))
+        } else if let Some(p) = &self.parent {
+            p.load(slot)
+        } else {
+            None
+        }
+    }
+
+    fn values(&self) -> Vec<Value> {
+        self.bindings.borrow().values().cloned().collect()
+    }
+
+    fn mark(&self) {
+        *self.marked.borrow_mut() = true;
+    }
+
+    fn unmark(&self) {
+        *self.marked.borrow_mut() = false;
+    }
+
+    fn marked(&self) -> bool {
+        *self.marked.borrow()
     }
 }
 

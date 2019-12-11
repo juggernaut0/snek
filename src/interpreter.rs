@@ -9,21 +9,7 @@ use crate::gc::GcRoot;
 pub fn execute(code: Rc<Code>) {
     let mut int = Interpreter::new(code);
     match int.run() {
-        Ok(()) => {
-            /*let mut decode_times = int.decode_time.iter().collect::<Vec<_>>();
-            decode_times.sort_by(|(_, a), (_, b)| b.cmp(a));
-            for (d, t) in decode_times {
-                println!("decode {:?}: {:?}", d, t);
-            }
-
-            let mut exec_times = int.exec_time.iter().collect::<Vec<_>>();
-            exec_times.sort_by(|(_, a), (_, b)| b.cmp(a));
-            for (d, t) in exec_times {
-                println!("exec {:?}: {:?}", d, t);
-            }
-
-            println!("gc: {:?}", int.gc_time);*/
-        },
+        Ok(()) => {},
         Err(e) => {
             eprintln!("[ERROR] {}", e.message)
         }
@@ -36,30 +22,15 @@ pub struct RuntimeError {
 
 pub struct Interpreter {
     gc_root: GcRoot,
-    //exec_stack: Vec<Value>,
-    call_stack: Vec<CallFrame>,
-
-    environments: Vec<Rc<Environment>>,
-    env_limit: usize,
-    env_max: usize,
-    //decode_time: HashMap<Discriminant<OpCode>, Duration>,
-    //exec_time: HashMap<Discriminant<OpCode>, Duration>,
-    //gc_time: Duration,
 }
 
 impl Interpreter {
     fn new(code: Rc<Code>) -> Interpreter {
         let mut gc_root = GcRoot::new();
         make_builtins(&mut gc_root);
+        gc_root.call_stack_push(vec![CallFrame { code, ip: 0, environment: Rc::new(Environment::default()) }]);
         Interpreter {
             gc_root,
-            call_stack: vec![CallFrame { code, ip: 0, environment: Rc::new(Environment::default()) }],
-            environments: Vec::new(),
-            env_limit: 16,
-            env_max: 1 << 16,
-            //decode_time: HashMap::new(),
-            //exec_time: HashMap::new(),
-            //gc_time: Duration::default(),
         }
     }
 
@@ -67,13 +38,8 @@ impl Interpreter {
         while !self.call_stack.is_empty() {
             let mut frame = self.call_stack.pop().unwrap();
             while frame.ip < frame.code.len() {
-                //let di = Instant::now();
                 let (opcode, d) = frame.code.get_op_code(frame.ip);
                 frame.ip += d;
-                //let dd = di.elapsed();
-                //let disc = discriminant(&opcode);
-                //self.decode_time.entry(disc).or_default().add_assign(dd);
-                //let ei = Instant::now();
                 match opcode {
                     NoOp => (),
                     Fail(msg) => {
@@ -218,83 +184,6 @@ impl Interpreter {
                 i += 1;
             }
         }
-    }
-}
-
-struct CallFrame {
-    code: Rc<Code>,
-    ip: usize,
-    environment: Rc<Environment>
-}
-
-// TODO find a faster implementation than this (Vec instead of HashMap)
-// NOTE this implementation is safe in a single thread
-#[derive(Default)]
-pub struct Environment {
-    parent: Option<Rc<Environment>>,
-    bindings: RefCell<FnvHashMap<u16, Value>>,
-    marked: RefCell<bool>,
-}
-
-impl Environment {
-    fn new_child(parent: Rc<Environment>) -> Environment {
-        Environment {
-            parent: Some(parent),
-            //bindings: RefCell::new(vec![Value::Uninitialized; size]),
-            bindings: RefCell::new(FnvHashMap::default()),
-            marked: RefCell::new(false)
-        }
-    }
-
-    /*fn save(&self, slot: u16, value: Value) {
-        let i = slot as usize - self.offset;
-        self.bindings.borrow_mut()[i] = value;
-    }
-
-    fn load(&self, slot: u16) -> Option<Value> {
-        if slot as usize > self.offset {
-            let i = slot as usize - self.offset;
-            let v = &self.bindings.borrow()[i];
-            if let Value::Uninitialized = v {
-                None
-            } else {
-                Some(v.clone())
-            }
-        } else if let Some(p) = self.parent {
-            p.load(slot)
-        } else {
-            None
-        }
-    }*/
-
-    fn save(&self, slot: u16, value: Value) {
-        self.bindings.borrow_mut().insert(slot, value);
-    }
-
-    fn load(&self, slot: u16) -> Option<Value> {
-        if let Some(v) = self.bindings.borrow().get(&slot) {
-            Some(v.clone())
-        } else if let Some(p) = &self.parent {
-            p.load(slot)
-        } else {
-            None
-        }
-    }
-
-    fn values(&self) -> Vec<Value> {
-        self.bindings.borrow().values().cloned().collect()
-    }
-
-    fn mark(&self) {
-        *self.marked.borrow_mut() = true;
-    }
-
-    fn unmark(&self) {
-        *self.marked.borrow_mut() = false;
-    }
-
-    fn marked(&self) -> bool {
-        *self.marked.borrow()
     }
 }
 
