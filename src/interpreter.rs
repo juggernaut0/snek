@@ -1,12 +1,8 @@
-use crate::opcode::{Code, OpCode};
+use crate::opcode::Code;
 use crate::opcode::OpCode::*;
 use crate::value::{Value, FunctionValue, FunctionType, CompiledFunction};
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::time::{Duration, Instant};
-use std::mem::{Discriminant, discriminant};
-use std::ops::AddAssign;
 use fnv::FnvHashMap;
 use crate::gc::GcRoot;
 
@@ -42,7 +38,7 @@ pub struct Interpreter {
     gc_root: GcRoot,
     //exec_stack: Vec<Value>,
     call_stack: Vec<CallFrame>,
-    root_namespace: Namespace,
+
     environments: Vec<Rc<Environment>>,
     env_limit: usize,
     env_max: usize,
@@ -53,10 +49,11 @@ pub struct Interpreter {
 
 impl Interpreter {
     fn new(code: Rc<Code>) -> Interpreter {
+        let mut gc_root = GcRoot::new();
+        make_builtins(&mut gc_root);
         Interpreter {
-            //exec_stack: Vec::new(),
+            gc_root,
             call_stack: vec![CallFrame { code, ip: 0, environment: Rc::new(Environment::default()) }],
-            root_namespace: make_builtins(),
             environments: Vec::new(),
             env_limit: 16,
             env_max: 1 << 16,
@@ -87,7 +84,7 @@ impl Interpreter {
                     },
                     Duplicate => {
                         let v = self.peek()?;
-                        self.exec_stack.push(v);
+                        self.push(v);
                     },
                     Jump(d) => {
                         frame.ip += d as usize;
@@ -101,17 +98,17 @@ impl Interpreter {
                     LoadLocal(id) => {
                         let v = frame.environment.load(id)
                             .ok_or_else(|| self.error(format!("Variable '{}' accessed before assignment", frame.code.get_local_name(id))))?;
-                        self.exec_stack.push(v);
+                        self.push(v);
                     },
                     LoadName(name) => {
                         let name: &String = &name;
-                        if let Some(v) = self.root_namespace.values.get(name) {
-                            self.exec_stack.push(v.clone())
+                        if let Some(v) = self.gc_root.get_name(name) {
+                            self.push(v.clone())
                         } else {
                             return Err(self.error(format!("No such value: {}", &name)))
                         }
                     },
-                    LoadConstant(v) => self.exec_stack.push(v),
+                    LoadConstant(v) => self.gc_root.exec_stack_push(self.gc_root.allocate(v)),
                     SaveLocal(id) => {
                         let v = self.pop()?;
                         frame.environment.save(id, v);
@@ -138,9 +135,9 @@ impl Interpreter {
                     },
                     MakeClosure(code, nparams) => {
                         let cf = CompiledFunction::new(code, &frame.environment);
-                        let fv = Rc::new(FunctionValue::new(FunctionType::Compiled(cf), nparams));
-                        let f = Value::Function(fv);
-                        self.exec_stack.push(f);
+                        let fv = FunctionValue::new(FunctionType::Compiled(cf), nparams);
+                        let f = self.gc_root.allocate(fv);
+                        self.push(f);
                     }
                     _ => unimplemented!("unsupported opcode @ {}: {:?}", frame.ip - d, opcode)
                 }
@@ -171,12 +168,16 @@ impl Interpreter {
         println!("[DEBUG] {:?}", self.exec_stack)
     }
 
+    fn push(&mut self, value: Value) {
+        self.gc_root.exec_stack_push(value);
+    }
+
     fn peek(&self) -> Result<Value, RuntimeError> {
-        self.exec_stack.last().cloned().ok_or_else(|| { self.error("Cannot peek empty stack".to_string()) })
+        self.gc_root.exec_stack_peek().ok_or_else(|| { self.error("Cannot peek empty stack".to_string()) })
     }
 
     fn pop(&mut self) -> Result<Value, RuntimeError> {
-        self.exec_stack.pop().ok_or_else(|| { self.error("Cannot pop empty stack".to_string()) })
+        self.gc_root.exec_stack_pop().ok_or_else(|| { self.error("Cannot pop empty stack".to_string()) })
     }
 
     fn new_env(&mut self, parent: Rc<Environment>) -> Rc<Environment> {
@@ -224,11 +225,6 @@ struct CallFrame {
     code: Rc<Code>,
     ip: usize,
     environment: Rc<Environment>
-}
-
-#[derive(Default)]
-struct Namespace {
-    values: HashMap<String, Value>,
 }
 
 // TODO find a faster implementation than this (Vec instead of HashMap)
@@ -302,37 +298,34 @@ impl Environment {
     }
 }
 
-fn make_builtins() -> Namespace {
-    let mut root = Namespace::default();
-    make_ops(&mut root);
+fn make_builtins(gc_root: &mut GcRoot) {
+    make_ops(gc_root);
 
-    let println = Value::Function(Rc::new(FunctionValue::from_closure(|int| {
+    let println = FunctionValue::from_closure(|int| {
         let v = int.pop()?;
         println!("{}", v);
         Ok(int.exec_stack.push(Value::Unit))
-    }, 1)));
-    root.values.insert("println".to_string(), println);
-
-    root
+    }, 1);
+    gc_root.put_name("println".to_string(), gc_root.allocate(println));
 }
 
 macro_rules! make_binary_op {
     ($oper: tt) => {
-        Value::Function(Rc::new(FunctionValue::from_closure(|int| {
+        FunctionValue::from_closure(|int| {
             let b = int.pop()?.require_number()?;
             let a = int.pop()?.require_number()?;
             Ok(int.exec_stack.push(Value::Number(a $oper b)))
-        }, 2)))
+        }, 2)
     };
 }
 
-fn make_ops(ns: &mut Namespace) {
-    ns.values.insert("ops.plus".to_string(), make_binary_op!(+));
-    ns.values.insert("ops.minus".to_string(), make_binary_op!(-));
-    ns.values.insert("ops.times".to_string(), make_binary_op!(*));
-    ns.values.insert("ops.div".to_string(), make_binary_op!(/));
+fn make_ops(gc_root: &mut GcRoot) {
+    gc_root.put_name("ops.plus".to_string(), gc_root.allocate(make_binary_op!(+)));
+    gc_root.put_name("ops.minus".to_string(), gc_root.allocate(make_binary_op!(-)));
+    gc_root.put_name("ops.times".to_string(), gc_root.allocate(make_binary_op!(*)));
+    gc_root.put_name("ops.div".to_string(), gc_root.allocate(make_binary_op!(/)));
 
-    let eq = Value::Function(Rc::new(FunctionValue::from_closure(|int| {
+    let eq = FunctionValue::from_closure(|int| {
         let b = int.pop()?;
         let a = int.pop()?;
         let is_eq = match (a, b) { // TODO object values
@@ -343,6 +336,6 @@ fn make_ops(ns: &mut Namespace) {
             _ => false
         };
         Ok(int.exec_stack.push(Value::Boolean(is_eq)))
-    }, 2)));
-    ns.values.insert("ops.eq".to_string(), eq);
+    }, 2);
+    gc_root.put_name("ops.eq".to_string(), gc_root.allocate(eq));
 }

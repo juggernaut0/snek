@@ -61,17 +61,6 @@ impl Debug for Value<'_> {
     }
 }
 
-#[derive(Copy, Clone)]
-pub enum OwnedValue {
-    Uninitialized,
-    Unit,
-    Number(f64),
-    Boolean(bool),
-    String(*const String),
-    Function(*const FunctionValue),
-    // TODO other object types
-}
-
 pub struct FunctionValue {
     func_type: FunctionType,
     num_params: u16,
