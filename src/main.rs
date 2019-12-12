@@ -5,13 +5,12 @@ use std::rc::Rc;
 
 mod ast;
 mod codegen;
-mod gc;
 mod interpreter;
+mod mem;
 mod opcode;
 mod parser;
 mod resolver;
 mod scanner;
-mod value;
 
 #[cfg(debug_assertions)]
 mod debug;

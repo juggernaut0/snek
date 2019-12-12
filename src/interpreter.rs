@@ -1,10 +1,9 @@
 use crate::opcode::Code;
 use crate::opcode::OpCode::*;
-use crate::value::{Value, FunctionValue, FunctionType, CompiledFunction};
 use std::rc::Rc;
 use std::cell::RefCell;
 use fnv::FnvHashMap;
-use crate::gc::GcRoot;
+use crate::mem::{GcRoot, Value};
 
 pub fn execute(code: Rc<Code>) {
     let mut int = Interpreter::new(code);
@@ -28,7 +27,8 @@ impl Interpreter {
     fn new(code: Rc<Code>) -> Interpreter {
         let mut gc_root = GcRoot::new();
         make_builtins(&mut gc_root);
-        gc_root.call_stack_push(vec![CallFrame { code, ip: 0, environment: Rc::new(Environment::default()) }]);
+        let env = gc_root.new_env();
+        gc_root.call_stack_push(code, env);
         Interpreter {
             gc_root,
         }
@@ -36,9 +36,9 @@ impl Interpreter {
 
     fn run(&mut self) -> Result<(), RuntimeError> {
         while !self.call_stack.is_empty() {
-            let mut frame = self.call_stack.pop().unwrap();
-            while frame.ip < frame.code.len() {
-                let (opcode, d) = frame.code.get_op_code(frame.ip);
+            let frame = self.gc_root.call_stack_pop();
+            while frame.ip < frame.code().len() {
+                let (opcode, d) = frame.code().get_op_code(frame.ip);
                 frame.ip += d;
                 match opcode {
                     NoOp => (),
@@ -62,8 +62,8 @@ impl Interpreter {
                         }
                     }
                     LoadLocal(id) => {
-                        let v = frame.environment.load(id)
-                            .ok_or_else(|| self.error(format!("Variable '{}' accessed before assignment", frame.code.get_local_name(id))))?;
+                        let v = frame.environment().load(id)
+                            .ok_or_else(|| self.error(format!("Variable '{}' accessed before assignment", frame.code().get_local_name(id))))?;
                         self.push(v);
                     },
                     LoadName(name) => {
@@ -77,7 +77,7 @@ impl Interpreter {
                     LoadConstant(v) => self.gc_root.exec_stack_push(self.gc_root.allocate(v)),
                     SaveLocal(id) => {
                         let v = self.pop()?;
-                        frame.environment.save(id, v);
+                        frame.environment().save(id, v);
                     },
                     Call(nargs) => {
                         let fv = self.pop()?.require_function()?;
@@ -85,10 +85,11 @@ impl Interpreter {
                         if nargs == func_params {
                             match fv.func_type() {
                                 FunctionType::Compiled(cf) => {
-                                    let environment = self.new_env(cf.environment());
-                                    let new_frame = CallFrame { code: Rc::clone(cf.code()), ip: 0, environment };
-                                    self.call_stack.push(frame);
-                                    frame = new_frame;
+                                    let environment = self.gc_root.new_child_env(cf.environment());
+                                    /*let new_frame = CallFrame { code: , ip: 0, environment };
+                                    self.call_stack.push(frame);*/
+                                    self.gc_root.call_stack_push(Rc::clone(cf.code()), environment);
+                                    //frame = new_frame;
                                 },
                                 FunctionType::Native(f) => f(self)?,
                                 FunctionType::Partial(_, _) => unimplemented!("partial functions"), // TODO
@@ -107,19 +108,8 @@ impl Interpreter {
                     }
                     _ => unimplemented!("unsupported opcode @ {}: {:?}", frame.ip - d, opcode)
                 }
-                //let ed = ei.elapsed();
-                //self.exec_time.entry(disc).or_default().add_assign(ed);
             }
-            //let gci = Instant::now();
-            // TODO figure out a better strategy for GC
-            if self.environments.len() > self.env_limit {
-                self.cleanup_envs();
-                self.env_limit *= 2;
-                if self.env_limit > self.env_max {
-                    self.env_limit = self.env_max
-                }
-            }
-            //self.gc_time += gci.elapsed();
+            self.gc_root.gc();
         }
         Ok(())
     }
@@ -146,13 +136,7 @@ impl Interpreter {
         self.gc_root.exec_stack_pop().ok_or_else(|| { self.error("Cannot pop empty stack".to_string()) })
     }
 
-    fn new_env(&mut self, parent: Rc<Environment>) -> Rc<Environment> {
-        let env = Rc::new(Environment::new_child(parent));
-        self.environments.push(Rc::clone(&env));
-        env
-    }
-
-    fn cleanup_envs(&mut self) {
+    /*fn cleanup_envs(&mut self) {
         fn mark_value(v: &Value) {
             if let Value::Function(fv) = v {
                 if let FunctionType::Compiled(cf) = fv.func_type() {
@@ -184,7 +168,7 @@ impl Interpreter {
                 i += 1;
             }
         }
-    }
+    }*/
 }
 
 fn make_builtins(gc_root: &mut GcRoot) {

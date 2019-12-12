@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::fmt::{Debug, Display, Error, Formatter};
 use std::rc::{Rc, Weak};
 
-use crate::interpreter::{Environment, Interpreter, RuntimeError};
+use crate::interpreter::{Interpreter, RuntimeError};
 use crate::opcode::Code;
 
 #[derive(Clone)]
@@ -95,14 +95,14 @@ pub enum FunctionType {
 
 pub struct CompiledFunction {
     code: Rc<Code>,
-    environment: Weak<Environment>,
+    environment: *const Environment,
 }
 
 impl CompiledFunction {
-    pub fn new(code: Rc<Code>, environment: &Rc<Environment>) -> CompiledFunction {
+    pub fn new(code: Rc<Code>, environment: &Environment) -> CompiledFunction {
         CompiledFunction {
             code,
-            environment: Rc::downgrade(environment),
+            environment,
         }
     }
 
