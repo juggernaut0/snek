@@ -4,6 +4,8 @@ use std::rc::{Rc, Weak};
 
 use crate::interpreter::{Interpreter, RuntimeError};
 use crate::opcode::Code;
+use crate::mem::environment::{OwnedEnv, get_inner};
+use crate::mem::Environment;
 
 #[derive(Clone)]
 pub enum Value<'a> {
@@ -95,23 +97,23 @@ pub enum FunctionType {
 
 pub struct CompiledFunction {
     code: Rc<Code>,
-    environment: *const Environment,
+    environment: *const OwnedEnv,
 }
 
 impl CompiledFunction {
-    pub fn new(code: Rc<Code>, environment: &Environment) -> CompiledFunction {
+    pub fn new(code: Rc<Code>, environment: Environment) -> CompiledFunction {
         CompiledFunction {
             code,
-            environment,
+            environment: get_inner(environment),
         }
     }
 
     pub fn code(&self) -> &Rc<Code> {
         &self.code
     }
+}
 
-    pub fn environment(&self) -> Rc<Environment> {
-        self.environment.upgrade().unwrap()
-    }
+pub fn get_cf_environment(cf: &CompiledFunction) -> *const OwnedEnv {
+    cf.environment
 }
 

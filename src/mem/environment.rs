@@ -34,16 +34,16 @@ impl OwnedEnv {
     fn load(&self, slot: u16) -> Option<Value> {
         if let Some(&v) = self.bindings.borrow().get(&slot) {
             Some(to_value(v))
-        } else if let Some(p) = &self.parent {
-            p.load(slot)
+        } else if let Some(p) = self.parent {
+            unsafe { *p }.load(slot)
         } else {
             None
         }
     }
 
-    fn values(&self) -> Vec<Value> {
+    /*fn values(&self) -> Vec<Value> {
         self.bindings.borrow().values().cloned().collect()
-    }
+    }*/
 
     fn mark(&self) {
         *self.marked.borrow_mut() = true;
@@ -58,6 +58,7 @@ impl OwnedEnv {
     }
 }
 
+#[derive(Copy, Clone)]
 pub struct Environment<'a> {
     inner: &'a OwnedEnv
 }

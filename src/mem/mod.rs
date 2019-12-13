@@ -4,8 +4,11 @@ use std::rc::Rc;
 pub use crate::mem::environment::Environment;
 use crate::mem::environment::{OwnedEnv, get_inner};
 use crate::mem::owned_value::{IntoOwnedValue, OwnedValue};
-pub use crate::mem::value::Value;
+pub use crate::mem::value::{Value, FunctionType, CompiledFunction, FunctionValue};
 use crate::opcode::Code;
+use std::cell::RefCell;
+use std::borrow::Borrow;
+use crate::mem::value::get_cf_environment;
 
 mod environment;
 mod owned_value;
@@ -39,13 +42,17 @@ impl GcRoot {
     pub fn new_env(&mut self) -> Environment {
         let env = heap_allocate(OwnedEnv::default());
         self.environments.push(env);
-        env.borrow()
+        unsafe {
+            (*env).borrow()
+        }
     }
 
-    pub fn new_child_env(&mut self, parent: Environment) -> Environment {
-        let env = heap_allocate(OwnedEnv::new_child(get_inner(parent)));
+    pub fn new_child_env(&mut self, cf: &CompiledFunction) -> Environment {
+        let env = heap_allocate(OwnedEnv::new_child(get_cf_environment(cf)));
         self.environments.push(env);
-        env.borrow()
+        unsafe {
+            (*env).borrow()
+        }
     }
 
     pub fn exec_stack_push(&mut self, value: Value) {
@@ -57,15 +64,21 @@ impl GcRoot {
     }
 
     pub fn exec_stack_pop(&mut self) -> Option<Value> {
-        self.exec_stack.pop().map(|&it| to_value(it) )
+        self.exec_stack.pop().map(|it| to_value(it) )
     }
 
     pub fn call_stack_push(&mut self, code: Rc<Code>, env: Environment) {
         self.call_stack.push(OwnedCallFrame { code, ip: 0, environment: get_inner(env) })
     }
 
-    pub fn call_stack_pop(&mut self) -> CallFrame {
-        self.call_stack.pop().unwrap()
+    /*pub fn call_stack_peek(&self) -> Option<CallFrame> {
+        let last = self.call_stack.last()?;
+        Some(unsafe { last.borrow() })
+    }*/
+
+    pub fn call_stack_pop(&mut self) -> Option<CallFrame> {
+        let top = self.call_stack.pop()?;
+        Some(unsafe { top.borrow() })
     }
 
     // TODO WIP API for namespace put/gets
@@ -88,18 +101,18 @@ struct Namespace {
 }
 
 pub struct CallFrame<'a> {
-    code: &'a Code,
+    code: Rc<Code>,
     pub ip: usize,
-    environment: &'a OwnedEnv,
+    environment: Environment<'a>,
 }
 
 impl CallFrame<'_> {
     pub fn environment(&self) -> Environment {
-        Environment
+        self.environment
     }
 
     pub fn code(&self) -> &Code {
-        self.code
+        &self.code
     }
 }
 
@@ -107,6 +120,16 @@ struct OwnedCallFrame {
     code: Rc<Code>,
     ip: usize,
     environment: *const OwnedEnv,
+}
+
+impl OwnedCallFrame {
+    unsafe fn borrow<'a>(self) -> CallFrame<'a> {
+        CallFrame {
+            code: self.code,
+            ip: self.ip,
+            environment: (*self.environment).borrow(),
+        }
+    }
 }
 
 fn heap_allocate<T>(t: T) -> *const T {

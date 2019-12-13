@@ -303,7 +303,7 @@ impl Debug for Code {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum ConstantValue {
     Unit,
     Number(f64),

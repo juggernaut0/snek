@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use crate::opcode::{ConstantValue, Code};
 use std::rc::Rc;
 use crate::mem::heap_allocate;
+use crate::mem::value::FunctionValue;
 
 #[derive(Copy, Clone)]
 pub enum OwnedValue {
@@ -9,7 +10,7 @@ pub enum OwnedValue {
     Unit,
     Number(f64),
     Boolean(bool),
-    String(*const String), // TODO can I use Box for these (and other raw pointers in mem module)?
+    String(*const String),
     Function(*const FunctionValue),
     // TODO other object types
 }
