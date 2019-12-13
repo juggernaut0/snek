@@ -35,7 +35,7 @@ impl OwnedEnv {
         if let Some(&v) = self.bindings.borrow().get(&slot) {
             Some(to_value(v))
         } else if let Some(p) = self.parent {
-            unsafe { *p }.load(slot)
+            unsafe { &*p }.load(slot)
         } else {
             None
         }

@@ -76,7 +76,7 @@ impl FunctionValue {
         }
     }
 
-    pub fn from_closure(f: impl Fn(&mut Interpreter) -> Result<(), RuntimeError> + 'static, num_params: u16) -> FunctionValue {
+    pub fn from_closure(f: impl Fn(&Interpreter) -> Result<(), RuntimeError> + 'static, num_params: u16) -> FunctionValue {
         FunctionValue::new(FunctionType::Native(Box::new(f)), num_params)
     }
 
@@ -91,7 +91,7 @@ impl FunctionValue {
 
 pub enum FunctionType {
     Compiled(CompiledFunction),
-    Native(Box<dyn Fn(&mut Interpreter) -> Result<(), RuntimeError>>),
+    Native(Box<dyn Fn(&Interpreter) -> Result<(), RuntimeError>>),
     //Partial(&'a FunctionValue<'a>, Vec<Value<'a>>) TODO partial functions
 }
 

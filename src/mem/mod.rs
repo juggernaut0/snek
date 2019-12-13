@@ -14,8 +14,12 @@ mod environment;
 mod owned_value;
 mod value;
 
-#[derive(Default)]
 pub struct GcRoot {
+    inner: RefCell<GcRootImpl>
+}
+
+#[derive(Default)]
+struct GcRootImpl {
     exec_stack: Vec<OwnedValue>,
     call_stack: Vec<OwnedCallFrame>,
     root_namespace: Namespace,
@@ -26,49 +30,60 @@ pub struct GcRoot {
 
 impl GcRoot {
     pub fn new() -> GcRoot {
-        GcRoot::default()
+        GcRoot {
+            inner: RefCell::new(GcRootImpl::default())
+        }
     }
 
-    pub fn allocate(&mut self, obj: impl IntoOwnedValue) -> Value {
+    pub fn allocate(&self, obj: impl IntoOwnedValue) -> Value {
         let owned = obj.into_owned_value();
         match owned {
-            OwnedValue::String(p) => self.strings.push(p),
-            OwnedValue::Function(p) => self.functions.push(p),
+            OwnedValue::String(p) => self.inner.borrow_mut().strings.push(p),
+            OwnedValue::Function(p) => self.inner.borrow_mut().functions.push(p),
             _ => {}
         };
         to_value(owned)
     }
 
-    pub fn new_env(&mut self) -> Environment {
+    pub fn new_env(&self) -> Environment {
         let env = heap_allocate(OwnedEnv::default());
-        self.environments.push(env);
+        self.inner.borrow_mut().environments.push(env);
         unsafe {
             (*env).borrow()
         }
     }
 
-    pub fn new_child_env(&mut self, cf: &CompiledFunction) -> Environment {
+    pub fn new_child_env(&self, cf: &CompiledFunction) -> Environment {
         let env = heap_allocate(OwnedEnv::new_child(get_cf_environment(cf)));
-        self.environments.push(env);
+        self.inner.borrow_mut().environments.push(env);
         unsafe {
             (*env).borrow()
         }
     }
 
-    pub fn exec_stack_push(&mut self, value: Value) {
-        self.exec_stack.push(to_owned(value))
+    pub fn exec_stack_push(&self, value: Value) {
+        self.inner.borrow_mut().exec_stack.push(to_owned(value))
     }
 
     pub fn exec_stack_peek(&self) -> Option<Value> {
-        self.exec_stack.last().map(|&it| to_value(it) )
+        self.inner.borrow().exec_stack.last().map(|&it| to_value(it) )
     }
 
-    pub fn exec_stack_pop(&mut self) -> Option<Value> {
-        self.exec_stack.pop().map(|it| to_value(it) )
+    pub fn exec_stack_pop(&self) -> Option<Value> {
+        self.inner.borrow_mut().exec_stack.pop().map(|it| to_value(it) )
     }
 
-    pub fn call_stack_push(&mut self, code: Rc<Code>, env: Environment) {
-        self.call_stack.push(OwnedCallFrame { code, ip: 0, environment: get_inner(env) })
+    /*pub fn call_stack_push(&self, code: Rc<Code>, env: Environment) {
+        self.inner.borrow_mut().call_stack.push(OwnedCallFrame { code, ip: 0, environment: get_inner(env) })
+    }*/
+
+    pub fn call_stack_push(&self, frame: CallFrame) {
+        let owned = OwnedCallFrame {
+            code: frame.code,
+            ip: frame.ip,
+            environment: get_inner(frame.environment)
+        };
+        self.inner.borrow_mut().call_stack.push(owned);
     }
 
     /*pub fn call_stack_peek(&self) -> Option<CallFrame> {
@@ -76,22 +91,27 @@ impl GcRoot {
         Some(unsafe { last.borrow() })
     }*/
 
-    pub fn call_stack_pop(&mut self) -> Option<CallFrame> {
-        let top = self.call_stack.pop()?;
+    pub fn call_stack_pop(&self) -> Option<CallFrame> {
+        let top = self.inner.borrow_mut().call_stack.pop()?;
         Some(unsafe { top.borrow() })
     }
 
     // TODO WIP API for namespace put/gets
-    pub fn put_name(&mut self, name: String, value: Value) {
-        self.root_namespace.values.insert(name, to_owned(value));
+    pub fn put_name(&self, name: String, value: Value) {
+        self.inner.borrow_mut().root_namespace.values.insert(name, to_owned(value));
     }
 
     pub fn get_name(&self, name: &String) -> Option<Value> {
-        self.root_namespace.values.get(name).map(|&ov| to_value(ov))
+        self.inner.borrow().root_namespace.values.get(name).map(|&ov| to_value(ov))
     }
 
     pub fn gc(&mut self) {
         // TODO
+    }
+
+    pub fn debug_exec_stack(&self) {
+        let s: Vec<_> = self.inner.borrow().exec_stack.iter().map(|&it| to_value(it)).collect();
+        println!("[DEBUG] {:?}", s)
     }
 }
 
@@ -107,6 +127,10 @@ pub struct CallFrame<'a> {
 }
 
 impl CallFrame<'_> {
+    pub fn new(code: Rc<Code>, environment: Environment) -> CallFrame {
+        CallFrame { code, ip: 0, environment }
+    }
+
     pub fn environment(&self) -> Environment {
         self.environment
     }

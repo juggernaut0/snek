@@ -1,9 +1,9 @@
-use crate::opcode::Code;
+use crate::opcode::{Code, OpCode};
 use crate::opcode::OpCode::*;
 use std::rc::Rc;
 use std::cell::RefCell;
 use fnv::FnvHashMap;
-use crate::mem::{GcRoot, Value, FunctionType, CompiledFunction, FunctionValue};
+use crate::mem::{GcRoot, Value, FunctionType, CompiledFunction, FunctionValue, CallFrame};
 
 pub fn execute(code: Rc<Code>) {
     let mut int = Interpreter::new(code);
@@ -27,8 +27,8 @@ impl Interpreter {
     fn new(code: Rc<Code>) -> Interpreter {
         let mut gc_root = GcRoot::new();
         make_builtins(&mut gc_root);
-        let env = gc_root.new_env();
-        gc_root.call_stack_push(code, env);
+        let environment = gc_root.new_env();
+        gc_root.call_stack_push(CallFrame::new(code, environment));
         Interpreter {
             gc_root,
         }
@@ -38,6 +38,7 @@ impl Interpreter {
         while let Some(mut frame) = self.gc_root.call_stack_pop() {
             while frame.ip < frame.code().len() {
                 let (opcode, d) = frame.code().get_op_code(frame.ip);
+                //self.debug(&opcode);
                 frame.ip += d;
                 match opcode {
                     NoOp => (),
@@ -61,7 +62,8 @@ impl Interpreter {
                         }
                     }
                     LoadLocal(id) => {
-                        let v = frame.environment().load(id)
+                        let env = frame.environment();
+                        let v = env.load(id)
                             .ok_or_else(|| self.error(format!("Variable '{}' accessed before assignment", frame.code().get_local_name(id))))?;
                         self.push(v);
                     },
@@ -85,10 +87,9 @@ impl Interpreter {
                             match fv.func_type() {
                                 FunctionType::Compiled(cf) => {
                                     let environment = self.gc_root.new_child_env(cf);
-                                    /*let new_frame = CallFrame { code: , ip: 0, environment };
-                                    self.call_stack.push(frame);*/
-                                    self.gc_root.call_stack_push(Rc::clone(cf.code()), environment);
-                                    break
+                                    let new_frame = CallFrame::new(Rc::clone(cf.code()), environment);
+                                    self.gc_root.call_stack_push(frame);
+                                    frame = new_frame;
                                 },
                                 FunctionType::Native(f) => f(self)?,
                                 //FunctionType::Partial(_, _) => unimplemented!("partial functions"), // TODO
@@ -119,11 +120,12 @@ impl Interpreter {
         }
     }
 
-/*    fn debug(&self) {
-        println!("[DEBUG] {:?}", self.exec_stack)
-    }*/
+    fn debug(&self, opcode: &OpCode) {
+        println!("opcode = {:?}", opcode);
+        self.gc_root.debug_exec_stack()
+    }
 
-    fn push(&mut self, value: Value) {
+    fn push(&self, value: Value) {
         self.gc_root.exec_stack_push(value);
     }
 
@@ -131,7 +133,7 @@ impl Interpreter {
         self.gc_root.exec_stack_peek().ok_or_else(|| { self.error("Cannot peek empty stack".to_string()) })
     }
 
-    fn pop(&mut self) -> Result<Value, RuntimeError> {
+    fn pop(&self) -> Result<Value, RuntimeError> {
         self.gc_root.exec_stack_pop().ok_or_else(|| { self.error("Cannot pop empty stack".to_string()) })
     }
 
