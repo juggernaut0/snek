@@ -1,32 +1,17 @@
-use crate::opcode::{Code, OpCode};
+use crate::opcode::{Code, OpCode, ConstantValue};
 use crate::opcode::OpCode::*;
 use crate::value::{Value, FunctionValue, FunctionType, CompiledFunction};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::time::{Duration, Instant};
-use std::mem::{Discriminant, discriminant};
 use std::ops::AddAssign;
 use fnv::FnvHashMap;
 
 pub fn execute(code: Rc<Code>) {
     let mut int = Interpreter::new(code);
     match int.run() {
-        Ok(()) => {
-            /*let mut decode_times = int.decode_time.iter().collect::<Vec<_>>();
-            decode_times.sort_by(|(_, a), (_, b)| b.cmp(a));
-            for (d, t) in decode_times {
-                println!("decode {:?}: {:?}", d, t);
-            }
-
-            let mut exec_times = int.exec_time.iter().collect::<Vec<_>>();
-            exec_times.sort_by(|(_, a), (_, b)| b.cmp(a));
-            for (d, t) in exec_times {
-                println!("exec {:?}: {:?}", d, t);
-            }
-
-            println!("gc: {:?}", int.gc_time);*/
-        },
+        Ok(()) => {},
         Err(e) => {
             eprintln!("[ERROR] {}", e.message)
         }
@@ -44,9 +29,6 @@ pub struct Interpreter {
     environments: Vec<Rc<Environment>>,
     env_limit: usize,
     env_max: usize,
-    //decode_time: HashMap<Discriminant<OpCode>, Duration>,
-    //exec_time: HashMap<Discriminant<OpCode>, Duration>,
-    //gc_time: Duration,
 }
 
 impl Interpreter {
@@ -68,13 +50,8 @@ impl Interpreter {
         while !self.call_stack.is_empty() {
             let mut frame = self.call_stack.pop().unwrap();
             while frame.ip < frame.code.len() {
-                //let di = Instant::now();
                 let (opcode, d) = frame.code.get_op_code(frame.ip);
                 frame.ip += d;
-                //let dd = di.elapsed();
-                //let disc = discriminant(&opcode);
-                //self.decode_time.entry(disc).or_default().add_assign(dd);
-                //let ei = Instant::now();
                 match opcode {
                     NoOp => (),
                     Fail(msg) => {
@@ -85,7 +62,7 @@ impl Interpreter {
                     },
                     Duplicate => {
                         let v = self.peek()?;
-                        self.exec_stack.push(v);
+                        self.push(v);
                     },
                     Jump(d) => {
                         frame.ip += d as usize;
@@ -99,17 +76,24 @@ impl Interpreter {
                     LoadLocal(id) => {
                         let v = frame.environment.load(id)
                             .ok_or_else(|| self.error(format!("Variable '{}' accessed before assignment", frame.code.get_local_name(id))))?;
-                        self.exec_stack.push(v);
+                        self.push(v);
                     },
                     LoadName(name) => {
                         let name: &String = &name;
                         if let Some(v) = self.root_namespace.values.get(name) {
-                            self.exec_stack.push(v.clone())
+                            self.push(v.clone())
                         } else {
                             return Err(self.error(format!("No such value: {}", &name)))
                         }
                     },
-                    LoadConstant(v) => self.exec_stack.push(v),
+                    LoadConstant(v) => {
+                        self.exec_stack.push(match v {
+                            ConstantValue::Unit => Value::Unit,
+                            ConstantValue::Number(n) => Value::Number(n),
+                            ConstantValue::Boolean(b) => Value::Boolean(b),
+                            ConstantValue::String(s) => Value::String(Rc::new(s)),
+                        })
+                    },
                     SaveLocal(id) => {
                         let v = self.pop()?;
                         frame.environment.save(id, v);
@@ -138,14 +122,11 @@ impl Interpreter {
                         let cf = CompiledFunction::new(code, &frame.environment);
                         let fv = Rc::new(FunctionValue::new(FunctionType::Compiled(cf), nparams));
                         let f = Value::Function(fv);
-                        self.exec_stack.push(f);
+                        self.push(f);
                     }
                     _ => unimplemented!("unsupported opcode @ {}: {:?}", frame.ip - d, opcode)
                 }
-                //let ed = ei.elapsed();
-                //self.exec_time.entry(disc).or_default().add_assign(ed);
             }
-            //let gci = Instant::now();
             // TODO figure out a better strategy for GC
             if self.environments.len() > self.env_limit {
                 self.cleanup_envs();
@@ -154,7 +135,6 @@ impl Interpreter {
                     self.env_limit = self.env_max
                 }
             }
-            //self.gc_time += gci.elapsed();
         }
         Ok(())
     }
@@ -167,6 +147,10 @@ impl Interpreter {
 
     fn debug(&self) {
         println!("[DEBUG] {:?}", self.exec_stack)
+    }
+
+    fn push(&mut self, value: Value) {
+        self.exec_stack.push(value);
     }
 
     fn peek(&self) -> Result<Value, RuntimeError> {

@@ -1,7 +1,6 @@
 use crate::ast::*;
 use std::fmt::{Display, Error, Formatter};
 use crate::opcode::{OpCode, Code};
-use crate::value::Value;
 
 pub struct AstPrinter {
     indent: usize

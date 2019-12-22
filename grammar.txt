@@ -1,12 +1,14 @@
 program = import* decl* call_expr?
 import = 'import' qualified_name* 'from' STRING
 qualified_name = IDENT ('.' IDENT)*
-decl = 'public'? (namespace | type | binding)
+decl = 'public'? (namespace | type | binding | method | impl)
 namespace = 'namespace' qualified_name decl_block
 decl_block = '{' decl* '}'
 type = 'type' IDENT (IDENT* | '=' type_cases) decl_block?
 type_cases = IDENT+ ('|' IDENT+)*
 binding = 'let' pattern '=' expr
+method = 'method' IDENT '=' '{' pattern+ '}'
+impl = 'impl' qualified_name '=' expr
 
 pattern = const_literal |
 	wildcard_pattern |

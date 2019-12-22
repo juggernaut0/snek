@@ -1,9 +1,8 @@
-use crate::opcode::{Code, CodeBuilder};
+use crate::opcode::{Code, CodeBuilder, ConstantValue};
 use crate::ast::*;
 use crate::resolver::Resolver;
 use crate::opcode::OpCode::*;
 use std::rc::Rc;
-use crate::value::Value;
 
 pub fn compile(ast: &Ast) -> Result<Code, Vec<CompileError>> {
     AstCodeGenerator::new(Resolver::new(ast)).compile(ast)
@@ -275,11 +274,11 @@ impl<'a> CodeGenerator<'a> {
                         0.0
                     }
                 };
-                self.code.add_op_code(LoadConstant(Value::Number(val)))
+                self.code.add_op_code(LoadConstant(ConstantValue::Number(val)))
             },
             LiteralType::STRING => {
                 let val = literal.value.trim_matches(|c| c == '\'' || c == '"').to_string();
-                self.code.add_op_code(LoadConstant(Value::String(Rc::new(val))));
+                self.code.add_op_code(LoadConstant(ConstantValue::String(val)));
             },
             LiteralType::BOOL => {
                 let val = match literal.value.parse::<bool>() {
@@ -289,10 +288,10 @@ impl<'a> CodeGenerator<'a> {
                         false
                     }
                 };
-                self.code.add_op_code(LoadConstant(Value::Boolean(val)))
+                self.code.add_op_code(LoadConstant(ConstantValue::Boolean(val)))
             },
             LiteralType::UNIT => {
-                self.code.add_op_code(LoadConstant(Value::Unit))
+                self.code.add_op_code(LoadConstant(ConstantValue::Unit))
             },
         }
     }
