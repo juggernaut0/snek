@@ -9,14 +9,18 @@ pub use crate::mem::value::{CompiledFunction, FunctionType, FunctionValue, Value
 use crate::mem::value::get_cf_environment;
 use crate::opcode::Code;
 use crate::mem::mark::Mark;
+use std::cmp::min;
 
 mod environment;
 mod mark;
 mod owned_value;
 mod value;
 
+const MIN_LIMIT: usize = 1 << 20;
+
 pub struct GcRoot {
-    inner: RefCell<GcRootImpl>
+    inner: RefCell<GcRootImpl>,
+    limit: usize,
 }
 
 #[derive(Default)]
@@ -32,7 +36,8 @@ struct GcRootImpl {
 impl GcRoot {
     pub fn new() -> GcRoot {
         GcRoot {
-            inner: RefCell::new(GcRootImpl::default())
+            inner: RefCell::new(GcRootImpl::default()),
+            limit: MIN_LIMIT,
         }
     }
 
@@ -107,8 +112,16 @@ impl GcRoot {
     }
 
     pub fn gc(&mut self) {
-        unsafe {
-            self.inner.borrow_mut().gc();
+        if self.inner.borrow().usage() > self.limit {
+            unsafe {
+                self.inner.borrow_mut().gc();
+            }
+            let usage = self.inner.borrow().usage();
+            if usage > (self.limit / 4) {
+                self.limit *= 2;
+            } else if usage < (self.limit / 8) && self.limit > MIN_LIMIT {
+                self.limit /= 2;
+            }
         }
     }
 
@@ -119,6 +132,10 @@ impl GcRoot {
 }
 
 impl GcRootImpl {
+    fn usage(&self) -> usize {
+        self.environments.usage() + self.strings.usage() + self.functions.usage()
+    }
+
     unsafe fn gc(&mut self) {
         let call_stack = std::mem::replace(&mut self.call_stack, Vec::new());
         for e in &call_stack {

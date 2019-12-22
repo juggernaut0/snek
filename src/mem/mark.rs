@@ -1,10 +1,15 @@
 use std::collections::HashMap;
+use std::mem::size_of;
 
 pub struct Mark<T> {
     store: HashMap<*const T, bool>,
 }
 
 impl<T> Mark<T> {
+    pub fn usage(&self) -> usize {
+        self.store.len() * size_of::<T>()
+    }
+
     pub fn insert(&mut self, t: *const T) {
         self.store.insert(t, false);
     }
