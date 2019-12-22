@@ -1,16 +1,17 @@
+use std::cell::{RefCell, Cell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use crate::mem::environment::{get_inner, OwnedEnv};
 pub use crate::mem::environment::Environment;
-use crate::mem::environment::{OwnedEnv, get_inner};
 use crate::mem::owned_value::{IntoOwnedValue, OwnedValue};
-pub use crate::mem::value::{Value, FunctionType, CompiledFunction, FunctionValue};
-use crate::opcode::Code;
-use std::cell::RefCell;
-use std::borrow::Borrow;
+pub use crate::mem::value::{CompiledFunction, FunctionType, FunctionValue, Value};
 use crate::mem::value::get_cf_environment;
+use crate::opcode::Code;
+use crate::mem::mark::Mark;
 
 mod environment;
+mod mark;
 mod owned_value;
 mod value;
 
@@ -23,9 +24,9 @@ struct GcRootImpl {
     exec_stack: Vec<OwnedValue>,
     call_stack: Vec<OwnedCallFrame>,
     root_namespace: Namespace,
-    environments: Vec<*const OwnedEnv>,
-    strings: Vec<*const String>,
-    functions: Vec<*const FunctionValue>
+    environments: Mark<OwnedEnv>,
+    strings: Mark<String>,
+    functions: Mark<FunctionValue>
 }
 
 impl GcRoot {
@@ -38,8 +39,8 @@ impl GcRoot {
     pub fn allocate(&self, obj: impl IntoOwnedValue) -> Value {
         let owned = obj.into_owned_value();
         match owned {
-            OwnedValue::String(p) => self.inner.borrow_mut().strings.push(p),
-            OwnedValue::Function(p) => self.inner.borrow_mut().functions.push(p),
+            OwnedValue::String(p) => self.inner.borrow_mut().strings.insert(p),
+            OwnedValue::Function(p) => self.inner.borrow_mut().functions.insert(p),
             _ => {}
         };
         to_value(owned)
@@ -47,7 +48,7 @@ impl GcRoot {
 
     pub fn new_env(&self) -> Environment {
         let env = heap_allocate(OwnedEnv::default());
-        self.inner.borrow_mut().environments.push(env);
+        self.inner.borrow_mut().environments.insert(env);
         unsafe {
             (*env).borrow()
         }
@@ -55,7 +56,7 @@ impl GcRoot {
 
     pub fn new_child_env(&self, cf: &CompiledFunction) -> Environment {
         let env = heap_allocate(OwnedEnv::new_child(get_cf_environment(cf)));
-        self.inner.borrow_mut().environments.push(env);
+        self.inner.borrow_mut().environments.insert(env);
         unsafe {
             (*env).borrow()
         }
@@ -106,12 +107,69 @@ impl GcRoot {
     }
 
     pub fn gc(&mut self) {
-        // TODO
+        unsafe {
+            self.inner.borrow_mut().gc();
+        }
     }
 
     pub fn debug_exec_stack(&self) {
         let s: Vec<_> = self.inner.borrow().exec_stack.iter().map(|&it| to_value(it)).collect();
         println!("[DEBUG] {:?}", s)
+    }
+}
+
+impl GcRootImpl {
+    unsafe fn gc(&mut self) {
+        let call_stack = std::mem::replace(&mut self.call_stack, Vec::new());
+        for e in &call_stack {
+            self.mark_env(e.environment)
+        }
+        std::mem::replace(&mut self.call_stack, call_stack);
+
+        let exec_stack = std::mem::replace(&mut self.exec_stack, Vec::new());
+        for v in &exec_stack {
+            self.mark_value(v);
+        }
+        std::mem::replace(&mut self.exec_stack, exec_stack);
+
+        let root_namespace = std::mem::replace(&mut self.root_namespace, Namespace::default());
+        root_namespace.values.values().for_each(|v| self.mark_value(v));
+        std::mem::replace(&mut self.root_namespace, root_namespace);
+
+        self.strings.collect();
+        self.functions.collect();
+        self.environments.collect();
+    }
+
+    unsafe fn mark_value(&mut self, v: *const OwnedValue) {
+        match *v {
+            OwnedValue::Function(fv) => {
+                if self.functions.is_marked(fv) {
+                    return;
+                }
+                self.functions.mark(fv);
+                match (*fv).func_type() {
+                    FunctionType::Compiled(cf) => {
+                        self.mark_env(cf.environment);
+                    },
+                    _ => {}
+                }
+            }
+            OwnedValue::String(s) => {
+                self.strings.mark(s);
+            }
+            _ => {} // do nothing
+        }
+    }
+
+    unsafe fn mark_env(&mut self, e: *const OwnedEnv) {
+        if self.environments.is_marked(e) {
+            return
+        }
+        self.environments.mark(e);
+        (&*e).values_for_each(|v| {
+            self.mark_value(v);
+        });
     }
 }
 

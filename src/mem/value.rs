@@ -97,7 +97,7 @@ pub enum FunctionType {
 
 pub struct CompiledFunction {
     code: Rc<Code>,
-    environment: *const OwnedEnv,
+    pub(super) environment: *const OwnedEnv,
 }
 
 impl CompiledFunction {
