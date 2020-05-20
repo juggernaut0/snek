@@ -111,6 +111,9 @@ impl CodeBuilder {
                 self.add_op(CALL_CODE);
                 self.add_op(nargs);
             },
+            TailCall => {
+                self.add_op(TAIL_CALL_CODE);
+            }
             MakeClosure(code, nparams) => {
                 self.add_op(MAKE_CLOSURE_CODE);
                 self.add_code_op(code);
@@ -259,6 +262,7 @@ impl Code {
                 let nargs = self.ops[index + 1];
                 (Call(nargs), 2)
             },
+            TAIL_CALL_CODE => (TailCall, 1),
             MAKE_CLOSURE_CODE => {
                 let code = Rc::clone(self.get_arg(&self.codes, index, 1));
                 let nparams = self.ops[index + 2];

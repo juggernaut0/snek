@@ -41,7 +41,7 @@ fn run_from_file(path: &str) {
     let code = match codegen::compile(&ast) {
         Ok(code) => code,
         Err(errs) => {
-            //errs.iter().for_each(|e| eprintln!("[{}] [ERROR] {}", e.line(), e.col(), e.message()));
+            errs.iter().for_each(|e| eprintln!("[{}] [ERROR] {}", e.line(), e.message()));
             exit(1)
         }
     };

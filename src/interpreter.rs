@@ -1,11 +1,9 @@
-use crate::opcode::{Code, OpCode, ConstantValue};
+use crate::opcode::{Code, ConstantValue, OpCode};
 use crate::opcode::OpCode::*;
 use crate::value::{Value, FunctionValue, FunctionType, CompiledFunction};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::cell::RefCell;
-use std::time::{Duration, Instant};
-use std::ops::AddAssign;
 use fnv::FnvHashMap;
 
 pub fn execute(code: Rc<Code>) {
@@ -52,6 +50,7 @@ impl Interpreter {
             while frame.ip < frame.code.len() {
                 let (opcode, d) = frame.code.get_op_code(frame.ip);
                 frame.ip += d;
+                self.debug(&opcode);
                 match opcode {
                     NoOp => (),
                     Fail(msg) => {
@@ -81,7 +80,8 @@ impl Interpreter {
                     LoadName(name) => {
                         let name: &String = &name;
                         if let Some(v) = self.root_namespace.values.get(name) {
-                            self.push(v.clone())
+                            let v = v.clone();
+                            self.push(v);
                         } else {
                             return Err(self.error(format!("No such value: {}", &name)))
                         }
@@ -118,6 +118,10 @@ impl Interpreter {
                             return Err(self.error(format!("Too many arguments passed for function")))
                         }
                     },
+                    TailCall => {
+                        //frame.ip = 0;
+                        todo!("tail call") // TODO this is acting weird
+                    }
                     MakeClosure(code, nparams) => {
                         let cf = CompiledFunction::new(code, &frame.environment);
                         let fv = Rc::new(FunctionValue::new(FunctionType::Compiled(cf), nparams));
@@ -145,8 +149,8 @@ impl Interpreter {
         }
     }
 
-    fn debug(&self) {
-        println!("[DEBUG] {:?}", self.exec_stack)
+    fn debug(&self, opcode: &OpCode) {
+        println!("[DEBUG] {:?} {:?}", opcode, self.exec_stack)
     }
 
     fn push(&mut self, value: Value) {
@@ -273,10 +277,6 @@ impl Environment {
 
     fn mark(&self) {
         *self.marked.borrow_mut() = true;
-    }
-
-    fn unmark(&self) {
-        *self.marked.borrow_mut() = false;
     }
 
     fn marked(&self) -> bool {

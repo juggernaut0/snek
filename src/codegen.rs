@@ -14,11 +14,11 @@ pub struct CompileError {
 }
 
 impl CompileError {
-    fn message(&self) -> &String {
+    pub fn message(&self) -> &String {
         &self.message
     }
 
-    fn line(&self) -> u32 {
+    pub fn line(&self) -> u32 {
         self.line
     }
 }
@@ -118,6 +118,9 @@ impl<'a> CodeGenerator<'a> {
     }
 
     fn gen_expr(&mut self, expr: &Expr) {
+        self.gen_expr_lambda_body(expr, false, 0)
+    }
+    fn gen_expr_lambda_body(&mut self, expr: &Expr, allow_tail: bool, func_arity: u16) {
         self.code.set_line(expr.line);
         match &expr.expr_type {
             ExprType::QName(_) => self.gen_name(expr),
@@ -156,21 +159,34 @@ impl<'a> CodeGenerator<'a> {
             ExprType::Call(ce) => {
                 if let ExprType::QName(qn) = &ce.callee.expr_type {
                     if qn.parts.len() == 1 && &qn.parts[0] == "match" {
-                        self.gen_match(ce);
+                        self.gen_match(ce, allow_tail, func_arity);
                         return;
                     }
                 }
                 for e in &ce.args {
                     self.gen_expr(e);
                 }
-                self.gen_expr(&ce.callee);
-                self.code.add_op_code(Call(ce.args.len() as u16));
+                if let ExprType::Dot = &ce.callee.expr_type {
+                    if allow_tail {
+                        if func_arity == ce.args.len() as u16 {
+                            self.code.add_op_code(TailCall);
+                        } else {
+                            self.base.error("Tail call must have same number as arguments as enclosing lambda")
+                        }
+                    } else {
+                        self.base.error("Tail call (.) is not allowed here");
+                    }
+                } else {
+                    self.gen_expr(&ce.callee);
+                    self.code.add_op_code(Call(ce.args.len() as u16));
+                }
             },
             ExprType::Lambda(le) => {
                 if le.params.len() > std::u16::MAX as usize {
                     self.base.error("Too many parameters for function");
                     return;
                 }
+                let params_len = le.params.len() as u16;
                 let mut code = CodeGenerator::from(&mut self.base);
                 for p in &le.params {
                     code.gen_pattern(p);
@@ -178,8 +194,11 @@ impl<'a> CodeGenerator<'a> {
                 for b in &le.bindings {
                     code.gen_binding(b);
                 }
-                code.gen_expr(&le.expr);
-                self.code.add_op_code(MakeClosure(Rc::new(code.code.finalize()), le.params.len() as u16))
+                code.gen_expr_lambda_body(&le.expr, true, params_len);
+                self.code.add_op_code(MakeClosure(Rc::new(code.code.finalize()), params_len))
+            }
+            ExprType::Dot => {
+                self.base.error("Tail call (.) is not allowed here");
             }
             _ => unimplemented!("gen_expr") // TODO
         }
@@ -191,7 +210,7 @@ impl<'a> CodeGenerator<'a> {
         self.code.add_op_code(Call(arity));
     }
 
-    fn gen_match(&mut self, expr: &CallExpr) {
+    fn gen_match(&mut self, expr: &CallExpr, allow_tail: bool, func_arity: u16) {
         if expr.args.len() == 0 {
             self.base.error("Match expression must have a parameter");
             return;
@@ -236,7 +255,7 @@ impl<'a> CodeGenerator<'a> {
                 for b in &le.bindings {
                     self.gen_binding(b);
                 }
-                self.gen_expr(&le.expr);
+                self.gen_expr_lambda_body(&le.expr, allow_tail, func_arity);
                 let l = self.code.add_jump_op(Jump(0));
                 ends.push(l);
             } else {

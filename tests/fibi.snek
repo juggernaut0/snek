@@ -1,5 +1,6 @@
 let fib = { n ->
   ({ a b n ->
+    (println n)
     (match n
       { 0 -> a }
       { _ -> (. b (a + b) (n - 1)) }
