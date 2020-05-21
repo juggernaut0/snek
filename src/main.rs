@@ -2,6 +2,8 @@ use std::env;
 use std::fs;
 use std::process::exit;
 use std::rc::Rc;
+use std::io::stdin;
+use crate::scanner::Scanner;
 
 mod ast;
 mod codegen;
@@ -21,7 +23,7 @@ fn main() {
     if let Some(p) = path {
         run_from_file(&p);
     } else {
-        unimplemented!("repl") // TODO
+        repl();
     }
 }
 
@@ -49,4 +51,16 @@ fn run_from_file(path: &str) {
         debug::print_code(&code);
     }
     interpreter::execute(Rc::new(code));
+}
+
+fn repl() {
+    loop {
+        let mut src = String::new();
+        stdin().read_line(&mut src);
+        let mut scanner = Scanner::new(&src);
+        while let Ok(token) = scanner.get_token() {
+            if token.is_eof() { break }
+            println!("{:?}", token)
+        }
+    }
 }

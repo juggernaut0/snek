@@ -196,6 +196,7 @@ impl<'a> Scanner<'a> {
             | "public"
             | "namespace"
             | "type"
+            | "new"
             | "let"
             | "method"
             | "impl"
@@ -256,12 +257,15 @@ impl<'a> Token<'a> {
     }
 }
 
+// excludes /n so lines can be tracked
 fn is_whitespace(c: char) -> bool {
     c == ' ' || c == '\t' || c == '\r'
 }
 
 fn starts_symbol(c: char) -> bool {
-    c == '.'
+    c == ':'
+        || c == '.'
+        || c == ','
         || c == '{'
         || c == '}'
         || c == '('
