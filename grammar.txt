@@ -1,32 +1,45 @@
 program = import* decl* call_expr?
 import = 'import' qualified_name* 'from' STRING
-qualified_name = IDENT ('.' IDENT)*
-decl = 'public'? (namespace | type | binding | method | impl)
+
+decl = 'public'? (namespace | type | binding)
 namespace = 'namespace' qualified_name decl_block
 decl_block = '{' decl* '}'
-type = 'type' IDENT (IDENT* | '=' type_cases) decl_block?
-type_cases = IDENT+ ('|' IDENT+)*
+
+type = 'type' IDENT ('=' (type_cases | type_fields))?
+type_cases = type_case ('|' type_case)* '|'?
+type_case = 'public'? IDENT type_fields?
+type_fields = '{' type_field_list? '}'
+type_field_list = type_field  (',' type_field)* ','?
+type_field = 'public'? IDENT ':' qualified_name
+
 binding = 'let' pattern '=' expr
-method = 'method' IDENT '=' '{' pattern+ '}'
-impl = 'impl' qualified_name '=' expr
 
 pattern = const_literal |
 	wildcard_pattern |
 	name_pattern |
 	list_pattern |
-	type_pattern |
-wildcard_pattern = '_'
-name_pattern = IDENT
+	dest_pattern
+wildcard_pattern = '_' (':' type_name)?
+name_pattern = IDENT (':' type_name)?
 list_pattern = '[' pattern* ']'
-type_pattern = '(' qualified_name pattern* ')'
+dest_pattern = '{' field_pattern (',' field_pattern)* ','? '}'
+field_pattern = pattern | ('let' pattern '=' IDENT)
+
+type_name = named_type | func_type
+named_type = qualified_name ('<' type_name+ '>')?
+func_type = '{' type_name* '->' type_name '}'
 
 block = (binding | call_expr | binary_expr)* expr
-expr = call_expr | binary_expr | qualified_name | lambda | list_expr | const_literal
+expr = call_expr | new_expr | binary_expr | qualified_name | lambda | list_expr | const_literal
 call_expr = '(' ('.' | expr) expr* ')'
+new_expr = 'new' type_name? '{' field_init_list? '}'
+field_init_list = field_init (',' field_init)* ','?
+field_init = IDENT ':' expr
 binary_expr = '(' unary_expr (binary_op unary_expr)* ')'
 binary_op = '+' | '-' | '*' | '/' | '<=' | '<' | '>=' | '>' | '==' | '!=' | '&&' | '||'
 unary_expr = unary_op* expr
 unary_op = '+' | '-' | '!'
+qualified_name = IDENT ('.' IDENT)*
 lambda = '{' pattern* '->' block '}'
 list_expr = '[' expr* ']'
 const_literal = NUMBER | STRING | 'true' | 'false' | '(' ')'
@@ -43,6 +56,7 @@ KEYWORDS:
 	public
 	namespace
 	type
+	new
 	let
 	method
 	impl
@@ -50,7 +64,9 @@ KEYWORDS:
 	false
 
 SYMBOLS:
+    :
 	.
+	,
 	{
 	}
 	(

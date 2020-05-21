@@ -1,0 +1,55 @@
+type Foo = { a: Number, b: String } # Foo is a record, can be instantiated
+type Bar = Foo | String # Bar is a union, cannot be directly instantiated but will match any of its cases
+type MyFoo = Foo # A union with only one case is an alias.
+
+# generics
+type Some<T> = { t: T }
+# empty
+type None
+# equivalent:
+# type None = {}
+type Option<T> = Some<T> | None
+
+# shorthand - declares Some and None record types inline
+# note, braces after None are required here to declare new type rather than reference an existing type
+# note, types defined inline can be made public independent of the parent union
+public type Option<T> = T | public None { }
+# For empty records, you may want to provide a singleton
+public let None = new None { }
+
+# Compile Error: A union type may not be directly recursive. Wrap with a record type
+# type Bad = Foo | Bad
+type List = Empty { } | Cons { h: Number, t: List }
+
+# Instantiating a type directly:
+let foo = new Foo { a: 1337, b: "Hello" }
+let box = new Some<Number> { t: 0 }
+# Can omit type if it can be inferred some other way
+let foo: Foo = new { a: 1337, b: "Hello" }
+
+# You'll most likely want to keep your types private and provide public constructors and aliases
+public type NonZero = NonZeroImpl { value: Number }
+public let NonZero: { Number -> Option<NonZero> } = { x ->
+    (match x
+        { 0 -> None }
+        { _ -> new NonZeroImpl { value: x } }
+    )
+}
+#Usage
+let nz: NonZero = (Option.unwrap (NonZero 5))
+
+# Accessing a record type's fields can be done by destructuring. Types can be inferred
+let { a: Number, b } = foo
+# Use let again to rename or further match
+let { let mynum = a, b } = foo
+# Partial destructuring works
+let { a } = foo
+# Compile error: Cannot destructure an empty record
+# let { } = None
+
+# Accessing the members of a union: You must match and provide an arm for each possible case
+let x: Option<Number> = (...)
+(match x
+    { _: None -> (println "Nothing!") }
+    { n: Number -> (println n) }
+)
