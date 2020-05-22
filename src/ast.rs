@@ -24,15 +24,36 @@ pub struct Namespace {
 }
 
 pub struct Type {
-    pub name: String,
+    pub name: TypeNameDecl,
     pub public: bool,
-    pub cases: Vec<TypeCase>,
-    pub namespace: Option<Namespace>
+    pub contents: TypeContents
 }
 
-pub struct TypeCase {
+pub struct TypeNameDecl {
     pub name: String,
-    pub num_params: u32
+    pub params: Vec<String>
+}
+
+pub enum TypeContents {
+    Record(Vec<TypeField>),
+    Union(Vec<TypeCase>)
+}
+
+pub struct TypeField {
+    pub name: String,
+    pub public: bool,
+    pub type_name: QName
+}
+
+pub enum TypeCase {
+    Case(TypeName),
+    Record(TypeCaseRecord)
+}
+
+pub struct TypeCaseRecord {
+    pub name: TypeNameDecl,
+    pub public: bool,
+    pub fields: Vec<TypeField>
 }
 
 pub struct Binding {
@@ -42,11 +63,16 @@ pub struct Binding {
 }
 
 pub enum Pattern {
-    Wildcard,
-    Name(Rc<NamePattern>),
+    Wildcard(Option<TypeName>),
+    Name(Rc<NamePattern>, Option<TypeName>),
     Constant(Literal),
-    Type(QName, Vec<Pattern>),
+    Destruct(QName, Vec<FieldPattern>),
     List(Vec<Pattern>)
+}
+
+pub enum FieldPattern {
+    Name(Rc<NamePattern>),
+    Binding(Pattern, String)
 }
 
 #[derive(Eq, PartialEq, Hash)]
@@ -54,6 +80,16 @@ pub struct NamePattern {
     pub line: u32,
     pub col: u32,
     pub name: String
+}
+
+pub enum TypeName {
+    Named(NamedType),
+    Func(Vec<TypeName>, TypeName)
+}
+
+pub struct NamedType {
+    pub name: QName,
+    pub params: Vec<TypeName>
 }
 
 pub struct Expr {
@@ -70,6 +106,7 @@ pub enum ExprType {
     Call(CallExpr),
     Lambda(LambdaExpr),
     List(Vec<Expr>),
+    New(Option<NamedType>, Vec<FieldInit>),
     Dot
 }
 
@@ -142,4 +179,9 @@ pub struct LambdaExpr {
     pub params: Vec<Pattern>,
     pub bindings: Vec<Binding>,
     pub expr: Box<Expr>
+}
+
+pub struct FieldInit {
+    pub field_name: String,
+    pub expr: Expr,
 }

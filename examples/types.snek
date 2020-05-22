@@ -1,9 +1,9 @@
-type Foo = { a: Number, b: String } # Foo is a record, can be instantiated
+type Foo { a: Number, b: String } # Foo is a record, can be instantiated
 type Bar = Foo | String # Bar is a union, cannot be directly instantiated but will match any of its cases
 type MyFoo = Foo # A union with only one case is an alias.
 
 # generics
-type Some<T> = { t: T }
+type Some<T> { t: T }
 # empty
 type None
 # equivalent:
