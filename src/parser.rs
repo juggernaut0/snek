@@ -255,39 +255,91 @@ impl<'a> Parser<'a> {
 
     fn type_decl(&mut self, public: bool) -> Option<Type> {
         self.advance(); // advance past "type"
-        let name = self.require("identifier", IDENT)?;
-        let mut cases = Vec::new();
-        if self.advance_if_matches_value(SYMBOL, "=") {
-            let first = self.type_case()?;
-            cases.push(first);
-            while self.advance_if_matches_value(SYMBOL, "|") {
-                let case = self.type_case()?;
-                cases.push(case);
-            }
+        let name = self.type_name_decl()?;
+        let contents = if self.advance_if_matches_value(SYMBOL, "=") {
+            TypeContents::Union(self.type_cases()?)
+        } else if self.current.matches_value(SYMBOL, "{") {
+            TypeContents::Record(self.type_fields()?)
         } else {
-            let mut num_params = 0;
-            while let Some(_) = self.advance_if_matches(IDENT) {
-                num_params += 1;
-            }
-            cases.push(TypeCase { name: name.to_string(), num_params })
-        }
-        let namespace = if self.advance_if_matches_value(SYMBOL, "{") {
-            let decls = self.decls(false);
-            self.require_value(SYMBOL, "}")?;
-            Some(Namespace { name: QName { parts: vec!(name.to_string()) }, public, decls })
-        } else {
-            None
+            TypeContents::Record(Vec::new())
         };
-        Some(Type { name: name.to_string(), public, cases, namespace })
+
+        Some(Type { public, name, contents })
+    }
+
+    fn type_name_decl(&mut self) -> Option<TypeNameDecl> {
+        let init = self.require("identifier", IDENT)?;
+        self.type_name_decl_with_init(init)
+    }
+
+    fn type_name_decl_with_init(&mut self, init: &str) -> Option<TypeNameDecl> {
+        let mut params = Vec::new();
+        if self.advance_if_matches_value(SYMBOL, "<") {
+            while let Some(param) = self.advance_if_matches(IDENT) {
+                params.push(param.to_string())
+            }
+            self.require_value(SYMBOL, ">")
+        }
+
+        Some(TypeNameDecl { name: init.to_string(), params })
+    }
+
+    fn type_cases(&mut self) -> Option<Vec<TypeCase>> {
+        let mut cases = Vec::new();
+        while !self.advance_if_matches_value(SYMBOL, "|") {
+            let case = self.type_case()?;
+            cases.push(case);
+        }
+        Some(cases)
     }
 
     fn type_case(&mut self) -> Option<TypeCase> {
-        let name = self.require("identifier", IDENT)?.to_string();
-        let mut num_params = 0;
-        while let Some(_) = self.advance_if_matches(IDENT) {
-            num_params += 1;
+        let public = self.advance_if_matches_value(KEYWORD, "public");
+
+        if public {
+            // For sure a record
+            Some(TypeCase::Record(self.type_case_record(public)?))
+        } else if self.current.matches_value(SYMBOL, "{") {
+            // For sure a func_type
+            Some(TypeCase::Case(self.type_name()?))
+        } else if let Some(first_ident) = self.advance_if_matches(IDENT) {
+            // Check if record or case based on next token
+            if self.current.matches_value(SYMBOL, "{") {
+                // For sure a record
+                Some(TypeCase::Record(self.type_case_record_with_init(public, first_ident)?))
+            } else {
+                Some(TypeCase::Case(self.named_type_with_init(first_ident)?))
+            }
+        } else {
+            self.error_at_current("type declaration or case");
+            None
         }
-        Some(TypeCase { name, num_params })
+    }
+
+    fn type_case_record(&mut self, public: bool) -> Option<TypeCaseRecord> {
+        let init = self.require("identifier", IDENT)?;
+        self.type_case_record_with_init(public, init)
+    }
+
+    fn type_case_record_with_init(&mut self, public: bool, init: &str) -> Option<TypeCaseRecord> {
+        let name = self.type_name_decl_with_init(init)?;
+        let fields = self.type_fields()?;
+        Some(TypeCaseRecord { public, name, fields })
+    }
+    
+    fn type_fields(&mut self) -> Option<Vec<TypeField>> {
+        let mut fields = Vec::new();
+        self.require_value(SYMBOL, "{")?;
+        while !self.current.matches_value(SYMBOL, "}") {
+            let public = self.advance_if_matches_value(KEYWORD, "public");
+            let name = self.require("identifier", IDENT)?.to_string();
+            self.require_value(SYMBOL, ":")?;
+            let type_name = self.type_name()?;
+            fields.push(TypeField { public, name, type_name })
+        }
+        self.require_value(SYMBOL, "}")?;
+
+        Some(fields)
     }
 
     fn binding(&mut self, public: bool) -> Option<Binding> {
@@ -336,6 +388,14 @@ impl<'a> Parser<'a> {
         }
         self.advance(); // advance past ")"
         Some(Pattern::Type(qname, patterns))
+    }
+
+    fn type_name(&mut self) -> Option<TypeName> {
+        todo!("type_name")
+    }
+
+    fn named_type_with_init(&mut self, init: &str) -> Option<TypeName> {
+        todo!("named_type")
     }
 
     fn expr(&mut self) -> Option<Expr> {

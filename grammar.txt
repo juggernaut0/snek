@@ -8,11 +8,11 @@ decl_block = '{' decl* '}'
 
 type = 'type' type_name_decl (type_cases | type_fields)?
 type_name_decl = IDENT ('<' IDENT+ '>')?
-type_cases = '=' type_case ('|' type_case)* '|'?
-type_case = ('public'? type_name_decl type_fields?) | type_name
+type_cases = '=' type_case ('|' type_case)*
+type_case = ('public'? type_name_decl type_fields) | type_name
 type_fields = '{' type_field_list? '}'
 type_field_list = type_field  (',' type_field)* ','?
-type_field = 'public'? IDENT ':' qualified_name
+type_field = 'public'? IDENT ':' type_name
 
 binding = 'let' pattern '=' expr
 

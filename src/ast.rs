@@ -42,7 +42,7 @@ pub enum TypeContents {
 pub struct TypeField {
     pub name: String,
     pub public: bool,
-    pub type_name: QName
+    pub type_name: TypeName
 }
 
 pub enum TypeCase {
