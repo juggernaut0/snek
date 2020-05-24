@@ -2,17 +2,16 @@ use std::env;
 use std::fs;
 use std::process::exit;
 use std::rc::Rc;
-use std::io::stdin;
-use crate::scanner::Scanner;
+use std::io::{stdin, stdout, Write};
 
 mod ast;
-mod codegen;
-mod interpreter;
-mod opcode;
+//mod codegen;
+//mod interpreter;
+//mod opcode;
 mod parser;
-mod resolver;
+//mod resolver;
 mod scanner;
-mod value;
+//mod value;
 
 #[cfg(debug_assertions)]
 mod debug;
@@ -40,7 +39,7 @@ fn run_from_file(path: &str) {
     #[cfg(debug_assertions)] {
         debug::AstPrinter::new().print_ast(&ast);
     }
-    let code = match codegen::compile(&ast) {
+    /*let code = match codegen::compile(&ast) {
         Ok(code) => code,
         Err(errs) => {
             errs.iter().for_each(|e| eprintln!("[{}] [ERROR] {}", e.line(), e.message()));
@@ -50,17 +49,26 @@ fn run_from_file(path: &str) {
     #[cfg(debug_assertions)] {
         debug::print_code(&code);
     }
-    interpreter::execute(Rc::new(code));
+    interpreter::execute(Rc::new(code));*/
 }
 
 fn repl() {
+    let mut src = String::new();
     loop {
-        let mut src = String::new();
+        print!(">>> ");
+        stdout().flush();
         stdin().read_line(&mut src);
-        let mut scanner = Scanner::new(&src);
-        while let Ok(token) = scanner.get_token() {
-            if token.is_eof() { break }
-            println!("{:?}", token)
+        let ast = match parser::parse(&src) {
+            Ok(ast) => ast,
+            Err(errs) => {
+                errs.iter().for_each(|e| eprintln!("[{}:{}] [ERROR] {}", e.line(), e.col(), e.message()));
+                exit(1)
+            }
+        };
+        src.clear();
+        #[cfg(debug_assertions)] {
+            debug::AstPrinter::new().print_ast(&ast);
         }
+
     }
 }

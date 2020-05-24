@@ -1,6 +1,6 @@
 use crate::ast::*;
 use std::fmt::{Display, Error, Formatter};
-use crate::opcode::{OpCode, Code};
+//use crate::opcode::{OpCode, Code};
 
 pub struct AstPrinter {
     indent: usize
@@ -66,15 +66,26 @@ impl AstPrinter {
 
     fn print_type(&mut self, type_decl: &Type) {
         self.print_open(&format!("type {} public = {}", type_decl.name, type_decl.public));
-        self.print_all(&type_decl.cases);
-        if let Some(ns) = &type_decl.namespace {
-            self.print_namespace(ns);
+        match &type_decl.contents {
+            TypeContents::Record(fields) => self.print_all(fields),
+            TypeContents::Union(cases) => self.print_all(cases),
         }
         self.print_close();
     }
 
     fn print_case(&mut self, type_case: &TypeCase) {
-        self.print(&format!("case {}({})", type_case.name, type_case.num_params));
+        match type_case {
+            TypeCase::Record(record) => {
+                self.print_open(&format!("case type {} public = {}", record.name, record.public));
+                self.print_all(&record.fields);
+                self.print_close();
+            },
+            TypeCase::Case(name) => self.print(&format!("case {}", name)),
+        }
+    }
+
+    fn print_field(&mut self, field: &TypeField) {
+        self.print(&format!("field {} : {} public = {}", field.name, field.type_name, field.public))
     }
 
     fn print_binding(&mut self, binding: &Binding) {
@@ -86,23 +97,19 @@ impl AstPrinter {
 
     fn print_pattern(&mut self, pattern: &Pattern) {
         match pattern {
-            Pattern::Wildcard => self.print("pattern wildcard"),
+            Pattern::Wildcard(_) => self.print("pattern wildcard"),
             Pattern::Name(n) => self.print(&format!("pattern name = {}", n.name)),
             Pattern::Constant(l) => {
                 self.print_open("pattern constant");
                 self.print_literal(l);
                 self.print_close();
             },
-            Pattern::Type(qname, nested) => {
-                self.print_open(&format!("pattern type name = {}", qname));
-                self.print_all(nested);
-                self.print_close();
-            }
             Pattern::List(nested) => {
                 self.print_open("pattern list");
                 self.print_all(nested);
                 self.print_close();
             }
+            Pattern::Destruct(nested) => todo!("dest pattern")
         }
     }
 
@@ -126,6 +133,9 @@ impl AstPrinter {
                 self.print_expr(&ce.callee);
                 self.print_all(&ce.args);
                 self.print_close();
+            },
+            ExprType::New(_, _) => {
+                todo!("new expr")
             },
             ExprType::Lambda(le) => {
                 self.print_open("lambda");
@@ -170,6 +180,12 @@ impl AstNode for Decl {
     }
 }
 
+impl AstNode for TypeField {
+    fn print(&self, printer: &mut AstPrinter) {
+        printer.print_field(self);
+    }
+}
+
 impl AstNode for TypeCase {
     fn print(&self, printer: &mut AstPrinter) {
         printer.print_case(self);
@@ -206,7 +222,34 @@ impl Display for QName {
     }
 }
 
-pub fn print_code(code: &Code) {
+impl Display for TypeNameDecl {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        if self.params.is_empty() {
+            write!(f, "{}", self.name)
+        } else {
+            write!(f, "{}<{}>", self.name, self.params.iter().map(|it| it.to_string()).collect::<Vec<String>>().join(" "))
+        }
+    }
+}
+
+impl Display for TypeName {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        match self {
+            TypeName::Named(name) => {
+                if name.params.is_empty() {
+                    write!(f, "{}", name.name)
+                } else {
+                    write!(f, "{}<{}>", name.name, name.params.iter().map(|it| it.to_string()).collect::<Vec<String>>().join(" "))
+                }
+            },
+            TypeName::Func(params, ret) => {
+                write!(f, "{{ {} -> {} }}", params.iter().map(|it| it.to_string()).collect::<Vec<String>>().join(" "), ret)
+            }
+        }
+    }
+}
+
+/*pub fn print_code(code: &Code) {
     let mut ip: usize = 0;
     let mut last_line = 0;
     let mut funcs = Vec::new();
@@ -228,4 +271,4 @@ pub fn print_code(code: &Code) {
         println!("\nFunction @ line {}", line);
         print_code(&c);
     }
-}
+}*/

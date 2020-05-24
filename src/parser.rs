@@ -196,9 +196,13 @@ impl<'a> Parser<'a> {
     }
 
     fn qualified_name(&mut self) -> Option<QName> {
+        let init = self.require("identifier", IDENT)?;
+        self.qualified_name_with_init(init)
+    }
+
+    fn qualified_name_with_init(&mut self, init: &str) -> Option<QName> {
         let mut parts = Vec::new();
-        let ident = self.require("identifier", IDENT)?;
-        parts.push(ident.to_string());
+        parts.push(init.to_string());
         while self.current.matches_value(SYMBOL, ".") {
             self.advance(); // advance past "."
             let ident = self.require("identifier", IDENT)?;
@@ -278,7 +282,7 @@ impl<'a> Parser<'a> {
             while let Some(param) = self.advance_if_matches(IDENT) {
                 params.push(param.to_string())
             }
-            self.require_value(SYMBOL, ">")
+            self.require_value(SYMBOL, ">")?;
         }
 
         Some(TypeNameDecl { name: init.to_string(), params })
@@ -326,7 +330,7 @@ impl<'a> Parser<'a> {
         let fields = self.type_fields()?;
         Some(TypeCaseRecord { public, name, fields })
     }
-    
+
     fn type_fields(&mut self) -> Option<Vec<TypeField>> {
         let mut fields = Vec::new();
         self.require_value(SYMBOL, "{")?;
@@ -335,7 +339,8 @@ impl<'a> Parser<'a> {
             let name = self.require("identifier", IDENT)?.to_string();
             self.require_value(SYMBOL, ":")?;
             let type_name = self.type_name()?;
-            fields.push(TypeField { public, name, type_name })
+            fields.push(TypeField { public, name, type_name });
+            todo!("fix commas");
         }
         self.require_value(SYMBOL, "}")?;
 
@@ -352,15 +357,16 @@ impl<'a> Parser<'a> {
 
     fn pattern(&mut self) -> Option<Pattern> {
         if self.advance_if_matches_value(IDENT, "_") {
-            Some(Pattern::Wildcard)
+            let type_name = if self.advance_if_matches_value(SYMBOL, ":") {
+                Some(self.type_name()?)
+            } else {
+                None
+            };
+            Some(Pattern::Wildcard(type_name))
         } else if let Some(name) = self.current.matches(IDENT) {
-            let (line, col) = self.pos();
-            self.advance();
-            Some(Pattern::Name(Rc::new(NamePattern { line, col, name: name.to_string() })))
+            Some(Pattern::Name(self.name_pattern(name)?))
         } else if let Some(l) = self.literal() {
             Some(Pattern::Constant(l))
-        } else if self.current.matches_value(SYMBOL, "(") {
-            self.type_pattern()
         } else if self.advance_if_matches_value(SYMBOL, "[") {
             let mut patterns = Vec::new();
             while !self.current.matches_value(SYMBOL, "]") {
@@ -369,33 +375,74 @@ impl<'a> Parser<'a> {
             }
             self.advance(); // advance past "]"
             Some(Pattern::List(patterns))
+        } else if self.advance_if_matches_value(SYMBOL, "{") {
+            let mut fields = Vec::new();
+            fields.push(self.field_pattern()?);
+            while !self.current.matches_value(SYMBOL, "}") {
+                todo!("fix commas");
+                if self.current.matches_value(SYMBOL, ",") {
+                    self.advance();
+                } else {
+                    fields.push(self.field_pattern()?);
+                }
+            }
+            Some(Pattern::Destruct(fields))
         } else {
             self.error_at_current("pattern");
             None
         }
     }
 
-    fn type_pattern(&mut self) -> Option<Pattern> {
-        self.advance(); // advance past "("
-        if self.advance_if_matches_value(SYMBOL, ")") {
-            return Some(Pattern::Constant(Literal { lit_type: LiteralType::UNIT, value: "".to_string() }))
-        }
-        let qname = self.qualified_name()?;
-        let mut patterns = Vec::new();
-        while !self.current.matches_value(SYMBOL, ")") {
+    fn name_pattern(&mut self, name: &str) -> Option<Rc<NamePattern>> {
+        let (line, col) = self.pos();
+        self.advance(); // advance past ident
+        let type_name = if self.advance_if_matches_value(SYMBOL, ":") {
+            Some(self.type_name()?)
+        } else {
+            None
+        };
+        Some(Rc::new(NamePattern { line, col, name: name.to_string(), type_name }))
+    }
+
+    fn field_pattern(&mut self) -> Option<FieldPattern> {
+        if self.advance_if_matches_value(KEYWORD, "let") {
             let pattern = self.pattern()?;
-            patterns.push(pattern);
+            self.require_value(SYMBOL, "=")?;
+            let field = self.require("identified", IDENT)?.to_string();
+            Some(FieldPattern::Binding(pattern, field))
+        } else {
+            let name = self.require("identifier", IDENT)?;
+            Some(FieldPattern::Name(self.name_pattern(name)?))
         }
-        self.advance(); // advance past ")"
-        Some(Pattern::Type(qname, patterns))
     }
 
     fn type_name(&mut self) -> Option<TypeName> {
-        todo!("type_name")
+        if let Some(init) = self.advance_if_matches(IDENT) {
+            self.named_type_with_init(init)
+        } else {
+            self.require_value(SYMBOL, "{")?;
+            let mut params = Vec::new();
+            while !self.current.matches_value(SYMBOL, "->") {
+                params.push(self.type_name()?);
+            }
+            self.advance(); // advance past ->
+            let ret = self.type_name()?;
+            self.require_value(SYMBOL, "}")?;
+            Some(TypeName::Func(params, Box::new(ret)))
+        }
     }
 
     fn named_type_with_init(&mut self, init: &str) -> Option<TypeName> {
-        todo!("named_type")
+        let name = self.qualified_name_with_init(init)?;
+        let mut params = Vec::new();
+        if self.advance_if_matches_value(SYMBOL, "<") {
+            params.push(self.type_name()?);
+            while !self.current.matches_value(SYMBOL, ">") {
+                params.push(self.type_name()?);
+            }
+            self.advance(); // advance past >
+        }
+        Some(TypeName::Named(NamedType { name, params }))
     }
 
     fn expr(&mut self) -> Option<Expr> {
@@ -416,6 +463,8 @@ impl<'a> Parser<'a> {
             }
             self.advance(); // advance past "]"
             Some(Expr { line, col, expr_type: ExprType::List(exprs) })
+        } else if self.advance_if_matches_value(KEYWORD, "new") {
+            todo!("new expr")
         } else {
             self.error_at_current("expression");
             None
@@ -573,7 +622,7 @@ impl<'a> Parser<'a> {
                     let expr_type = ExprType::Lambda(LambdaExpr { params, bindings, expr: Box:: new(expr) });
                     return Some(Expr { line, col, expr_type })
                 }
-                Binding { public: false, pattern: Pattern::Wildcard, expr }
+                Binding { public: false, pattern: Pattern::Wildcard(None), expr }
             };
             bindings.push(binding);
         }

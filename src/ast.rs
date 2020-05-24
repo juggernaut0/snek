@@ -64,9 +64,9 @@ pub struct Binding {
 
 pub enum Pattern {
     Wildcard(Option<TypeName>),
-    Name(Rc<NamePattern>, Option<TypeName>),
+    Name(Rc<NamePattern>),
     Constant(Literal),
-    Destruct(QName, Vec<FieldPattern>),
+    Destruct(Vec<FieldPattern>),
     List(Vec<Pattern>)
 }
 
@@ -79,14 +79,17 @@ pub enum FieldPattern {
 pub struct NamePattern {
     pub line: u32,
     pub col: u32,
-    pub name: String
+    pub name: String,
+    pub type_name: Option<TypeName>,
 }
 
+#[derive(Eq, PartialEq, Hash)]
 pub enum TypeName {
     Named(NamedType),
-    Func(Vec<TypeName>, TypeName)
+    Func(Vec<TypeName>, Box<TypeName>)
 }
 
+#[derive(Eq, PartialEq, Hash)]
 pub struct NamedType {
     pub name: QName,
     pub params: Vec<TypeName>
