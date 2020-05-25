@@ -290,9 +290,9 @@ impl<'a> Parser<'a> {
 
     fn type_cases(&mut self) -> Option<Vec<TypeCase>> {
         let mut cases = Vec::new();
-        while !self.advance_if_matches_value(SYMBOL, "|") {
-            let case = self.type_case()?;
-            cases.push(case);
+        cases.push(self.type_case()?);
+        while self.advance_if_matches_value(SYMBOL, "|") {
+            cases.push(self.type_case()?);
         }
         Some(cases)
     }
@@ -312,7 +312,7 @@ impl<'a> Parser<'a> {
                 // For sure a record
                 Some(TypeCase::Record(self.type_case_record_with_init(public, first_ident)?))
             } else {
-                Some(TypeCase::Case(self.named_type_with_init(first_ident)?))
+                Some(TypeCase::Case(TypeName::Named(self.named_type_with_init(first_ident)?)))
             }
         } else {
             self.error_at_current("type declaration or case");
@@ -340,7 +340,12 @@ impl<'a> Parser<'a> {
             self.require_value(SYMBOL, ":")?;
             let type_name = self.type_name()?;
             fields.push(TypeField { public, name, type_name });
-            todo!("fix commas");
+
+            if self.current.matches_value(SYMBOL, "}") {
+                break;
+            } else {
+                self.require_value(SYMBOL, ",");
+            }
         }
         self.require_value(SYMBOL, "}")?;
 
@@ -378,14 +383,18 @@ impl<'a> Parser<'a> {
         } else if self.advance_if_matches_value(SYMBOL, "{") {
             let mut fields = Vec::new();
             fields.push(self.field_pattern()?);
+            if !self.current.matches_value(SYMBOL, "}") {
+                self.require_value(SYMBOL, ",");
+            }
             while !self.current.matches_value(SYMBOL, "}") {
-                todo!("fix commas");
-                if self.current.matches_value(SYMBOL, ",") {
-                    self.advance();
+                fields.push(self.field_pattern()?);
+                if self.current.matches_value(SYMBOL, "}") {
+                    break;
                 } else {
-                    fields.push(self.field_pattern()?);
+                    self.require_value(SYMBOL, ",");
                 }
             }
+            self.require_value(SYMBOL, "}")?;
             Some(Pattern::Destruct(fields))
         } else {
             self.error_at_current("pattern");
@@ -411,14 +420,18 @@ impl<'a> Parser<'a> {
             let field = self.require("identified", IDENT)?.to_string();
             Some(FieldPattern::Binding(pattern, field))
         } else {
-            let name = self.require("identifier", IDENT)?;
-            Some(FieldPattern::Name(self.name_pattern(name)?))
+            if let Some(name) = self.current.matches(IDENT) {
+                Some(FieldPattern::Name(self.name_pattern(name)?))
+            } else {
+                self.error_at_current("identifier");
+                None
+            }
         }
     }
 
     fn type_name(&mut self) -> Option<TypeName> {
         if let Some(init) = self.advance_if_matches(IDENT) {
-            self.named_type_with_init(init)
+            self.named_type_with_init(init).map(|it| TypeName::Named(it))
         } else {
             self.require_value(SYMBOL, "{")?;
             let mut params = Vec::new();
@@ -432,7 +445,12 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn named_type_with_init(&mut self, init: &str) -> Option<TypeName> {
+    fn named_type(&mut self) -> Option<NamedType> {
+        let init = self.require("identifier", IDENT)?;
+        self.named_type_with_init(init)
+    }
+
+    fn named_type_with_init(&mut self, init: &str) -> Option<NamedType> {
         let name = self.qualified_name_with_init(init)?;
         let mut params = Vec::new();
         if self.advance_if_matches_value(SYMBOL, "<") {
@@ -442,7 +460,7 @@ impl<'a> Parser<'a> {
             }
             self.advance(); // advance past >
         }
-        Some(TypeName::Named(NamedType { name, params }))
+        Some(NamedType { name, params })
     }
 
     fn expr(&mut self) -> Option<Expr> {
@@ -464,7 +482,23 @@ impl<'a> Parser<'a> {
             self.advance(); // advance past "]"
             Some(Expr { line, col, expr_type: ExprType::List(exprs) })
         } else if self.advance_if_matches_value(KEYWORD, "new") {
-            todo!("new expr")
+            let type_name = if !self.current.matches_value(SYMBOL, "{") {
+                Some(self.named_type()?)
+            } else {
+                None
+            };
+            self.require_value(SYMBOL, "{")?;
+            let mut inits = Vec::new();
+            while !self.current.matches_value(SYMBOL, "}") {
+                inits.push(self.field_init()?);
+                if self.current.matches_value(SYMBOL, "}") {
+                    break;
+                } else {
+                    self.require_value(SYMBOL, ",");
+                }
+            }
+            self.require_value(SYMBOL, "}")?;
+            Some(Expr { line, col, expr_type: ExprType::New(type_name, inits) })
         } else {
             self.error_at_current("expression");
             None
@@ -626,5 +660,12 @@ impl<'a> Parser<'a> {
             };
             bindings.push(binding);
         }
+    }
+
+    fn field_init(&mut self) -> Option<FieldInit> {
+        let field_name = self.require("field name", IDENT)?.to_string();
+        self.require_value(SYMBOL, ":")?;
+        let expr = self.expr()?;
+        Some(FieldInit { field_name, expr })
     }
 }

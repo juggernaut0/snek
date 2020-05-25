@@ -1,12 +1,12 @@
 use std::env;
 use std::fs;
 use std::process::exit;
-use std::rc::Rc;
 use std::io::{stdin, stdout, Write};
 
 mod ast;
 //mod codegen;
 //mod interpreter;
+//mod gc;
 //mod opcode;
 mod parser;
 //mod resolver;
@@ -56,19 +56,18 @@ fn repl() {
     let mut src = String::new();
     loop {
         print!(">>> ");
-        stdout().flush();
-        stdin().read_line(&mut src);
-        let ast = match parser::parse(&src) {
-            Ok(ast) => ast,
+        stdout().flush().unwrap();
+        stdin().read_line(&mut src).unwrap();
+        match parser::parse(&src) {
+            Ok(ast) => {
+                #[cfg(debug_assertions)] {
+                    debug::AstPrinter::new().print_ast(&ast);
+                }
+            },
             Err(errs) => {
                 errs.iter().for_each(|e| eprintln!("[{}:{}] [ERROR] {}", e.line(), e.col(), e.message()));
-                exit(1)
             }
         };
         src.clear();
-        #[cfg(debug_assertions)] {
-            debug::AstPrinter::new().print_ast(&ast);
-        }
-
     }
 }

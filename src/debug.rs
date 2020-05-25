@@ -109,7 +109,22 @@ impl AstPrinter {
                 self.print_all(nested);
                 self.print_close();
             }
-            Pattern::Destruct(nested) => todo!("dest pattern")
+            Pattern::Destruct(nested) => {
+                self.print_open("pattern destructure");
+                self.print_all(nested);
+                self.print_close();
+            }
+        }
+    }
+
+    fn print_field_pattern(&mut self, pattern: &FieldPattern) {
+        match pattern {
+            FieldPattern::Name(n) => self.print(&format!("field name = {}", n.name)),
+            FieldPattern::Binding(pattern, field) => {
+                self.print_open(&format!("field binding = {}", field));
+                self.print_pattern(pattern);
+                self.print_close();
+            },
         }
     }
 
@@ -134,8 +149,14 @@ impl AstPrinter {
                 self.print_all(&ce.args);
                 self.print_close();
             },
-            ExprType::New(_, _) => {
-                todo!("new expr")
+            ExprType::New(nt, inits) => {
+                self.print_open(&format!("new {}", opt_display(nt)));
+                for init in inits {
+                    self.print_open(&format!("field init {} = expr", init.field_name));
+                    self.print_expr(&init.expr);
+                    self.print_close();
+                }
+                self.print_close();
             },
             ExprType::Lambda(le) => {
                 self.print_open("lambda");
@@ -216,6 +237,12 @@ impl AstNode for Binding {
     }
 }
 
+impl AstNode for FieldPattern {
+    fn print(&self, printer: &mut AstPrinter) {
+        printer.print_field_pattern(self);
+    }
+}
+
 impl Display for QName {
     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
         write!(f, "{}", self.parts.join("."))
@@ -235,17 +262,28 @@ impl Display for TypeNameDecl {
 impl Display for TypeName {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         match self {
-            TypeName::Named(name) => {
-                if name.params.is_empty() {
-                    write!(f, "{}", name.name)
-                } else {
-                    write!(f, "{}<{}>", name.name, name.params.iter().map(|it| it.to_string()).collect::<Vec<String>>().join(" "))
-                }
-            },
+            TypeName::Named(name) => name.fmt(f),
             TypeName::Func(params, ret) => {
                 write!(f, "{{ {} -> {} }}", params.iter().map(|it| it.to_string()).collect::<Vec<String>>().join(" "), ret)
             }
         }
+    }
+}
+
+impl Display for NamedType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        if self.params.is_empty() {
+            write!(f, "{}", self.name)
+        } else {
+            write!(f, "{}<{}>", self.name, self.params.iter().map(|it| it.to_string()).collect::<Vec<String>>().join(" "))
+        }
+    }
+}
+
+fn opt_display<T : Display>(ot: &Option<T>) -> String {
+    match ot {
+        None => "None".to_string(),
+        Some(t) => format!("Some({})", t),
     }
 }
 

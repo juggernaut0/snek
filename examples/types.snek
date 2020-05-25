@@ -48,7 +48,7 @@ let { a } = foo
 # let { } = None
 
 # Accessing the members of a union: You must match and provide an arm for each possible case
-let x: Option<Number> = (...)
+let x: Option<Number> = (some_func)
 (match x
     { _: None -> (println "Nothing!") }
     { n: Number -> (println n) }
