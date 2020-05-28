@@ -1,0 +1,32 @@
+# A namespace groups declarations into a logical unit
+namespace MyNs {
+    let my_fun = { -> 5 }
+}
+
+# Binding initializers in a namespace cannot access items declared after them. However, a namespace can be "redeclared".
+# The subsequent declarations will be merged into the first.
+let top_level = "top level"
+
+# Same namespace as above, not a conflicting declaration
+namespace MyNs {
+    let inner = top_level
+}
+
+# A namespace declaration can declare several nested namespaces use . syntax. This also works with redeclaration
+namespace MyNs.InnerNs {
+
+}
+# Equivalent to
+namespace MyNs {
+    namespace InnerNs {
+
+    }
+}
+
+# Items in a namespace must be declared public to be visible from outside the namespace
+# However, as seen above, expressions in a namespace may access anything at a higher level
+namespace MyNs {
+    public let n = 5
+}
+# Namespace members are accessed with . syntax
+let myns_n = MyNs.n

@@ -1,0 +1,12 @@
+# EXPECT 4 Unresolved namespace ns2
+
+namespace ns1 {
+    public let a = ns2.a
+}
+
+namespace ns2 {
+    public let b = ns1.a
+    public let a = 5
+}
+
+(println ns2.b)

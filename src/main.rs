@@ -1,11 +1,14 @@
 use std::env;
-use std::fs;
 use std::process::exit;
 use std::io::{stdin, stdout, Write};
+use crate::ast::Ast;
+use crate::parser::ParseError;
+use std::path::Path;
 
 mod ast;
 //mod codegen;
 //mod interpreter;
+mod importer;
 //mod gc;
 //mod opcode;
 mod parser;
@@ -17,27 +20,27 @@ mod scanner;
 mod debug;
 
 fn main() {
-    let args = env::args();
+    let args = env::args_os();
     let path = args.skip(1).next(); // TODO grab script dir for imports
     if let Some(p) = path {
-        run_from_file(&p);
+        run_from_file(Path::new(&p));
     } else {
         repl();
     }
 }
 
-fn run_from_file(path: &str) {
-    let src = fs::read_to_string(&path).expect("could not read file");
-    let ast = match parser::parse(&src) {
-        Ok(ast) => ast,
+fn run_from_file(path: &Path) {
+    let asts = match importer::import(path) {
+        Ok(asts) => asts,
         Err(errs) => {
-            errs.iter().for_each(|e| eprintln!("[{}:{}] [ERROR] {}", e.line(), e.col(), e.message()));
+            errs.iter().for_each(|e| eprintln!("{} [{}:{}] [ERROR] {}", e.file(), e.line(), e.col(), e.message()));
             exit(1)
         }
     };
-    drop(src); // no need to keep in memory after this point
     #[cfg(debug_assertions)] {
-        debug::AstPrinter::new().print_ast(&ast);
+        for ast in asts {
+            debug::AstPrinter::new().print_ast(&ast);
+        }
     }
     /*let code = match codegen::compile(&ast) {
         Ok(code) => code,
@@ -58,7 +61,7 @@ fn repl() {
         print!(">>> ");
         stdout().flush().unwrap();
         stdin().read_line(&mut src).unwrap();
-        match parser::parse(&src) {
+        match extract(parser::parse(&src)) {
             Ok(ast) => {
                 #[cfg(debug_assertions)] {
                     debug::AstPrinter::new().print_ast(&ast);
@@ -70,4 +73,8 @@ fn repl() {
         };
         src.clear();
     }
+}
+
+fn extract((ast, errs): (Ast, Vec<ParseError>)) -> Result<Ast, Vec<ParseError>> {
+    if errs.is_empty() { Ok(ast) } else { Err(errs) }
 }

@@ -1,3 +1,17 @@
+# Data flow
+1. Scanning: Source -> Scanner -> Token stream
+1. Parsing: Tokens -> Parser -> Ast
+1. Resolve imports: Ast -> Importer -> Vec<Ast>
+    * Build dag from imports: Error on recursive import
+1. Resolve declarations & Usages, and types: Ast -> Resolver -> TypedAst
+    * Resolver tracks all declarations, private and public, and their types
+    * Need to resolve an Ast's dependencies' declarations before itself
+1. CodeGen: TypedAst -> CodeGenerator -> Code blocks
+1. Can do two things with Code
+    1. Interpret: Code -> Interpreter
+    1. Serialize: Code -> BytecodeSerializer -> File
+        * Can serialize to many formats (direct to JVM?)
+
 # TODO
 * Performance improvements
     * Consider alternatives to `Rc` for sharing values
@@ -5,8 +19,6 @@
         * Arena allocation?
     * Simplify opcode decoding
     * Faster implementation of locals and captured bindings
-* Methods and dynamic dispatch
-    * `method` and `impl` declarations
 
 
 ## Gc impls

@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 const MAX_ERRORS: usize = 500;
 
-pub fn parse(src: &str) -> Result<Ast, Vec<ParseError>> {
+pub fn parse(src: &str) -> (Ast, Vec<ParseError>) {
     Parser::new(Scanner::new(src)).parse()
 }
 
@@ -12,7 +12,7 @@ pub fn parse(src: &str) -> Result<Ast, Vec<ParseError>> {
 pub struct ParseError {
     message: String,
     line: u32,
-    col: u32
+    col: u32,
 }
 
 impl ParseError {
@@ -56,7 +56,7 @@ impl<'a> Parser<'a> {
         (self.current.line(), self.current.col())
     }
 
-    fn parse(mut self) -> Result<Ast, Vec<ParseError>> {
+    fn parse(mut self) -> (Ast, Vec<ParseError>) {
         let imports = self.imports();
         let decls = self.decls(true);
         let root_namespace = Namespace { name: QName { parts: Vec::new() }, public: true, decls };
@@ -65,19 +65,15 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
-        let at_end = self.current.is_eof();
-        if self.errors.is_empty() && at_end {
-            Ok(Ast {
-                imports,
-                root_namespace,
-                expr
-            })
-        } else {
-            if !at_end {
-                self.error_at_current("EOF")
-            }
-            Err(self.errors)
+        if !self.current.is_eof() {
+            self.error_at_current("EOF")
         }
+        let ast = Ast {
+            imports,
+            root_namespace,
+            expr
+        };
+        (ast, self.errors)
     }
 
     fn error(&mut self, error: ParseError) {
