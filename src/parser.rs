@@ -185,7 +185,7 @@ impl<'a> Parser<'a> {
             }
             self.advance(); // advance past "from"
             if let Some(filename) = self.require("string literal", STRING) {
-                imports.push(Import { filename: filename.to_string(), names });
+                imports.push(Import { filename: trim_quotes(filename).to_string(), names });
             }
         }
         imports
@@ -664,4 +664,8 @@ impl<'a> Parser<'a> {
         let expr = self.expr()?;
         Some(FieldInit { field_name, expr })
     }
+}
+
+fn trim_quotes(str_lit: &str) -> &str {
+    str_lit.trim_matches(str_lit.chars().next().unwrap())
 }

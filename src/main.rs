@@ -4,6 +4,7 @@ use std::io::{stdin, stdout, Write};
 use crate::ast::Ast;
 use crate::parser::ParseError;
 use std::path::Path;
+use crate::importer::BaseError;
 
 mod ast;
 //mod codegen;
@@ -33,13 +34,24 @@ fn run_from_file(path: &Path) {
     let asts = match importer::import(path) {
         Ok(asts) => asts,
         Err(errs) => {
-            errs.iter().for_each(|e| eprintln!("{} [{}:{}] [ERROR] {}", e.file(), e.line(), e.col(), e.message()));
+            errs.iter().for_each(|e| {
+                match e.base_error() {
+                    BaseError::ParseError(pe) => eprintln!("{} [{}:{}] [ERROR] {}", e.file(), pe.line(), pe.col(), pe.message()),
+                    BaseError::IoError(ioe) => eprintln!("{} [ERROR] {:?}", e.file(), ioe),
+                }
+            });
             exit(1)
         }
     };
     #[cfg(debug_assertions)] {
-        for ast in asts {
-            debug::AstPrinter::new().print_ast(&ast);
+        let mut queue = vec![asts.root()];
+        while let Some(name) = queue.pop() {
+            let (ast, deps) = asts.get_ast(name);
+            println!("{} - deps: {:?}", name, deps);
+            debug::AstPrinter::new().print_ast(ast);
+            for dep in deps {
+                queue.push(dep)
+            }
         }
     }
     /*let code = match codegen::compile(&ast) {

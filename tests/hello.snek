@@ -1,1 +1,2 @@
-(println "Hello World!")
+public let greeting = "Hello World!"
+(println greeting)

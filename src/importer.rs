@@ -2,99 +2,116 @@ use std::path::{Path, PathBuf};
 use crate::ast::Ast;
 use crate::parser;
 use std::rc::Rc;
-use std::collections::{VecDeque, HashSet};
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::collections::{VecDeque, HashMap};
 use std::mem::take;
+use crate::parser::ParseError;
 
-pub fn import(filepath: &Path) -> Result<Vec<Ast>, Vec<ParseError>> {
+pub fn import(filepath: &Path) -> Result<ModuleGraph, Vec<Error>> {
     Importer::new().parse_all(filepath)
 }
 
+pub struct ModuleGraph {
+    asts: HashMap<Rc<String>, (Ast, Vec<Rc<String>>)>,
+    root: Rc<String>,
+}
+
+impl ModuleGraph {
+    pub fn root(&self) -> &String {
+        &self.root
+    }
+
+    pub fn get_ast(&self, name: &String) -> (&Ast, &[Rc<String>]) {
+        let (ast, deps) = self.asts.get(name).expect("ast not found");
+        (ast, deps.as_slice())
+    }
+}
+
 struct Importer {
-    asts: Vec<Ast>,
-    errors: Vec<ParseError>,
-    seen: HashSet<u64>,
-    queue: VecDeque<PathBuf>,
+    asts: HashMap<Rc<String>, (Ast, Vec<Rc<String>>)>,
+    errors: Vec<Error>,
+    queue: VecDeque<(PathBuf, Rc<String>)>,
 }
 
 impl Importer {
     fn new() -> Importer {
         Importer {
-            asts: Vec::new(),
+            asts: HashMap::new(),
             errors: Vec::new(),
-            seen: HashSet::new(),
             queue: VecDeque::new(),
         }
     }
 
-    fn parse(&mut self, filepath: &Path) {
-        let name = Rc::new(filepath.to_string_lossy().to_string());
-        let name_hash = hash(&name);
-        if self.seen.contains(&name_hash) {
+    fn parse(&mut self, filepath: &Path, name: Rc<String>) {
+        if self.asts.contains_key(&name) {
             return
-        } else {
-            self.seen.insert(name_hash);
         }
 
-        let src = std::fs::read_to_string(filepath).unwrap();
+        let src = match std::fs::read_to_string(filepath) {
+            Ok(src) => src,
+            Err(e) => {
+                self.errors.push(Error::from(BaseError::IoError(e), name));
+                return;
+            },
+        };
         let (mut ast, errs) = parser::parse(&src);
 
-        let file_errs = errs.into_iter().map(|e| ParseError::from(e, Rc::clone(&name)));
+        let file_errs = errs.into_iter()
+            .map(|e| {
+                Error::from(BaseError::ParseError(e), Rc::clone(&name))
+            });
         self.errors.extend(file_errs);
 
+        let mut deps = Vec::new();
         for import in &mut ast.imports {
             let filename = take(&mut import.filename);
-            let new_path = filepath.join(&filename);
-            self.queue.push_back(new_path);
+            let new_path = filepath.parent().unwrap().join(&filename);
+            let name = path_name(&new_path);
+            self.queue.push_back((new_path, Rc::clone(&name)));
+            deps.push(name)
         }
 
-        self.asts.push(ast);
+        self.asts.insert(name, (ast, deps));
     }
 
-    fn parse_all(mut self, root_filepath: &Path) -> Result<Vec<Ast>, Vec<ParseError>> {
-        self.parse(root_filepath);
-        while let Some(path) = self.queue.pop_front() {
-            self.parse(&path);
+    fn parse_all(mut self, root_filepath: &Path) -> Result<ModuleGraph, Vec<Error>> {
+        let root_name = path_name(root_filepath);
+        self.parse(root_filepath, Rc::clone(&root_name));
+        while let Some((path, name)) = self.queue.pop_front() {
+            self.parse(&path, name);
         }
         if self.errors.is_empty() {
-            Ok(self.asts)
+            Ok(ModuleGraph { asts: self.asts, root: root_name })
         } else {
             Err(self.errors)
         }
     }
 }
 
-pub struct ParseError {
-    file: Rc<String>,
-    base_err: parser::ParseError,
+fn path_name(filepath: &Path) -> Rc<String> {
+    Rc::new(filepath.display().to_string())
 }
 
-impl ParseError {
-    fn from(base_err: parser::ParseError, file: Rc<String>) -> ParseError {
-        ParseError {
+pub struct Error {
+    file: Rc<String>,
+    base_err: BaseError,
+}
+
+pub enum BaseError{
+    ParseError(ParseError),
+    IoError(std::io::Error),
+}
+
+impl Error {
+    fn from(base_err: BaseError, file: Rc<String>) -> Error {
+        Error {
             base_err,
             file,
         }
     }
 
-    pub fn message(&self) -> &String {
-        self.base_err.message()
-    }
-
-    pub fn line(&self) -> u32 {
-        self.base_err.line()
-    }
-
-    pub fn col(&self) -> u32 {
-        self.base_err.col()
-    }
-
     pub fn file(&self) -> &String { &self.file }
-}
 
-fn hash(s: &String) -> u64 {
-    let mut h = DefaultHasher::new();
-    s.hash(&mut h);
-    h.finish()
+    pub fn base_error(&self) -> &BaseError {
+        &self.base_err
+    }
 }
