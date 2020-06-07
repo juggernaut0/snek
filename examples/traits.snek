@@ -1,0 +1,17 @@
+# There is no special language support for polymorphism, traits or typeclasses
+# However, you can make a record type with function fields and pass that around as a "polymorhic" bundle.
+
+type Iterator<T> { next: { -> Option<T> }, advance: { -> Iterator<T> } }
+
+let for_each = { f: { _ -> () } { next, advance }: Iterator<_> ->
+    (match (next)
+        { _: None -> () }
+        { x: _ -> (f x) (. f (advance)) }
+    )
+}
+
+let list = [1 2 3]
+let as_iterator = { l: List<Number> ->
+    new Iterator { next: { -> (List.head l) }, advance: { -> (as_iterator (List.tail l)) } }
+}
+(for_each println (as_iterator list))

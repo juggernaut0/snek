@@ -31,7 +31,7 @@ pub struct Type {
 
 pub struct TypeNameDecl {
     pub name: String,
-    pub params: Vec<String>
+    pub type_params: Vec<String>
 }
 
 pub enum TypeContents {
@@ -66,7 +66,7 @@ pub enum Pattern {
     Wildcard(Option<TypeName>),
     Name(Rc<NamePattern>),
     Constant(Literal),
-    Destruct(Vec<FieldPattern>),
+    Destruct(Vec<FieldPattern>, Option<TypeName>),
     List(Vec<Pattern>)
 }
 
@@ -86,13 +86,22 @@ pub struct NamePattern {
 #[derive(Eq, PartialEq, Hash)]
 pub enum TypeName {
     Named(NamedType),
-    Func(Vec<TypeName>, Box<TypeName>)
+    Func(FuncType),
+    Any,
+    Unit,
 }
 
 #[derive(Eq, PartialEq, Hash)]
 pub struct NamedType {
     pub name: QName,
     pub params: Vec<TypeName>
+}
+
+#[derive(Eq, PartialEq, Hash)]
+pub struct FuncType {
+    pub type_params: Vec<String>,
+    pub params: Vec<TypeName>,
+    pub return_type: Box<TypeName>,
 }
 
 pub struct Expr {

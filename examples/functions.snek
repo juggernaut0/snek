@@ -1,0 +1,21 @@
+# Create a function with a function expression
+let _ = { a: Number -> (a + 1) }
+
+# Bind functions to names for reuse
+let add_one = { a: Number -> (a + 1) }
+# add_one's type is inferred to be { Number -> Number }
+
+# Types of parameters in the function expression may be inferred if bound to a typed pattern
+let add_one: { Number -> Number } = { a -> (a + 1) }
+
+# Create generic functions by explicitly specifying type parameters. Note parameter types cannot be specified in the
+# function expression in this case
+let make_list: { <T> T T -> List<T> } = { a b -> [a b] }
+
+# Specialize a generic function simply by assigning it to a non-generic binding
+let make_number_list: { Number Number -> List<Number> } = make_list
+
+# Call a generic function normally. The type parameter is resolved automatically
+let strings = (make_list "Hello" "World")
+# type error: cannot resolve type parameter T
+# let what = (make_list "Hello" 42)

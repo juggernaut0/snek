@@ -273,15 +273,22 @@ impl<'a> Parser<'a> {
     }
 
     fn type_name_decl_with_init(&mut self, init: &str) -> Option<TypeNameDecl> {
-        let mut params = Vec::new();
-        if self.advance_if_matches_value(SYMBOL, "<") {
-            while let Some(param) = self.advance_if_matches(IDENT) {
-                params.push(param.to_string())
-            }
-            self.require_value(SYMBOL, ">")?;
-        }
+        let type_params = if self.current.matches_value(SYMBOL, "<") {
+            self.type_params()?
+        } else {
+            Vec::new()
+        };
+        Some(TypeNameDecl { name: init.to_string(), type_params })
+    }
 
-        Some(TypeNameDecl { name: init.to_string(), params })
+    fn type_params(&mut self) -> Option<Vec<String>> {
+        self.require_value(SYMBOL, "<")?;
+        let mut params = Vec::new();
+        while let Some(param) = self.advance_if_matches(IDENT) {
+            params.push(param.to_string())
+        }
+        self.require_value(SYMBOL, ">")?;
+        Some(params)
     }
 
     fn type_cases(&mut self) -> Option<Vec<TypeCase>> {
@@ -358,11 +365,7 @@ impl<'a> Parser<'a> {
 
     fn pattern(&mut self) -> Option<Pattern> {
         if self.advance_if_matches_value(IDENT, "_") {
-            let type_name = if self.advance_if_matches_value(SYMBOL, ":") {
-                Some(self.type_name()?)
-            } else {
-                None
-            };
+            let type_name = self.opt_type_annotation()?;
             Some(Pattern::Wildcard(type_name))
         } else if let Some(name) = self.current.matches(IDENT) {
             Some(Pattern::Name(self.name_pattern(name)?))
@@ -391,7 +394,8 @@ impl<'a> Parser<'a> {
                 }
             }
             self.require_value(SYMBOL, "}")?;
-            Some(Pattern::Destruct(fields))
+            let type_name = self.opt_type_annotation()?;
+            Some(Pattern::Destruct(fields, type_name))
         } else {
             self.error_at_current("pattern");
             None
@@ -401,12 +405,17 @@ impl<'a> Parser<'a> {
     fn name_pattern(&mut self, name: &str) -> Option<Rc<NamePattern>> {
         let (line, col) = self.pos();
         self.advance(); // advance past ident
-        let type_name = if self.advance_if_matches_value(SYMBOL, ":") {
+        let type_name = self.opt_type_annotation()?;
+        Some(Rc::new(NamePattern { line, col, name: name.to_string(), type_name }))
+    }
+
+    fn opt_type_annotation(&mut self) -> Option<Option<TypeName>> {
+        let ta = if self.advance_if_matches_value(SYMBOL, ":") {
             Some(self.type_name()?)
         } else {
             None
         };
-        Some(Rc::new(NamePattern { line, col, name: name.to_string(), type_name }))
+        Some(ta)
     }
 
     fn field_pattern(&mut self) -> Option<FieldPattern> {
@@ -428,8 +437,12 @@ impl<'a> Parser<'a> {
     fn type_name(&mut self) -> Option<TypeName> {
         if let Some(init) = self.advance_if_matches(IDENT) {
             self.named_type_with_init(init).map(|it| TypeName::Named(it))
-        } else {
-            self.require_value(SYMBOL, "{")?;
+        } else if self.advance_if_matches_value(SYMBOL, "{") {
+            let type_params = if self.current.matches_value(SYMBOL, "<") {
+                self.type_params()?
+            } else {
+                Vec::new()
+            };
             let mut params = Vec::new();
             while !self.current.matches_value(SYMBOL, "->") {
                 params.push(self.type_name()?);
@@ -437,7 +450,15 @@ impl<'a> Parser<'a> {
             self.advance(); // advance past ->
             let ret = self.type_name()?;
             self.require_value(SYMBOL, "}")?;
-            Some(TypeName::Func(params, Box::new(ret)))
+            Some(TypeName::Func(FuncType { type_params, params, return_type: Box::new(ret) }))
+        } else if self.advance_if_matches_value(IDENT, "_") {
+            Some(TypeName::Any)
+        } else if self.advance_if_matches_value(SYMBOL, "(") {
+            self.require_value(SYMBOL, ")")?;
+            Some(TypeName::Unit)
+        } else {
+            self.error_at_current("type identifier");
+            None
         }
     }
 

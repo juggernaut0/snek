@@ -7,7 +7,8 @@ namespace = 'namespace' qualified_name decl_block
 decl_block = '{' decl* '}'
 
 type = 'type' type_name_decl (type_cases | type_fields)?
-type_name_decl = IDENT ('<' IDENT+ '>')?
+type_name_decl = IDENT type_params?
+type_params = '<' IDENT+ '>'
 type_cases = '=' type_case ('|' type_case)*
 type_case = ('public'? type_name_decl type_fields) | type_name
 type_fields = '{' type_field_list? '}'
@@ -21,15 +22,16 @@ pattern = const_literal |
 	name_pattern |
 	list_pattern |
 	dest_pattern
-wildcard_pattern = '_' (':' type_name)?
-name_pattern = IDENT (':' type_name)?
+wildcard_pattern = '_' type_annotation?
+name_pattern = IDENT type_annotation?
 list_pattern = '[' pattern* ']'
-dest_pattern = '{' field_pattern (',' field_pattern)* ','? '}'
+dest_pattern = '{' field_pattern (',' field_pattern)* ','? '}' type_annotation?
 field_pattern = name_pattern | ('let' pattern '=' IDENT)
+type_annotation = ':' type_name
 
-type_name = named_type | func_type
+type_name = named_type | func_type | '_' | '()'
 named_type = qualified_name ('<' type_name+ '>')?
-func_type = '{' type_name* '->' type_name '}'
+func_type = '{' type_params? type_name* '->' type_name '}'
 
 block = (binding | call_expr | binary_expr)* expr
 expr = call_expr | new_expr | binary_expr | qualified_name | lambda | list_expr | const_literal

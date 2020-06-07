@@ -97,8 +97,8 @@ impl AstPrinter {
 
     fn print_pattern(&mut self, pattern: &Pattern) {
         match pattern {
-            Pattern::Wildcard(_) => self.print("pattern wildcard"),
-            Pattern::Name(n) => self.print(&format!("pattern name = {}", n.name)),
+            Pattern::Wildcard(tn) => self.print(&format!("pattern wildcard type = {}", opt_display(tn))),
+            Pattern::Name(n) => self.print(&format!("pattern name = {} type = {}", n.name, opt_display(&n.type_name))),
             Pattern::Constant(l) => {
                 self.print_open("pattern constant");
                 self.print_literal(l);
@@ -109,8 +109,8 @@ impl AstPrinter {
                 self.print_all(nested);
                 self.print_close();
             }
-            Pattern::Destruct(nested) => {
-                self.print_open("pattern destructure");
+            Pattern::Destruct(nested, tn) => {
+                self.print_open(&format!("pattern destructure type = {}", opt_display(tn)));
                 self.print_all(nested);
                 self.print_close();
             }
@@ -251,10 +251,10 @@ impl Display for QName {
 
 impl Display for TypeNameDecl {
     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-        if self.params.is_empty() {
+        if self.type_params.is_empty() {
             write!(f, "{}", self.name)
         } else {
-            write!(f, "{}<{}>", self.name, self.params.iter().map(|it| it.to_string()).collect::<Vec<String>>().join(" "))
+            write!(f, "{}<{}>", self.name, self.type_params.iter().map(|it| it.to_string()).collect::<Vec<String>>().join(" "))
         }
     }
 }
@@ -263,9 +263,11 @@ impl Display for TypeName {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         match self {
             TypeName::Named(name) => name.fmt(f),
-            TypeName::Func(params, ret) => {
-                write!(f, "{{ {} -> {} }}", params.iter().map(|it| it.to_string()).collect::<Vec<String>>().join(" "), ret)
+            TypeName::Func(func) => {
+                write!(f, "{{ {} -> {} }}", func.params.iter().map(|it| it.to_string()).collect::<Vec<String>>().join(" "), func.return_type)
             }
+            TypeName::Any => write!(f, "_"),
+            TypeName::Unit => write!(f, "()")
         }
     }
 }
