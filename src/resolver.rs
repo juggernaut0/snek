@@ -2,19 +2,44 @@ use std::collections::HashMap;
 use crate::ast::*;
 use std::rc::Rc;
 
-pub type LocalId = u16;
-
-#[derive(Clone)]
-pub struct Declaration {
-    name: Rc<NamePattern>,
-    id: LocalId
+pub struct ModuleDecls {
+    name: Rc<String>,
+    root_ns: NamespaceDeclaration,
 }
 
-impl Declaration {
-    fn name(&self) -> &String {
-        &self.name.name
+impl ModuleDecls {
+    fn get_type(&self, name: &QName) -> Option<&TypeDeclaration> {
+        let mut current = &self.root_ns;
+        let last_index = name.parts.len() - 1;
+        for part in &name.parts[0..last_index] {
+            current = current.namespaces.iter().find(|it| &it.name == part)?;
+        }
+        let last = &name.parts[last_index];
+        current.types.iter().find(|it| &it.name == last)
     }
 }
+
+pub struct NamespaceDeclaration {
+    name: String,
+    types: Vec<TypeDeclaration>,
+    bindings: Vec<ValueDeclaration>,
+    namespaces: Vec<NamespaceDeclaration>,
+}
+
+pub struct TypeDeclaration {
+    name: String,
+    id: TypeId,
+}
+pub struct ValueDeclaration {
+    name: String,
+    type_id: TypeId,
+    id: ValueId,
+}
+
+#[derive(Copy, Clone)]
+pub struct ValueId(u16);
+#[derive(Copy, Clone)]
+pub struct TypeId(u16);
 
 #[derive(Eq, PartialEq, Hash)]
 struct QNameExpr {
@@ -35,46 +60,61 @@ impl QNameExpr {
     }
 }
 
-pub struct Resolver {
-    declarations: HashMap<Rc<NamePattern>, LocalId>,
-    usages: HashMap<QNameExpr, (LocalId, String)>,
-    declaration_id_seq: u16
+pub struct Resolver<'deps> {
+    declarations: HashMap<Rc<NamePattern>, ValueId>,
+    usages: HashMap<QNameExpr, (ValueId, String)>,
+    dependencies: HashMap<&'deps String, &'deps ModuleDecls>,
+    value_id_seq: u16,
+    type_id_seq: u16,
 }
 
-impl Resolver {
-    pub fn new(ast: &Ast) -> Resolver {
+impl Resolver<'_> {
+    pub fn new<'d>(ast: &Ast, deps: &'d [ModuleDecls]) -> Resolver<'d> {
+        let mut dependencies = HashMap::new();
+        for dep in deps {
+            dependencies.insert(dep.name.as_ref(), dep);
+        }
         let mut r = Resolver {
             declarations: HashMap::new(),
             usages: HashMap::new(),
-
-            declaration_id_seq: 0
+            dependencies,
+            value_id_seq: 0,
+            type_id_seq: 0,
         };
         r.resolve(ast);
         r
     }
 
-    pub fn get_declaration(&self, name: &Rc<NamePattern>) -> LocalId {
+    pub fn get_declaration(&self, name: &Rc<NamePattern>) -> ValueId {
         *self.declarations.get(name).expect("unknown declaration")
     }
 
-    pub fn get_usage(&self, expr: &Expr) -> Option<&(LocalId, String)> {
+    pub fn get_usage(&self, expr: &Expr) -> Option<&(ValueId, String)> {
         let k = QNameExpr::from(expr)?;
         self.usages.get(&k)
     }
 
     fn resolve(&mut self, ast: &Ast) {
+        let mut type_decls = Vec::new();
+        let mut value_decls = Vec::new();
+        for import in &ast.imports {
+            let dep = self.dependencies.get(&import.filename).expect("Missing dependency");
+            for name in import.names {
+
+            }
+        }
         let declarations = ast.root_namespace.decls.iter().flat_map(|d| self.find_declarations(d)).collect();
         let root_scope = Scope::new(&declarations, None);
         self.add_declarations(&declarations);
-        for decl in &ast.root_namespace.decls {
+        /*for decl in &ast.root_namespace.decls {
             self.resolve_usages_decl(decl, &root_scope);
         }
         if let Some(expr) = &ast.expr {
             self.resolve_usages_expr(expr, &root_scope);
-        }
+        }*/
     }
 
-    fn resolve_usages_decl(&mut self, decl: &Decl, scope: &Scope) {
+    /*fn resolve_usages_decl(&mut self, decl: &Decl, scope: &Scope) {
         match decl {
             Decl::Binding(b) => self.resolve_usages_expr(&b.expr, scope),
             Decl::Namespace(ns) => self.resolve_usages_namespace(ns, scope),
@@ -153,7 +193,7 @@ impl Resolver {
             name,
             id
         }
-    }
+    }*/
 
     fn add_declarations(&mut self, declarations: &Vec<Declaration>) {
         for d in declarations {

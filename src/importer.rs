@@ -3,7 +3,6 @@ use crate::ast::Ast;
 use crate::parser;
 use std::rc::Rc;
 use std::collections::{VecDeque, HashMap};
-use std::mem::take;
 use crate::parser::ParseError;
 
 pub fn import(filepath: &Path) -> Result<ModuleGraph, Vec<Error>> {
@@ -63,8 +62,7 @@ impl Importer {
 
         let mut deps = Vec::new();
         for import in &mut ast.imports {
-            let filename = take(&mut import.filename);
-            let new_path = filepath.parent().unwrap().join(&filename);
+            let new_path = filepath.parent().unwrap().join(&import.filename);
             let name = path_name(&new_path);
             self.queue.push_back((new_path, Rc::clone(&name)));
             deps.push(name)

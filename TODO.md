@@ -1,9 +1,9 @@
 # Data flow
 1. Scanning: Source -> Scanner -> Token stream
 1. Parsing: Tokens -> Parser -> Ast
-1. Resolve imports: Ast -> Importer -> Vec<Ast>
+1. Resolve imports: Ast -> Importer -> ModuleDag
     * Build dag from imports: Error on recursive import
-1. Resolve declarations & Usages, and types: Ast -> Resolver -> TypedAst
+1. Resolve declarations & Usages, and types: Ast + Deps' decls -> Resolver -> TypedAst + decls
     * Resolver tracks all declarations, private and public, and their types
     * Need to resolve an Ast's dependencies' declarations before itself
 1. CodeGen: TypedAst -> CodeGenerator -> Code blocks
