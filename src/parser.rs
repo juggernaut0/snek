@@ -436,7 +436,11 @@ impl<'a> Parser<'a> {
 
     fn type_name(&mut self) -> Option<TypeName> {
         if let Some(init) = self.advance_if_matches(IDENT) {
-            self.named_type_with_init(init).map(|it| TypeName::Named(it))
+            if init == "_" {
+                Some(TypeName::Inferred)
+            } else {
+                self.named_type_with_init(init).map(|it| TypeName::Named(it))
+            }
         } else if self.advance_if_matches_value(SYMBOL, "{") {
             let type_params = if self.current.matches_value(SYMBOL, "<") {
                 self.type_params()?
@@ -451,11 +455,13 @@ impl<'a> Parser<'a> {
             let ret = self.type_name()?;
             self.require_value(SYMBOL, "}")?;
             Some(TypeName::Func(FuncType { type_params, params, return_type: Box::new(ret) }))
-        } else if self.advance_if_matches_value(IDENT, "_") {
+        } else if self.advance_if_matches_value(SYMBOL, "*") {
             Some(TypeName::Any)
         } else if self.advance_if_matches_value(SYMBOL, "(") {
             self.require_value(SYMBOL, ")")?;
             Some(TypeName::Unit)
+        } else if self.advance_if_matches_value(SYMBOL, "!") {
+            Some(TypeName::Nothing)
         } else {
             self.error_at_current("type identifier");
             None

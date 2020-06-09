@@ -22,7 +22,7 @@ mod debug;
 
 fn main() {
     let args = env::args_os();
-    let path = args.skip(1).next(); // TODO grab script dir for imports
+    let path = args.skip(1).next();
     if let Some(p) = path {
         run_from_file(Path::new(&p));
     } else {

@@ -266,8 +266,10 @@ impl Display for TypeName {
             TypeName::Func(func) => {
                 write!(f, "{{ {} -> {} }}", func.params.iter().map(|it| it.to_string()).collect::<Vec<String>>().join(" "), func.return_type)
             }
-            TypeName::Any => write!(f, "_"),
-            TypeName::Unit => write!(f, "()")
+            TypeName::Any => write!(f, "*"),
+            TypeName::Unit => write!(f, "()"),
+            TypeName::Nothing => write!(f, "!"),
+            TypeName::Inferred => write!(f, "_")
         }
     }
 }

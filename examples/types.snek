@@ -49,7 +49,20 @@ let { a } = foo
 
 # Accessing the members of a union: You must match and provide an arm for each possible case
 let x: Option<Number> = (some_func)
-(match x
+let _ = (match x
     { _: None -> (println "Nothing!") }
     { n: Number -> (println n) }
 )
+
+# A type can be specified as '*', meaning Any
+let any_list: List<*> = [1 'b' false]
+
+# A type can be specified as '_', meaning inferred.
+# num_list has type List<Number>
+let num_list: List<_> = [1 2 3]
+# any_list has type List<*>
+let any_list: List<_> = [1 'b' false]
+
+# The type '!' represents an expression that never returns, e.g. an infinite loop or program termination
+let never: ! = (exit 0)
+let looper: { -> ! } = { -> (.) }

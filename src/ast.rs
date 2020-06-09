@@ -87,8 +87,10 @@ pub struct NamePattern {
 pub enum TypeName {
     Named(NamedType),
     Func(FuncType),
-    Any,
     Unit,
+    Any,
+    Nothing,
+    Inferred,
 }
 
 #[derive(Eq, PartialEq, Hash)]

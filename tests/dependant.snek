@@ -1,0 +1,18 @@
+# expect compiler error: cannot resolve type of binding f
+let f = { -> f }
+# this compiles
+let f2: { -> _ } = { -> f2 }
+
+type Box<T> { t: T }
+# compile error: cannot resolve type of binding box
+let box = new Box { t: box }
+# runtime error: cannot access name box before it is initialized
+let box: Box<_> = new { t: box }
+
+type F = () -> F
+# works!
+let f: F = { -> f }
+
+type RBox = Box<RBox>
+# compiles, but still runtime error
+let box: RBox = new { t: box }

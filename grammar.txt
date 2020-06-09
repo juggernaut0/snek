@@ -29,7 +29,7 @@ dest_pattern = '{' field_pattern (',' field_pattern)* ','? '}' type_annotation?
 field_pattern = name_pattern | ('let' pattern '=' IDENT)
 type_annotation = ':' type_name
 
-type_name = named_type | func_type | '_' | '()'
+type_name = named_type | func_type | '()' | '*' | '!' | '_'
 named_type = qualified_name ('<' type_name+ '>')?
 func_type = '{' type_params? type_name* '->' type_name '}'
 
