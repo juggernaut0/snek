@@ -178,8 +178,16 @@ impl<'a> Parser<'a> {
             self.advance(); // advance past "import"
             let mut names = Vec::new();
             while !self.current.matches_value(KEYWORD, "from") {
+                let (line, col) = self.pos();
                 match self.qualified_name() {
-                    Some(qname) => names.push(qname),
+                    Some(name) => {
+                        let imported_name = ImportedName {
+                            name,
+                            line,
+                            col,
+                        };
+                        names.push(imported_name)
+                    },
                     None => continue
                 }
             }

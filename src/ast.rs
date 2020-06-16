@@ -8,7 +8,13 @@ pub struct Ast {
 
 pub struct Import {
     pub filename: String,
-    pub names: Vec<QName>
+    pub names: Vec<ImportedName>,
+}
+
+pub struct ImportedName {
+    pub name: QName,
+    pub line: u32,
+    pub col: u32,
 }
 
 pub enum Decl {

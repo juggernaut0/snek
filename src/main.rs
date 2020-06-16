@@ -13,7 +13,7 @@ mod importer;
 //mod gc;
 //mod opcode;
 mod parser;
-//mod resolver;
+mod resolver;
 mod scanner;
 //mod value;
 

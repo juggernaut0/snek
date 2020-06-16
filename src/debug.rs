@@ -46,7 +46,7 @@ impl AstPrinter {
 
     fn print_import(&mut self, import: &Import) {
         self.print_open(&format!("import from {}", import.filename));
-        self.print_all(&import.names);
+        self.print_all(&import.names.iter().map(|it| &it.name).collect::<Vec<_>>());
         self.print_close();
     }
 
@@ -187,6 +187,12 @@ impl AstPrinter {
 
 trait AstNode {
     fn print(&self, printer: &mut AstPrinter);
+}
+
+impl<T: AstNode> AstNode for &'_ T {
+    fn print(&self, printer: &mut AstPrinter) {
+        T::print(self, printer);
+    }
 }
 
 impl AstNode for Import {

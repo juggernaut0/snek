@@ -15,3 +15,14 @@ let as_iterator = { l: List<Number> ->
     new Iterator { current: { -> (List.head l) }, advance: { -> (as_iterator (List.tail l)) } }
 }
 (for_each println (as_iterator list))
+
+type Default<T> { default: { -> T } }
+let fill_list: { <T> Default<T> Number -> List<T> } = { { default } n ->
+    (match n
+        { 0 -> [] }
+        { _ -> (List.cons (default) (make_list default (n - 1)) }
+    )
+}
+
+let number_default = new Default<Number> { default: { -> 0 } }
+let zeros = (fill_list number_default 5) # [0 0 0 0 0]

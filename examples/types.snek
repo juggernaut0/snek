@@ -7,7 +7,7 @@ type Some<T> { t: T }
 # empty
 type None
 # equivalent:
-# type None = {}
+# type None {}
 type Option<T> = Some<T> | None
 
 # shorthand - declares Some and None record types inline
