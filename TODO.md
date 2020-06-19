@@ -162,7 +162,3 @@ namespace Bar {
 type A = ()
 type B = Bar.B
 ```
-1. local type names to type ids
-    - A -> :A
-    - B -> :B
-        

@@ -24,9 +24,22 @@ namespace MyNs {
 }
 
 # Items in a namespace must be declared public to be visible from outside the namespace
-# However, as seen above, expressions in a namespace may access anything at a higher level
-namespace MyNs {
-    public let n = 5
+# However, as seen above, expressions in a namespace may access anything at *either* a higher lexical level or a higher
+# namespace level
+public namespace MyNs.InnerNs {
+    public let n = inner
 }
 # Namespace members are accessed with . syntax
-let myns_n = MyNs.n
+let myns_n = MyNs.InnerNs.n
+
+namespace A {
+    type A
+}
+namespace A {
+    let a1: A = new { }
+    # Can also do
+    let a2: A.A = new { }
+}
+
+
+

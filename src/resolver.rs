@@ -335,38 +335,39 @@ impl<'ast> TypeDeclLookupScope<'_, 'ast, '_> {
     fn enter_scope(&self, name: &'ast QName) -> TypeDeclLookupScope {
         TypeDeclLookupScope {
             lookup: self.lookup,
-            scope: QNameList::List(&self.scope, name)
+            scope: QNameList::List(&self.scope, &name.parts)
         }
     }
 
     fn get_type(&self, name: &QName) -> Option<TypeId> {
-        let mut current_scope = &self.scope;
+        let mut current_scope = self.scope;
         loop {
-            let full_name = QNameList::List(current_scope, name);
+            let full_name = QNameList::List(&current_scope, &name.parts);
             let id = self.lookup.decls
                 .iter()
                 .find(|&decl| full_name.matches(decl))
                 .cloned();
             if id.is_some() { return id }
-            match current_scope {
-                QNameList::List(parent, _) => current_scope = *parent,
-                _ => break
+            if let QNameList::Empty = current_scope {
+                break
             }
+            current_scope = current_scope.pop_namespace();
         }
         None
     }
 }
 
+#[derive(Clone, Copy)]
 enum QNameList<'ast, 'parent> {
     Empty,
-    List(&'parent QNameList<'ast, 'parent>, &'ast QName)
+    List(&'parent QNameList<'ast, 'parent>, &'ast [String])
 }
 
-impl QNameList<'_, '_> {
+impl<'parent, 'ast> QNameList<'parent, 'ast> {
     fn len(&self) -> usize {
         match self {
             QNameList::Empty => 0,
-            QNameList::List(parent, name) => parent.len() + name.parts.len()
+            QNameList::List(parent, name) => parent.len() + name.len()
         }
     }
 
@@ -381,6 +382,20 @@ impl QNameList<'_, '_> {
             if a != b { return false }
         }
         true
+    }
+
+    fn pop_namespace(&self) -> QNameList<'parent, 'ast> {
+        match self {
+            QNameList::Empty => QNameList::Empty,
+            QNameList::List(parent, names) => {
+                let names_len = names.len();
+                if names_len == 1 {
+                    **parent
+                } else {
+                    QNameList::List(parent, &names[0..names_len-1])
+                }
+            }
+        }
     }
 }
 
@@ -398,7 +413,7 @@ impl<'ast> QNameListIter<'ast> {
             },
             QNameList::List(parent, name) => QNameListIter {
                 parent: Some(Box::new(parent.iter())),
-                name: Some(name.parts.iter()),
+                name: Some(name.iter()),
             },
         }
     }
@@ -419,14 +434,15 @@ impl<'ast> Iterator for QNameListIter<'ast> {
 #[cfg(test)]
 mod test {
     use crate::ast::QName;
-    use crate::resolver::{QNameList, TypeId};
+    use crate::resolver::{QNameList, TypeId, TypeDeclLookup};
     use std::rc::Rc;
+    use std::fmt::{Debug, Formatter};
 
     #[test]
     fn qname_list_iter() {
-        let a = QName { parts: vec![String::from("a"), String::from("b")] };
-        let b = QName { parts: vec![String::from("c")] };
-        let c = QName { parts: vec![String::from("d"), String::from("e")] };
+        let a = vec![String::from("a"), String::from("b")];
+        let b = vec![String::from("c")];
+        let c = vec![String::from("d"), String::from("e")];
 
         let l1 = QNameList::Empty;
         let l2 = QNameList::List(&l1, &a);
@@ -442,13 +458,41 @@ mod test {
     fn qname_list_matches() {
         let type_id = TypeId(Rc::new((Rc::new(String::new()), vec![String::from("a"), String::from("b"), String::from("c")])));
 
-        let a = QName { parts: vec![String::from("a"), String::from("b")] };
-        let b = QName { parts: vec![String::from("c")] };
+        let a = vec![String::from("a"), String::from("b")];
+        let b = vec![String::from("c")];
 
         let l1 = QNameList::Empty;
         let l2 = QNameList::List(&l1, &a);
         let l3 = QNameList::List(&l2, &b);
 
         assert!(l3.matches(&type_id))
+    }
+
+    #[test]
+    fn type_decl_lookup() {
+        let type_id = TypeId(Rc::new((Rc::new(String::from("test")), vec![String::from("A"), String::from("A")])));
+        let lookup = TypeDeclLookup {
+            decls: vec![type_id.clone()]
+        };
+
+        let A = QName { parts: vec![String::from("A")] };
+        let A_A = QName { parts: vec![String::from("A"), String::from("A")] };
+
+        {
+            let scope1 = lookup.root_scope();
+            let scope2 = scope1.enter_scope(&A);
+
+            let a = scope2.get_type(&A);
+            assert_eq!(type_id, a.unwrap());
+
+            let a_a = scope2.get_type(&A_A);
+            assert_eq!(type_id, a_a.unwrap());
+        }
+    }
+
+    impl Debug for TypeId {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{:?}:{:?}", (self.0).0, (self.0).1)
+        }
     }
 }
