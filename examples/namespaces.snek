@@ -25,7 +25,7 @@ namespace MyNs {
 
 # Items in a namespace must be declared public to be visible from outside the namespace
 # However, as seen above, expressions in a namespace may access anything at *either* a higher lexical level or a higher
-# namespace level
+# namespace level.
 public namespace MyNs.InnerNs {
     public let n = inner
 }
@@ -41,5 +41,16 @@ namespace A {
     let a2: A.A = new { }
 }
 
-
-
+# namespace resolution trumps lexical, EXCEPT at root level
+let y = 4
+namespace Foo.Bar {
+    let x = 2
+}
+namespace Foo {
+    let x = 1
+    let y = 3
+    namespace Bar {
+        let f = { -> (println x) } # will print 2
+        let g = { -> (println y) } # will print 3
+    }
+}
