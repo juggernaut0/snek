@@ -23,6 +23,16 @@ pub enum Decl {
     Binding(Binding)
 }
 
+impl Decl {
+    pub fn is_public(&self) -> bool {
+        match self {
+            Decl::Namespace(ns) => ns.public,
+            Decl::Type(t) => t.public,
+            Decl::Binding(b) => b.public,
+        }
+    }
+}
+
 pub struct Namespace {
     pub name: QName,
     pub public: bool,

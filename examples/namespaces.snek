@@ -23,7 +23,8 @@ namespace MyNs {
     }
 }
 
-# Items in a namespace must be declared public to be visible from outside the namespace
+# Items in a namespace must be declared public to be visible from outside the namespace. The declaration AND all of the
+# intermediate namespaces must be declared public. Only one of a
 # However, as seen above, expressions in a namespace may access anything at *either* a higher lexical level or a higher
 # namespace level.
 public namespace MyNs.InnerNs {
@@ -31,6 +32,29 @@ public namespace MyNs.InnerNs {
 }
 # Namespace members are accessed with . syntax
 let myns_n = MyNs.InnerNs.n
+
+# visiblity
+namespace Wrap {
+    namespace Blah {
+        public let x = 5 # visibility: Wrap
+        let z = 5 # visibility: Wrap.Blah
+    }
+    public namespace Blah {
+        public let y = 5 # visibility: <root>
+        let zz = z # visibility: Wrap.Blah
+    }
+    let _ = Blah.x # fine
+}
+# let x = Wrap.Blah.x  # error cannot access x in Wrap.Blah
+let y = Wrap.Blah.y # fine
+
+# Public applies to all nested Ns when declared with . syntax
+public namespace MyNs.InnerNs {}
+# is equivalent to:
+public namespace MyNs {
+    public namespace InnerNs {
+    }
+}
 
 namespace A {
     type A
@@ -41,16 +65,22 @@ namespace A {
     let a2: A.A = new { }
 }
 
-# namespace resolution trumps lexical, EXCEPT at root level
-let y = 4
+# lexical resolution trumps ns resolution. Note: namespaces do not create new lexical scopes, even top level.
+# Declarations in a namespace (even top-level) cannot be resolved lexically
+let y = 1
 namespace Foo.Bar {
     let x = 2
 }
 namespace Foo {
-    let x = 1
-    let y = 3
+    let x = 3
+    let y = 4
     namespace Bar {
+        let z = 5
         let f = { -> (println x) } # will print 2
-        let g = { -> (println y) } # will print 3
+        let g = { -> (println y) } # will print 4
+        let h = { ->
+            let z = 6
+            (println z) # will print 6
+        }
     }
 }

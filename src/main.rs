@@ -5,6 +5,8 @@ use crate::ast::Ast;
 use crate::parser::ParseError;
 use std::path::Path;
 use crate::importer::BaseError;
+use crate::resolver::Resolver;
+use std::rc::Rc;
 
 mod ast;
 //mod codegen;
@@ -54,6 +56,9 @@ fn run_from_file(path: &Path) {
             }
         }
     }
+    let root_name = asts.root();
+    let (root, _) = asts.get_ast(&root_name);
+    Resolver::new(Rc::clone(root_name), root, &[]); // TODO deps
     /*let code = match codegen::compile(&ast) {
         Ok(code) => code,
         Err(errs) => {

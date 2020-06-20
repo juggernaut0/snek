@@ -32,7 +32,9 @@
   * Cons: Dynamic allocations might happen as the Map expands.
 
 ## Resolver
-1. Find all type declarations (including imported). Store local name -> TypeId in a map.
+1. Find all type declarations (including imported). Store (TypeId, visibility) in a lookup.
+    * Visibility is a qname from where the name is accessible. This name or any child ns can 
+    access.
 1. Resolve record type fields. Make type declarations 
 1. Starting from top-level scope, recursively extract all name declarations and record their 
 declared type. Give each a unique ID and store name -> decl in a map.
@@ -56,9 +58,9 @@ public let make_foo = { -> new Foo { "hello" } }
 public let break_foo = { foo: { x }: Foo -> x }
 ```
 
-1. local type names to type ids
-    - String: builtin:String
-    - Foo: a.snek:Foo
+1. Types
+    - builtin:String - <root> (implicitly imported)
+    - a.snek:Foo - <root>
 2. resolved record type defs
     - a.snek:Foo { x: builtin:String }
 3. binding decls and declared types
@@ -104,8 +106,8 @@ let foo = (make_foo)
 ```
 
 Steps:
-1. local type names to type ids
-2. resolve record type defs
+1. Types
+2. resolve record type defs: none
 3. binding decls and declared types
     - println: { Any -> builtin:Unit }: b.snek:0
     - make_foo: { -> a.snek:Foo } -> b.snek:1
@@ -147,7 +149,7 @@ Steps:
                 - expr type is Any
         - unify Any & Any -> Any
         - expr type is Any
-5. Exports
+5. Exports: none
 
 ```
 let b: Foo.B = new { a: () }
@@ -162,3 +164,9 @@ namespace Bar {
 type A = ()
 type B = Bar.B
 ```
+
+1. Types
+    - Foo.B - <root>
+    - Bar.B - <root>
+    - A - <root>
+    - B - <root>

@@ -15,7 +15,7 @@ pub struct ModuleGraph {
 }
 
 impl ModuleGraph {
-    pub fn root(&self) -> &String {
+    pub fn root(&self) -> &Rc<String> {
         &self.root
     }
 

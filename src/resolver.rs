@@ -41,7 +41,14 @@ pub struct NamespaceDeclaration {
 pub struct TypeDeclaration {
     name: String,
     id: TypeId,
-    fields: Vec<(String, TypeId)>
+    definition: TypeDefinition,
+    visibility: QName,
+}
+#[derive(Clone)]
+pub enum TypeDefinition {
+    Undefined,
+    Record(Vec<(String, TypeId)>),
+    Union(Vec<TypeId>),
 }
 pub struct ValueDeclaration {
     name: String,
@@ -53,6 +60,12 @@ pub struct ValueDeclaration {
 pub struct ValueId(u16);
 #[derive(Clone, Eq, PartialEq)]
 pub struct TypeId(Rc<(Rc<String>, Vec<String>)>);
+
+impl TypeId {
+    fn new(mod_name: Rc<String>, fqn: QName) -> TypeId {
+        TypeId(Rc::new((mod_name, fqn.parts)))
+    }
+}
 
 #[derive(Eq, PartialEq, Hash)]
 struct QNameExpr {
@@ -120,8 +133,11 @@ impl Resolver<'_> {
     fn resolve(&mut self, ast: &Ast) {
         let (mut type_decls, mut val_decls) = self.import_names(&ast.imports);
         for decl in &ast.root_namespace.decls {
-
+            self.add_type_decl(decl, QNameList::Empty, QNameList::Empty, &mut type_decls)
         }
+        let type_lookup = TypeDeclLookup {
+            decls: type_decls.iter().map(|d| d.id.clone()).collect()
+        };
         //let declarations = ast.root_namespace.decls.iter().flat_map(|d| self.find_declarations(d)).collect();
         //let root_scope = Scope::new(val_decls, type_decls, None);
         //self.add_declarations(&declarations);
@@ -160,7 +176,10 @@ impl Resolver<'_> {
         TypeDeclaration {
             name: td.name.clone(),
             id: td.id.clone(),
-            fields: td.fields.clone(),
+            definition: td.definition.clone(),
+            visibility: QName {
+                parts: td.visibility.parts.clone()
+            },
         }
     }
 
@@ -174,8 +193,29 @@ impl Resolver<'_> {
         }
     }
 
-    fn add_decl(decl: &Decl, type_decls: &mut Vec<TypeDeclaration>, val_decls: &mut Vec<ValueDeclaration>) {
-        todo!("add_decl")
+    fn add_type_decl(&mut self, decl: &Decl, namespace: QNameList, visibility: QNameList, type_decls: &mut Vec<TypeDeclaration>) {
+        match decl {
+            Decl::Namespace(ns) => {
+                for decl in &ns.decls {
+                    let vis = if decl.is_public() { visibility } else { namespace };
+                    self.add_type_decl(decl, namespace.append(&ns.name), vis, type_decls)
+                }
+            },
+            Decl::Type(t) => {
+                let fqn = {
+                    let mut ns = namespace.to_qname();
+                    ns.parts.push(t.name.name.clone());
+                    ns
+                };
+                type_decls.push(TypeDeclaration {
+                    name: t.name.name.clone(),
+                    id: TypeId::new(Rc::clone(&self.exports.name), fqn),
+                    definition: TypeDefinition::Undefined,
+                    visibility: visibility.to_qname(),
+                });
+            }
+            _ => ()
+        }
     }
 
     /*fn resolve_usages_decl(&mut self, decl: &Decl, scope: &Scope) {
@@ -335,14 +375,14 @@ impl<'ast> TypeDeclLookupScope<'_, 'ast, '_> {
     fn enter_scope(&self, name: &'ast QName) -> TypeDeclLookupScope {
         TypeDeclLookupScope {
             lookup: self.lookup,
-            scope: QNameList::List(&self.scope, &name.parts)
+            scope: self.scope.append(name),
         }
     }
 
     fn get_type(&self, name: &QName) -> Option<TypeId> {
         let mut current_scope = self.scope;
         loop {
-            let full_name = QNameList::List(&current_scope, &name.parts);
+            let full_name = current_scope.append(name);
             let id = self.lookup.decls
                 .iter()
                 .find(|&decl| full_name.matches(decl))
@@ -364,6 +404,10 @@ enum QNameList<'ast, 'parent> {
 }
 
 impl<'parent, 'ast> QNameList<'parent, 'ast> {
+    fn append(&'parent self, qname: &'ast QName) -> QNameList<'parent, 'ast> {
+        QNameList::List(self, &qname.parts)
+    }
+
     fn len(&self) -> usize {
         match self {
             QNameList::Empty => 0,
@@ -395,6 +439,12 @@ impl<'parent, 'ast> QNameList<'parent, 'ast> {
                     QNameList::List(parent, &names[0..names_len-1])
                 }
             }
+        }
+    }
+
+    fn to_qname(&self) -> QName {
+        QName {
+            parts: self.iter().cloned().collect()
         }
     }
 }
