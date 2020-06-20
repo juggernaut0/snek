@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use crate::ast::*;
 use std::rc::Rc;
+use std::fmt::{Debug, Formatter};
 
 pub struct ModuleDecls {
     name: Rc<String>,
@@ -65,6 +66,16 @@ impl TypeId {
     fn new(mod_name: Rc<String>, fqn: QName) -> TypeId {
         TypeId(Rc::new((mod_name, fqn.parts)))
     }
+
+    fn fqn(&self) -> &[String] {
+        &(self.0).1
+    }
+}
+
+impl Debug for TypeId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}:{:?}", (self.0).0, (self.0).1)
+    }
 }
 
 #[derive(Eq, PartialEq, Hash)]
@@ -88,7 +99,7 @@ impl QNameExpr {
 
 pub struct Resolver<'deps> {
     declarations: HashMap<Rc<NamePattern>, ValueId>,
-    type_declarations: HashMap<String, TypeId>,
+    type_declarations: Vec<TypeDeclaration>,
     usages: HashMap<QNameExpr, (ValueId, String)>,
     dependencies: HashMap<&'deps String, &'deps ModuleDecls>,
     exports: ModuleDecls,
@@ -108,7 +119,7 @@ impl Resolver<'_> {
         };
         let mut r = Resolver {
             declarations: HashMap::new(),
-            type_declarations: HashMap::new(),
+            type_declarations: Vec::new(),
             usages: HashMap::new(),
             dependencies,
             exports,
@@ -131,13 +142,14 @@ impl Resolver<'_> {
     */
 
     fn resolve(&mut self, ast: &Ast) {
-        let (mut type_decls, mut val_decls) = self.import_names(&ast.imports);
-        for decl in &ast.root_namespace.decls {
+        let _val_decls = self.import_names(&ast.imports);
+        /*for decl in &ast.root_namespace.decls {
             self.add_type_decl(decl, QNameList::Empty, QNameList::Empty, &mut type_decls)
-        }
-        let type_lookup = TypeDeclLookup {
+        }*/
+        self.add_types(&ast.root_namespace, QNameList::Empty, QNameList::Empty);
+        /*let type_lookup = TypeDeclLookup {
             decls: type_decls.iter().map(|d| d.id.clone()).collect()
-        };
+        };*/
         //let declarations = ast.root_namespace.decls.iter().flat_map(|d| self.find_declarations(d)).collect();
         //let root_scope = Scope::new(val_decls, type_decls, None);
         //self.add_declarations(&declarations);
@@ -149,15 +161,22 @@ impl Resolver<'_> {
         }*/
     }
 
-    fn import_names(&mut self, imports: &[Import]) -> (Vec<TypeDeclaration>, Vec<ValueDeclaration>) {
-        let mut type_decls = Vec::new();
+    fn import_names(&mut self, imports: &[Import]) -> Vec<ValueDeclaration> {
         let mut value_decls = Vec::new();
         for import in imports {
             let dep = *self.dependencies.get(&import.filename).expect("Missing dependency");
             for name in &import.names {
                 let mut found = false;
                 if let Some(td) = dep.get_type(&name.name) {
-                    type_decls.push(self.import_type(td));
+                    let imported_type = TypeDeclaration {
+                        name: td.name.clone(),
+                        id: td.id.clone(),
+                        definition: td.definition.clone(),
+                        visibility: QName {
+                            parts: td.visibility.parts.clone()
+                        },
+                    };
+                    self.type_declarations.push(imported_type);
                     found = true;
                 }
                 if let Some(vd) = dep.get_value(&name.name) {
@@ -169,18 +188,7 @@ impl Resolver<'_> {
                 }
             }
         }
-        (type_decls, value_decls)
-    }
-
-    fn import_type(&mut self, td: &TypeDeclaration) -> TypeDeclaration {
-        TypeDeclaration {
-            name: td.name.clone(),
-            id: td.id.clone(),
-            definition: td.definition.clone(),
-            visibility: QName {
-                parts: td.visibility.parts.clone()
-            },
-        }
+        value_decls
     }
 
     fn import_value(&mut self, vd: &ValueDeclaration) -> ValueDeclaration {
@@ -193,28 +201,28 @@ impl Resolver<'_> {
         }
     }
 
-    fn add_type_decl(&mut self, decl: &Decl, namespace: QNameList, visibility: QNameList, type_decls: &mut Vec<TypeDeclaration>) {
-        match decl {
-            Decl::Namespace(ns) => {
-                for decl in &ns.decls {
-                    let vis = if decl.is_public() { visibility } else { namespace };
-                    self.add_type_decl(decl, namespace.append(&ns.name), vis, type_decls)
+    fn add_types(&mut self, ns_decl: &Namespace, namespace: QNameList, visibility: QNameList) {
+        for decl in &ns_decl.decls {
+            let vis = if decl.is_public() { visibility } else { namespace };
+            match decl {
+                Decl::Namespace(ns) => {
+                    self.add_types(ns, namespace.append(&ns.name), vis);
+                },
+                Decl::Type(t) => {
+                    let fqn = {
+                        let mut ns = namespace.to_qname();
+                        ns.parts.push(t.name.name.clone());
+                        ns
+                    };
+                    self.type_declarations.push(TypeDeclaration {
+                        name: t.name.name.clone(),
+                        id: TypeId::new(Rc::clone(&self.exports.name), fqn),
+                        definition: TypeDefinition::Undefined,
+                        visibility: vis.to_qname(),
+                    });
                 }
-            },
-            Decl::Type(t) => {
-                let fqn = {
-                    let mut ns = namespace.to_qname();
-                    ns.parts.push(t.name.name.clone());
-                    ns
-                };
-                type_decls.push(TypeDeclaration {
-                    name: t.name.name.clone(),
-                    id: TypeId::new(Rc::clone(&self.exports.name), fqn),
-                    definition: TypeDefinition::Undefined,
-                    visibility: visibility.to_qname(),
-                });
+                _ => ()
             }
-            _ => ()
         }
     }
 
@@ -484,9 +492,8 @@ impl<'ast> Iterator for QNameListIter<'ast> {
 #[cfg(test)]
 mod test {
     use crate::ast::QName;
-    use crate::resolver::{QNameList, TypeId, TypeDeclLookup};
+    use crate::resolver::{QNameList, TypeId, TypeDeclLookup, Resolver, TypeDeclaration};
     use std::rc::Rc;
-    use std::fmt::{Debug, Formatter};
 
     #[test]
     fn qname_list_iter() {
@@ -540,9 +547,36 @@ mod test {
         }
     }
 
-    impl Debug for TypeId {
-        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            write!(f, "{:?}:{:?}", (self.0).0, (self.0).1)
+    #[test]
+    fn type_decls() {
+        let src = "
+namespace A {
+    namespace B {
+        public type A # visibility: A
+        type B # visibility: A.B
+    }
+    public namespace B {
+        public type C # visibility: <root>
+        type D # visibility: A.B
+    }
+    type E # visibility: A
+}
+type F # visibility: <root>
+        ";
+        let (ast, errs) = crate::parser::parse(src);
+        assert!(errs.is_empty());
+        let resolver = Resolver::new(Rc::new(String::new()), &ast, &[]);
+
+        fn assert_vis(type_declarations: &[TypeDeclaration], name: Vec<&str>, expected_vis: Vec<&str>) {
+            let t = type_declarations.iter().find(|it| it.id.fqn() == name.as_slice()).unwrap();
+            assert_eq!(expected_vis, t.visibility.parts, "type: {:?}", name)
         }
+
+        assert_vis(&resolver.type_declarations, vec!["A", "B", "A"], vec!["A"]);
+        assert_vis(&resolver.type_declarations, vec!["A", "B", "B"], vec!["A", "B"]);
+        assert_vis(&resolver.type_declarations, vec!["A", "B", "C"], vec![]);
+        assert_vis(&resolver.type_declarations, vec!["A", "B", "D"], vec!["A", "B"]);
+        assert_vis(&resolver.type_declarations, vec!["A", "E"], vec!["A"]);
+        assert_vis(&resolver.type_declarations, vec!["F"], vec![]);
     }
 }
