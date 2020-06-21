@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use crate::ast::*;
 use std::rc::Rc;
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Formatter, Display};
 
 pub struct ModuleDecls {
     name: Rc<String>,
@@ -18,10 +18,11 @@ impl ModuleDecls {
         Some(current)
     }
 
-    fn get_type(&self, name: &QName) -> Option<&TypeDeclaration> {
-        let ns = self.goto_ns(name)?;
+    fn get_type(&self, _name: &QName) -> Option<&TypeDeclaration> {
+        /*let ns = self.goto_ns(name)?;
         let last = name.parts.last().unwrap();
-        ns.types.iter().find(|it| &it.name == last)
+        ns.types.iter().find(|it| &it.name == last)*/
+        todo!()
     }
 
     fn get_value(&self, name: &QName) -> Option<&ValueDeclaration> {
@@ -40,17 +41,52 @@ pub struct NamespaceDeclaration {
 }
 
 pub struct TypeDeclaration {
-    name: String,
     id: TypeId,
+    num_type_params: usize,
     definition: TypeDefinition,
     visibility: QName,
 }
 #[derive(Clone)]
 pub enum TypeDefinition {
-    Undefined,
-    Record(Vec<(String, TypeId)>),
-    Union(Vec<TypeId>),
+    Record(Vec<(String, ResolvedType)>),
+    Union(Vec<ResolvedType>),
 }
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ResolvedType {
+    Id(TypeId),
+    Func(ResolvedFuncType),
+    Unit,
+    Any,
+    Nothing,
+    Error,
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedFuncType {
+    //pub type_params: Vec<String>, TODO
+    pub params: Vec<ResolvedType>,
+    pub return_type: Box<ResolvedType>,
+}
+struct UndefinedType<'ast> {
+    id: TypeId,
+    visibility: QName,
+    ast_node: UndefinedTypeNode<'ast>
+}
+enum UndefinedTypeNode<'ast> {
+    Normal(&'ast Type),
+    Case(&'ast TypeCaseRecord),
+}
+
+impl UndefinedType<'_> {
+    fn define(self, definition: TypeDefinition, num_type_params: usize) -> TypeDeclaration {
+        TypeDeclaration {
+            id: self.id,
+            num_type_params,
+            definition,
+            visibility: self.visibility,
+        }
+    }
+}
+
 pub struct ValueDeclaration {
     name: String,
     type_id: TypeId,
@@ -59,7 +95,7 @@ pub struct ValueDeclaration {
 
 #[derive(Copy, Clone)]
 pub struct ValueId(u16);
-#[derive(Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub struct TypeId(Rc<(Rc<String>, Vec<String>)>);
 
 impl TypeId {
@@ -70,11 +106,22 @@ impl TypeId {
     fn fqn(&self) -> &[String] {
         &(self.0).1
     }
+
+    fn namespace(&self) -> &[String] {
+        let fqn = self.fqn();
+        &fqn[0..fqn.len()-1]
+    }
 }
 
 impl Debug for TypeId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}:{:?}", (self.0).0, (self.0).1)
+    }
+}
+
+impl Display for TypeId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.fqn().join("."))
     }
 }
 
@@ -99,7 +146,7 @@ impl QNameExpr {
 
 pub struct Resolver<'deps> {
     declarations: HashMap<Rc<NamePattern>, ValueId>,
-    type_declarations: Vec<TypeDeclaration>,
+    type_declarations: HashMap<TypeId, TypeDeclaration>,
     usages: HashMap<QNameExpr, (ValueId, String)>,
     dependencies: HashMap<&'deps String, &'deps ModuleDecls>,
     exports: ModuleDecls,
@@ -108,26 +155,24 @@ pub struct Resolver<'deps> {
 }
 
 impl Resolver<'_> {
-    pub fn new<'d>(name: Rc<String>, ast: &Ast, deps: &'d [ModuleDecls]) -> Resolver<'d> {
+    pub fn new(name: Rc<String>, deps: &[ModuleDecls]) -> Resolver {
         let mut dependencies = HashMap::new();
         for dep in deps {
             dependencies.insert(dep.name.as_ref(), dep);
         }
-        let mut exports = ModuleDecls {
+        let exports = ModuleDecls {
             name,
             root_ns: NamespaceDeclaration::default(),
         };
-        let mut r = Resolver {
+        Resolver {
             declarations: HashMap::new(),
-            type_declarations: Vec::new(),
+            type_declarations: HashMap::new(),
             usages: HashMap::new(),
             dependencies,
             exports,
             value_id_seq: 0,
             errors: Vec::new(),
-        };
-        r.resolve(ast);
-        r
+        }
     }
 
     /*
@@ -141,12 +186,13 @@ impl Resolver<'_> {
     }
     */
 
-    fn resolve(&mut self, ast: &Ast) {
+    pub fn resolve(&mut self, ast: &Ast) {
         let _val_decls = self.import_names(&ast.imports);
         /*for decl in &ast.root_namespace.decls {
             self.add_type_decl(decl, QNameList::Empty, QNameList::Empty, &mut type_decls)
         }*/
-        self.add_types(&ast.root_namespace, QNameList::Empty, QNameList::Empty);
+        let mut type_declarations = Vec::new();
+        self.add_types(&mut type_declarations, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
         /*let type_lookup = TypeDeclLookup {
             decls: type_decls.iter().map(|d| d.id.clone()).collect()
         };*/
@@ -169,14 +215,14 @@ impl Resolver<'_> {
                 let mut found = false;
                 if let Some(td) = dep.get_type(&name.name) {
                     let imported_type = TypeDeclaration {
-                        name: td.name.clone(),
                         id: td.id.clone(),
+                        num_type_params: td.num_type_params,
                         definition: td.definition.clone(),
                         visibility: QName {
                             parts: td.visibility.parts.clone()
                         },
                     };
-                    self.type_declarations.push(imported_type);
+                    self.type_declarations.insert(td.id.clone(), imported_type);
                     found = true;
                 }
                 if let Some(vd) = dep.get_value(&name.name) {
@@ -184,7 +230,11 @@ impl Resolver<'_> {
                     found = true;
                 }
                 if !found {
-                    self.errors.push(Error::new(format!("{} not found in import {}", name.name, import.filename), name.line, name.col));
+                    self.errors.push(Error {
+                        message: format!("{} not found in imported file {}", name.name, import.filename),
+                        line: name.line,
+                        col: name.col
+                    });
                 }
             }
         }
@@ -201,12 +251,12 @@ impl Resolver<'_> {
         }
     }
 
-    fn add_types(&mut self, ns_decl: &Namespace, namespace: QNameList, visibility: QNameList) {
+    fn add_types<'ast>(&self, type_declarations: &mut Vec<UndefinedType<'ast>>, ns_decl: &'ast Namespace, namespace: QNameList, visibility: QNameList) {
         for decl in &ns_decl.decls {
             let vis = if decl.is_public() { visibility } else { namespace };
             match decl {
                 Decl::Namespace(ns) => {
-                    self.add_types(ns, namespace.append(&ns.name), vis);
+                    self.add_types(type_declarations, ns, namespace.append(&ns.name), vis);
                 },
                 Decl::Type(t) => {
                     let fqn = {
@@ -214,15 +264,99 @@ impl Resolver<'_> {
                         ns.parts.push(t.name.name.clone());
                         ns
                     };
-                    self.type_declarations.push(TypeDeclaration {
-                        name: t.name.name.clone(),
+                    type_declarations.push(UndefinedType {
                         id: TypeId::new(Rc::clone(&self.exports.name), fqn),
-                        definition: TypeDefinition::Undefined,
                         visibility: vis.to_qname(),
+                        ast_node: UndefinedTypeNode::Normal(t),
                     });
+                    if let TypeContents::Union(cases) = &t.contents {
+                        for case in cases {
+                            if let TypeCase::Record(record) = case {
+                                let vis = if record.public { visibility } else { namespace };
+                                let fqn = {
+                                    let mut ns = namespace.to_qname();
+                                    ns.parts.push(t.name.name.clone());
+                                    ns
+                                };
+                                type_declarations.push(UndefinedType {
+                                    id: TypeId::new(Rc::clone(&self.exports.name), fqn),
+                                    visibility: vis.to_qname(),
+                                    ast_node: UndefinedTypeNode::Case(record),
+                                })
+                            }
+                        }
+                    }
                 }
                 _ => ()
             }
+        }
+    }
+
+    fn define_types(&mut self, undefined_types: Vec<UndefinedType>, root_scope: TypeDeclLookupScope) {
+        for type_decl in undefined_types {
+            let scope = root_scope.enter_scope(type_decl.id.namespace());
+            let (definition, num_type_params) = match type_decl.ast_node {
+                UndefinedTypeNode::Normal(t) => {
+                    let definition = match &t.contents {
+                        TypeContents::Record(fields) => {
+                            TypeDefinition::Record(fields.iter().map(|f| (f.name.clone(), self.resolve_type(&f.type_name, &scope))).collect())
+                        },
+                        TypeContents::Union(_) => todo!(),
+                    };
+                    let num_type_params = t.name.type_params.len();
+                    (definition, num_type_params)
+                },
+                UndefinedTypeNode::Case(_tcr) => todo!(),
+            };
+
+
+            if self.type_declarations.contains_key(&type_decl.id) {
+                let name = match type_decl.ast_node {
+                    UndefinedTypeNode::Normal(t) => &t.name,
+                    UndefinedTypeNode::Case(tcr) => &tcr.name,
+                };
+                self.errors.push(Error {
+                    message: format!("Duplicate type definition: {}", type_decl.id),
+                    line: name.line,
+                    col: name.col
+                })
+            } else {
+                let decl = type_decl.define(definition, num_type_params);
+                self.type_declarations.insert(decl.id.clone(), decl);
+            }
+
+        }
+    }
+
+    fn resolve_type(&mut self, type_name: &TypeName, scope: &TypeDeclLookupScope) -> ResolvedType {
+        match type_name {
+            TypeName::Named(nt) => {
+                // TODO lookup by type parameter first
+                // TODO resolve type parameters
+                if let Some(id) = scope.get_type(&nt.name) {
+                    // TODO check visibility
+                    ResolvedType::Id(id)
+                } else {
+                    self.errors.push(Error {
+                        message: format!("Cannot resolve type name '{}'", &nt.name.parts.join(".")),
+                        line: 0,
+                        col: 0
+                    });
+                    ResolvedType::Error
+                }
+            },
+            TypeName::Func(_) => todo!(),
+            TypeName::Unit => ResolvedType::Unit,
+            TypeName::Any => ResolvedType::Any,
+            TypeName::Nothing => ResolvedType::Nothing,
+            TypeName::Inferred => {
+                self.errors.push(Error {
+                    message: "Cannot use '_' as a record field type".to_string(),
+                    line: 0,
+                    col: 0
+                });
+                ResolvedType::Error
+            },
         }
     }
 
@@ -339,20 +473,10 @@ impl<'a> Scope<'a> {
     }
 }*/
 
-struct Error {
-    message: String,
-    line: u32,
-    col: u32,
-}
-
-impl Error {
-    fn new(message: String, line: u32, col: u32) -> Error {
-        Error {
-            message: message.to_string(),
-            line,
-            col,
-        }
-    }
+pub struct Error {
+    pub message: String,
+    pub line: u32,
+    pub col: u32,
 }
 
 struct TypeDeclLookup {
@@ -380,10 +504,10 @@ struct TypeDeclLookupScope<'lookup, 'ast, 'parent> {
 }
 
 impl<'ast> TypeDeclLookupScope<'_, 'ast, '_> {
-    fn enter_scope(&self, name: &'ast QName) -> TypeDeclLookupScope {
+    fn enter_scope(&self, name: &'ast [String]) -> TypeDeclLookupScope {
         TypeDeclLookupScope {
             lookup: self.lookup,
-            scope: self.scope.append(name),
+            scope: self.scope.append_slice(name),
         }
     }
 
@@ -416,6 +540,10 @@ impl<'parent, 'ast> QNameList<'parent, 'ast> {
         QNameList::List(self, &qname.parts)
     }
 
+    fn append_slice(&'parent self, slice: &'ast [String]) -> QNameList<'ast, 'parent> {
+        QNameList::List(self, slice)
+    }
+
     fn len(&self) -> usize {
         match self {
             QNameList::Empty => 0,
@@ -436,14 +564,15 @@ impl<'parent, 'ast> QNameList<'parent, 'ast> {
         true
     }
 
-    fn pop_namespace(&self) -> QNameList<'parent, 'ast> {
+    fn pop_namespace(self) -> QNameList<'parent, 'ast> {
         match self {
             QNameList::Empty => QNameList::Empty,
             QNameList::List(parent, names) => {
                 let names_len = names.len();
                 if names_len == 1 {
-                    **parent
+                    *parent
                 } else {
+                    //parent.append_slice(&names[0..names_len-1])
                     QNameList::List(parent, &names[0..names_len-1])
                 }
             }
@@ -492,7 +621,7 @@ impl<'ast> Iterator for QNameListIter<'ast> {
 #[cfg(test)]
 mod test {
     use crate::ast::QName;
-    use crate::resolver::{QNameList, TypeId, TypeDeclLookup, Resolver, TypeDeclaration};
+    use crate::resolver::{QNameList, TypeId, TypeDeclLookup, Resolver, TypeDefinition, ResolvedType};
     use std::rc::Rc;
 
     #[test]
@@ -525,6 +654,7 @@ mod test {
         assert!(l3.matches(&type_id))
     }
 
+    #[allow(non_snake_case)]
     #[test]
     fn type_decl_lookup() {
         let type_id = TypeId(Rc::new((Rc::new(String::from("test")), vec![String::from("A"), String::from("A")])));
@@ -537,7 +667,7 @@ mod test {
 
         {
             let scope1 = lookup.root_scope();
-            let scope2 = scope1.enter_scope(&A);
+            let scope2 = scope1.enter_scope(&A.parts);
 
             let a = scope2.get_type(&A);
             assert_eq!(type_id, a.unwrap());
@@ -548,7 +678,7 @@ mod test {
     }
 
     #[test]
-    fn type_decls() {
+    fn type_decl_visibility() {
         let src = "
 namespace A {
     namespace B {
@@ -565,18 +695,74 @@ type F # visibility: <root>
         ";
         let (ast, errs) = crate::parser::parse(src);
         assert!(errs.is_empty());
-        let resolver = Resolver::new(Rc::new(String::new()), &ast, &[]);
+        let resolver = Resolver::new(Rc::new(String::new()), &[]);
+        let mut type_declarations = Vec::new();
+        resolver.add_types(&mut type_declarations, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
 
-        fn assert_vis(type_declarations: &[TypeDeclaration], name: Vec<&str>, expected_vis: Vec<&str>) {
+        println!("{:?}", resolver.type_declarations.keys());
+        let assert_vis = |name: Vec<&str>, expected_vis: Vec<&str>| {
+            println!("{:?}", name);
             let t = type_declarations.iter().find(|it| it.id.fqn() == name.as_slice()).unwrap();
             assert_eq!(expected_vis, t.visibility.parts, "type: {:?}", name)
-        }
+        };
 
-        assert_vis(&resolver.type_declarations, vec!["A", "B", "A"], vec!["A"]);
-        assert_vis(&resolver.type_declarations, vec!["A", "B", "B"], vec!["A", "B"]);
-        assert_vis(&resolver.type_declarations, vec!["A", "B", "C"], vec![]);
-        assert_vis(&resolver.type_declarations, vec!["A", "B", "D"], vec!["A", "B"]);
-        assert_vis(&resolver.type_declarations, vec!["A", "E"], vec!["A"]);
-        assert_vis(&resolver.type_declarations, vec!["F"], vec![]);
+        assert_vis(vec!["A", "B", "A"], vec!["A"]);
+        assert_vis(vec!["A", "B", "B"], vec!["A", "B"]);
+        assert_vis(vec!["A", "B", "C"], vec![]);
+        assert_vis(vec!["A", "B", "D"], vec!["A", "B"]);
+        assert_vis(vec!["A", "E"], vec!["A"]);
+        assert_vis(vec!["F"], vec![]);
+    }
+
+    #[test]
+    fn type_definition() {
+        let src = "
+type Foo { a: Foo.Bar.A }
+namespace Foo {
+    public namespace Bar {
+        public type A { b: Foo.B }
+        type X { b: B }
+    }
+    type B { c: C }
+    type Y { a: Bar.A }
+}
+type C
+        ";
+        let (ast, errs) = crate::parser::parse(src);
+        assert!(errs.is_empty());
+        let mod_name = Rc::new(String::new());
+        let mut resolver = Resolver::new(Rc::clone(&mod_name), &[]);
+        let mut undefined_types = Vec::new();
+        resolver.add_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
+        assert!(resolver.errors.is_empty());
+        let lookup = TypeDeclLookup::new(undefined_types.iter().map(|ut| ut.id.clone()).collect());
+        resolver.define_types(undefined_types, lookup.root_scope());
+        assert!(resolver.errors.is_empty());
+
+        let check_type_def = |name: Vec<&str>, expected_fields: Vec<(&str, Vec<&str>)>| {
+            let id = TypeId::new(Rc::clone(&mod_name), to_qname(&name));
+            let t = resolver.type_declarations.get(&id).unwrap();
+
+            if let TypeDefinition::Record(fields) = &t.definition {
+                assert_eq!(expected_fields.len(), fields.len(), "In type {:?}", id);
+                 for ((name, res_type), (exp_name, exp_type)) in fields.iter().zip(&expected_fields) {
+                     assert_eq!(exp_name, name, "In type {:?}", id);
+                     assert_eq!(&ResolvedType::Id(TypeId::new(Rc::clone(&mod_name), to_qname(exp_type))), res_type, "In type {:?}", id)
+                 }
+            } else {
+                panic!("expected a record for {:?}", id.fqn())
+            }
+        };
+
+        check_type_def(vec!["Foo"], vec![("a", vec!["Foo", "Bar", "A"])]);
+        check_type_def(vec!["Foo", "Bar", "A"], vec![("b", vec!["Foo", "B"])]);
+        check_type_def(vec!["Foo", "Bar", "X"], vec![("b", vec!["Foo", "B"])]);
+        check_type_def(vec!["Foo", "B"], vec![("c", vec!["C"])]);
+        check_type_def(vec!["Foo", "Y"], vec![("a", vec!["Foo", "Bar", "A"])]);
+        check_type_def(vec!["C"], vec![]);
+    }
+
+    fn to_qname(strs: &Vec<&str>) -> QName {
+        QName { parts: strs.into_iter().map(|s| s.to_string()).collect() }
     }
 }

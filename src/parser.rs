@@ -276,17 +276,18 @@ impl<'a> Parser<'a> {
     }
 
     fn type_name_decl(&mut self) -> Option<TypeNameDecl> {
+        let (line, col) = self.pos();
         let init = self.require("identifier", IDENT)?;
-        self.type_name_decl_with_init(init)
+        self.type_name_decl_with_init(init, line, col)
     }
 
-    fn type_name_decl_with_init(&mut self, init: &str) -> Option<TypeNameDecl> {
+    fn type_name_decl_with_init(&mut self, init: &str, line: u32, col: u32) -> Option<TypeNameDecl> {
         let type_params = if self.current.matches_value(SYMBOL, "<") {
             self.type_params()?
         } else {
             Vec::new()
         };
-        Some(TypeNameDecl { name: init.to_string(), type_params })
+        Some(TypeNameDecl { name: init.to_string(), type_params, line, col })
     }
 
     fn type_params(&mut self) -> Option<Vec<String>> {
@@ -317,11 +318,13 @@ impl<'a> Parser<'a> {
         } else if self.current.matches_value(SYMBOL, "{") {
             // For sure a func_type
             Some(TypeCase::Case(self.type_name()?))
-        } else if let Some(first_ident) = self.advance_if_matches(IDENT) {
+        } else if let Some(first_ident) = self.current.matches(IDENT) {
+            let (line, col) = self.pos();
+            self.advance();
             // Check if record or case based on next token
             if self.current.matches_value(SYMBOL, "{") {
                 // For sure a record
-                Some(TypeCase::Record(self.type_case_record_with_init(public, first_ident)?))
+                Some(TypeCase::Record(self.type_case_record_with_init(public, first_ident, line, col)?))
             } else {
                 Some(TypeCase::Case(TypeName::Named(self.named_type_with_init(first_ident)?)))
             }
@@ -332,12 +335,13 @@ impl<'a> Parser<'a> {
     }
 
     fn type_case_record(&mut self, public: bool) -> Option<TypeCaseRecord> {
+        let (line, col) = self.pos();
         let init = self.require("identifier", IDENT)?;
-        self.type_case_record_with_init(public, init)
+        self.type_case_record_with_init(public, init, line, col)
     }
 
-    fn type_case_record_with_init(&mut self, public: bool, init: &str) -> Option<TypeCaseRecord> {
-        let name = self.type_name_decl_with_init(init)?;
+    fn type_case_record_with_init(&mut self, public: bool, init: &str, line: u32, col: u32) -> Option<TypeCaseRecord> {
+        let name = self.type_name_decl_with_init(init, line, col)?;
         let fields = self.type_fields()?;
         Some(TypeCaseRecord { public, name, fields })
     }

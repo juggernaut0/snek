@@ -47,7 +47,9 @@ pub struct Type {
 
 pub struct TypeNameDecl {
     pub name: String,
-    pub type_params: Vec<String>
+    pub type_params: Vec<String>,
+    pub line: u32,
+    pub col: u32,
 }
 
 pub enum TypeContents {
@@ -99,6 +101,7 @@ pub struct NamePattern {
     pub type_name: Option<TypeName>,
 }
 
+// TODO line and column on TypeName
 #[derive(Eq, PartialEq, Hash)]
 pub enum TypeName {
     Named(NamedType),
@@ -140,7 +143,7 @@ pub enum ExprType {
     Dot
 }
 
-#[derive(Eq, PartialEq, Hash)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub struct QName {
     pub parts: Vec<String>
 }

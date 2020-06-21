@@ -58,7 +58,8 @@ fn run_from_file(path: &Path) {
     }
     let root_name = asts.root();
     let (root, _) = asts.get_ast(&root_name);
-    Resolver::new(Rc::clone(root_name), root, &[]); // TODO deps
+    let mut resolver = Resolver::new(Rc::clone(root_name), &[]); // TODO deps
+    resolver.resolve(root);
     /*let code = match codegen::compile(&ast) {
         Ok(code) => code,
         Err(errs) => {
