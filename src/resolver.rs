@@ -53,7 +53,8 @@ pub enum TypeDefinition {
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResolvedType {
-    Id(TypeId),
+    Id(TypeId, Vec<ResolvedType>),
+    TypeParam(usize),
     Func(ResolvedFuncType),
     Unit,
     Any,
@@ -297,9 +298,11 @@ impl Resolver<'_> {
             let scope = root_scope.enter_scope(type_decl.id.namespace());
             let (definition, num_type_params) = match type_decl.ast_node {
                 UndefinedTypeNode::Normal(t) => {
+                    let type_params = &t.name.type_params;
+
                     let definition = match &t.contents {
                         TypeContents::Record(fields) => {
-                            TypeDefinition::Record(fields.iter().map(|f| (f.name.clone(), self.resolve_type(&f.type_name, &scope))).collect())
+                            TypeDefinition::Record(fields.iter().map(|f| (f.name.clone(), self.resolve_type(&f.type_name, type_params, &scope))).collect())
                         },
                         TypeContents::Union(_) => todo!(),
                     };
@@ -328,17 +331,35 @@ impl Resolver<'_> {
         }
     }
 
-    fn resolve_type(&mut self, type_name: &TypeName, scope: &TypeDeclLookupScope) -> ResolvedType {
+    fn resolve_type(&mut self, type_name: &TypeName, type_params: &[String], scope: &TypeDeclLookupScope) -> ResolvedType {
         match type_name {
             TypeName::Named(nt) => {
-                // TODO lookup by type parameter first
-                // TODO resolve type parameters
-                if let Some(id) = scope.get_type(&nt.name) {
-                    // TODO check visibility
-                    ResolvedType::Id(id)
+                let tp = if nt.name.parts.len() == 1 && nt.params.is_empty() {
+                    let name = &nt.name.parts[0];
+                    type_params.iter().position(|p| p == name)
+                } else {
+                    None
+                };
+
+                if let Some(tpi) = tp {
+                    ResolvedType::TypeParam(tpi)
+                } else if let Some((id, visible)) = scope.get_type(&nt.name) {
+                    if !visible {
+                        self.errors.push(Error {
+                            message: format!("Cannot access type '{}'", &nt.name.parts.join(".")),
+                            line: 0,
+                            col: 0
+                        });
+                        ResolvedType::Error
+                    } else {
+                        let params = nt.params.iter()
+                            .map(|param| self.resolve_type(param, type_params, scope))
+                            .collect();
+                        ResolvedType::Id(id, params)
+                    }
                 } else {
                     self.errors.push(Error {
-                        message: format!("Cannot resolve type name '{}'", &nt.name.parts.join(".")),
+                        message: format!("Unknown type name '{}'", &nt.name.parts.join(".")),
                         line: 0,
                         col: 0
                     });
@@ -473,6 +494,7 @@ impl<'a> Scope<'a> {
     }
 }*/
 
+#[derive(Debug)]
 pub struct Error {
     pub message: String,
     pub line: u32,
@@ -480,13 +502,17 @@ pub struct Error {
 }
 
 struct TypeDeclLookup {
-    decls: Vec<TypeId>,
+    decls: Vec<(TypeId, Vec<String>)>,
 }
 
 impl TypeDeclLookup {
-    fn new(decls: Vec<TypeId>) -> TypeDeclLookup {
+    fn new(undefined_types: &[UndefinedType]) -> TypeDeclLookup {
+        // TODO don't clone visibility
         TypeDeclLookup {
-            decls,
+            decls: undefined_types
+                .iter()
+                .map(|ut| (ut.id.clone(), ut.visibility.parts.clone()))
+                .collect()
         }
     }
 
@@ -511,15 +537,17 @@ impl<'ast> TypeDeclLookupScope<'_, 'ast, '_> {
         }
     }
 
-    fn get_type(&self, name: &QName) -> Option<TypeId> {
+    fn get_type(&self, name: &QName) -> Option<(TypeId, bool)> {
         let mut current_scope = self.scope;
         loop {
             let full_name = current_scope.append(name);
-            let id = self.lookup.decls
+            let found = self.lookup.decls
                 .iter()
-                .find(|&decl| full_name.matches(decl))
-                .cloned();
-            if id.is_some() { return id }
+                .find(|&(id, _)| full_name.matches(id));
+            if let Some((id, visibility)) = found {
+                let visible = is_visible(self.scope, &visibility);
+                return Some((id.clone(), visible))
+            }
             if let QNameList::Empty = current_scope {
                 break
             }
@@ -527,6 +555,12 @@ impl<'ast> TypeDeclLookupScope<'_, 'ast, '_> {
         }
         None
     }
+}
+
+// Is a type with visibility visible from scope?
+fn is_visible(scope: QNameList, visibility: &[String]) -> bool {
+    if scope.len() < visibility.len() { return false }
+    scope.iter().zip(visibility).all(|(sp, vp)| sp == vp)
 }
 
 #[derive(Clone, Copy)]
@@ -611,6 +645,7 @@ impl<'ast> Iterator for QNameListIter<'ast> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(parent) = &mut self.parent {
+            // TODO short circuit when parent returns None
             parent.next().or_else(|| self.name.as_mut().unwrap().next())
         } else {
             None
@@ -621,7 +656,7 @@ impl<'ast> Iterator for QNameListIter<'ast> {
 #[cfg(test)]
 mod test {
     use crate::ast::QName;
-    use crate::resolver::{QNameList, TypeId, TypeDeclLookup, Resolver, TypeDefinition, ResolvedType};
+    use crate::resolver::{QNameList, TypeId, TypeDeclLookup, Resolver, TypeDefinition, ResolvedType, UndefinedType};
     use std::rc::Rc;
 
     #[test]
@@ -652,29 +687,6 @@ mod test {
         let l3 = QNameList::List(&l2, &b);
 
         assert!(l3.matches(&type_id))
-    }
-
-    #[allow(non_snake_case)]
-    #[test]
-    fn type_decl_lookup() {
-        let type_id = TypeId(Rc::new((Rc::new(String::from("test")), vec![String::from("A"), String::from("A")])));
-        let lookup = TypeDeclLookup {
-            decls: vec![type_id.clone()]
-        };
-
-        let A = QName { parts: vec![String::from("A")] };
-        let A_A = QName { parts: vec![String::from("A"), String::from("A")] };
-
-        {
-            let scope1 = lookup.root_scope();
-            let scope2 = scope1.enter_scope(&A.parts);
-
-            let a = scope2.get_type(&A);
-            assert_eq!(type_id, a.unwrap());
-
-            let a_a = scope2.get_type(&A_A);
-            assert_eq!(type_id, a_a.unwrap());
-        }
     }
 
     #[test]
@@ -735,9 +747,9 @@ type C
         let mut undefined_types = Vec::new();
         resolver.add_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
         assert!(resolver.errors.is_empty());
-        let lookup = TypeDeclLookup::new(undefined_types.iter().map(|ut| ut.id.clone()).collect());
+        let lookup = TypeDeclLookup::new(&undefined_types);
         resolver.define_types(undefined_types, lookup.root_scope());
-        assert!(resolver.errors.is_empty());
+        assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
 
         let check_type_def = |name: Vec<&str>, expected_fields: Vec<(&str, Vec<&str>)>| {
             let id = TypeId::new(Rc::clone(&mod_name), to_qname(&name));
@@ -747,7 +759,7 @@ type C
                 assert_eq!(expected_fields.len(), fields.len(), "In type {:?}", id);
                  for ((name, res_type), (exp_name, exp_type)) in fields.iter().zip(&expected_fields) {
                      assert_eq!(exp_name, name, "In type {:?}", id);
-                     assert_eq!(&ResolvedType::Id(TypeId::new(Rc::clone(&mod_name), to_qname(exp_type))), res_type, "In type {:?}", id)
+                     assert_eq!(&ResolvedType::Id(TypeId::new(Rc::clone(&mod_name), to_qname(exp_type)), Vec::new()), res_type, "In type {:?}", id)
                  }
             } else {
                 panic!("expected a record for {:?}", id.fqn())
@@ -760,6 +772,26 @@ type C
         check_type_def(vec!["Foo", "B"], vec![("c", vec!["C"])]);
         check_type_def(vec!["Foo", "Y"], vec![("a", vec!["Foo", "Bar", "A"])]);
         check_type_def(vec!["C"], vec![]);
+    }
+
+    #[test]
+    fn visibility_error() {
+        let src = "
+namespace Foo {
+    type Hidden
+}
+type A { f: Foo.Hidden }
+";
+        let (ast, errs) = crate::parser::parse(src);
+        assert!(errs.is_empty());
+        let mod_name = Rc::new(String::new());
+        let mut resolver = Resolver::new(Rc::clone(&mod_name), &[]);
+        let mut undefined_types = Vec::new();
+        resolver.add_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
+        assert!(resolver.errors.is_empty());
+        let lookup = TypeDeclLookup::new(&undefined_types);
+        resolver.define_types(undefined_types, lookup.root_scope());
+        assert!(!resolver.errors.is_empty());
     }
 
     fn to_qname(strs: &Vec<&str>) -> QName {
