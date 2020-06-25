@@ -54,8 +54,8 @@ declared type. Give each a unique ID and store name -> decl in a map.
 a.snek
 ```
 public type Foo { x: String }
-public let make_foo = { -> new Foo { "hello" } }
-public let break_foo = { foo: { x }: Foo -> x }
+public let make_foo = { -> new Foo { x: "hello" } }
+public let break_foo = { { x }: Foo -> x }
 ```
 
 1. Types
@@ -170,3 +170,58 @@ type B = Bar.B
     - Bar.B - <root>
     - A - <root>
     - B - <root>
+
+```
+type Foo<T> { t: T }
+let unfoo: { <T> Foo<T> -> T } = { { t } -> t }
+(println (unfoo new { t: "Hello" }))
+```
+1. Types
+    - :Foo - \<root\>
+2. Resolve record field types
+    - :Foo { t: ttp.0 }
+3. Binding decls and declared types
+    - println: { * -> () } -> global.0
+    - unfoo: { :Foo<tp.0> -> tp.0 } -> global.1
+4. Resolve exprs
+    1. Line 2: Function expr: expected type is "{ :Foo<tp.0> -> tp.0 }"
+        - create new scope
+        - add params to scope
+            - decon pattern, expected type is ":Foo<tp.0>"
+                - t: ttp.0 = tp.0 -> local.0
+        - resolve body
+            - qname expr: expected type is "tp.0"
+                - resolve to local.0
+                - Unify tp.0 & tp.0 -> tp.0
+                - expr type is tp.0
+            - function body return type is tp.0
+        - unify { :Foo<tp.0> -> tp.0 } & { :Foo<tp.0> -> tp.0 } -> { :Foo<tp.0> -> tp.0 }
+    1. Line 3: call expr: expected type "Any"
+        - resolve callee
+            - qname expr: Expected type is { ? -> Any }
+                - resolve println to global.0
+                - Unify { ? -> Any } & { Any -> builtin:Unit } -> { Any -> Any }
+                - expr type is { Any -> Any }
+        - verify param count: 1 == 1
+        - resolve params
+            - call expr: expected type is "Any"
+                - resolve callee
+                    - qname expr: Expected type is { ? -> Any }
+                        - resolve unfoo to global.1
+                        - Unify { ? -> Any } & { :Foo<tp.0> -> tp.0 } -> { :Foo<tp.0> -> Any }
+                        - expr type is { :Foo<tp.0> -> Any }
+                - verify param count: 1 == 1
+                - resolve params
+                    - new expr: expected type is :Foo<_>
+                        - infer type as :Foo
+                        - field init:
+                            - t: string literal: expected type is ttp.0 of :Foo = _
+                                - unify _ & String
+                                - expr type is String
+                        - Unify :Foo<_> & :Foo<String> -> :Foo<String>
+                        - expr type is :Foo<String>
+                - Instantiate { :Foo<tp.0> -> Any } as { :Foo<String> -> Any }
+                - unify Any & Any -> Any
+                - expr type is Any
+        - unify Any & Any -> Any
+        - expr type is Any

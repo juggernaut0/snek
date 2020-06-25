@@ -15,7 +15,6 @@ let make_list: { <T> T T -> List<T> } = { a b -> [a b] }
 # Specialize a generic function simply by assigning it to a non-generic binding
 let make_number_list: { Number Number -> List<Number> } = make_list
 
-# Call a generic function normally. The type parameter is resolved automatically
-let strings = (make_list "Hello" "World")
-# type error: cannot resolve type parameter T
-# let what = (make_list "Hello" 42)
+# Call a generic function normally. The type parameter is resolved automatically to the most specific type possible
+let strings = (make_list "Hello" "World") # List<String>
+let anys = (make_list "Hello" 42) # List<*>

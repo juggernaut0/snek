@@ -74,7 +74,7 @@ struct UndefinedType<'ast> {
 }
 enum UndefinedTypeNode<'ast> {
     Normal(&'ast Type),
-    Case(&'ast TypeCaseRecord),
+    Case(&'ast TypeCaseRecord, &'ast Vec<String>),
 }
 
 impl UndefinedType<'_> {
@@ -276,13 +276,13 @@ impl Resolver<'_> {
                                 let vis = if record.public { visibility } else { namespace };
                                 let fqn = {
                                     let mut ns = namespace.to_qname();
-                                    ns.parts.push(t.name.name.clone());
+                                    ns.parts.push(record.name.name.clone());
                                     ns
                                 };
                                 type_declarations.push(UndefinedType {
                                     id: TypeId::new(Rc::clone(&self.exports.name), fqn),
                                     visibility: vis.to_qname(),
-                                    ast_node: UndefinedTypeNode::Case(record),
+                                    ast_node: UndefinedTypeNode::Case(record, &t.name.type_params),
                                 })
                             }
                         }
@@ -299,24 +299,50 @@ impl Resolver<'_> {
             let (definition, num_type_params) = match type_decl.ast_node {
                 UndefinedTypeNode::Normal(t) => {
                     let type_params = &t.name.type_params;
+                    let num_type_params = type_params.len();
 
                     let definition = match &t.contents {
                         TypeContents::Record(fields) => {
-                            TypeDefinition::Record(fields.iter().map(|f| (f.name.clone(), self.resolve_type(&f.type_name, type_params, &scope))).collect())
+                            let res_fields = fields.iter()
+                                .map(|f| (f.name.clone(), self.resolve_field_type(&f.type_name, type_params, &scope, false)))
+                                .collect();
+                            TypeDefinition::Record(res_fields)
                         },
-                        TypeContents::Union(_) => todo!(),
+                        TypeContents::Union(cases) => {
+                            let res_cases = cases.iter()
+                                .map(|case| {
+                                    match case {
+                                        TypeCase::Case(type_name) => {
+                                            self.resolve_field_type(type_name, type_params, &scope, false)
+                                        },
+                                        TypeCase::Record(tcr) => {
+                                            let name = std::slice::from_ref(&tcr.name.name);
+                                            // An inline record type is always visible to the union
+                                            let (id, _) = scope.get_type(name).unwrap();
+                                            let rts = (0..num_type_params).map(|i| ResolvedType::TypeParam(i)).collect();
+                                            ResolvedType::Id(id, rts)
+                                        },
+                                    }
+                                })
+                                .collect();
+                            TypeDefinition::Union(res_cases)
+                        },
                     };
-                    let num_type_params = t.name.type_params.len();
+
                     (definition, num_type_params)
                 },
-                UndefinedTypeNode::Case(_tcr) => todo!(),
+                UndefinedTypeNode::Case(tcr, type_params) => {
+                    let res_fields = tcr.fields.iter()
+                        .map(|f| (f.name.clone(), self.resolve_field_type(&f.type_name, type_params, &scope, false)))
+                        .collect();
+                    (TypeDefinition::Record(res_fields), type_params.len())
+                },
             };
-
 
             if self.type_declarations.contains_key(&type_decl.id) {
                 let name = match type_decl.ast_node {
                     UndefinedTypeNode::Normal(t) => &t.name,
-                    UndefinedTypeNode::Case(tcr) => &tcr.name,
+                    UndefinedTypeNode::Case(tcr, _) => &tcr.name,
                 };
                 self.errors.push(Error {
                     message: format!("Duplicate type definition: {}", type_decl.id),
@@ -331,9 +357,9 @@ impl Resolver<'_> {
         }
     }
 
-    fn resolve_type(&mut self, type_name: &TypeName, type_params: &[String], scope: &TypeDeclLookupScope) -> ResolvedType {
-        match type_name {
-            TypeName::Named(nt) => {
+    fn resolve_field_type(&mut self, type_name: &TypeName, type_params: &[String], scope: &TypeDeclLookupScope, nothing_allowed: bool) -> ResolvedType {
+        match &type_name.type_name_type {
+            TypeNameType::Named(nt) => {
                 let tp = if nt.name.parts.len() == 1 && nt.params.is_empty() {
                     let name = &nt.name.parts[0];
                     type_params.iter().position(|p| p == name)
@@ -343,38 +369,49 @@ impl Resolver<'_> {
 
                 if let Some(tpi) = tp {
                     ResolvedType::TypeParam(tpi)
-                } else if let Some((id, visible)) = scope.get_type(&nt.name) {
+                } else if let Some((id, visible)) = scope.get_type(&nt.name.parts) {
                     if !visible {
                         self.errors.push(Error {
                             message: format!("Cannot access type '{}'", &nt.name.parts.join(".")),
-                            line: 0,
-                            col: 0
+                            line: type_name.line,
+                            col: type_name.col,
                         });
                         ResolvedType::Error
                     } else {
                         let params = nt.params.iter()
-                            .map(|param| self.resolve_type(param, type_params, scope))
+                            .map(|param| self.resolve_field_type(param, type_params, scope, true))
                             .collect();
                         ResolvedType::Id(id, params)
                     }
                 } else {
                     self.errors.push(Error {
                         message: format!("Unknown type name '{}'", &nt.name.parts.join(".")),
-                        line: 0,
-                        col: 0
+                        line: type_name.line,
+                        col: type_name.col,
                     });
                     ResolvedType::Error
                 }
             },
-            TypeName::Func(_) => todo!(),
-            TypeName::Unit => ResolvedType::Unit,
-            TypeName::Any => ResolvedType::Any,
-            TypeName::Nothing => ResolvedType::Nothing,
-            TypeName::Inferred => {
+            TypeNameType::Func(_) => todo!(),
+            TypeNameType::Unit => ResolvedType::Unit,
+            TypeNameType::Any => ResolvedType::Any,
+            TypeNameType::Nothing => {
+                if nothing_allowed {
+                    ResolvedType::Nothing
+                } else {
+                    self.errors.push(Error {
+                        message: "Cannot use '!' as a record field type".to_string(),
+                        line: type_name.line,
+                        col: type_name.col,
+                    });
+                    ResolvedType::Error
+                }
+            },
+            TypeNameType::Inferred => {
                 self.errors.push(Error {
-                    message: "Cannot use '_' as a record field type".to_string(),
-                    line: 0,
-                    col: 0
+                    message: "Cannot infer types in record fields".to_string(),
+                    line: type_name.line,
+                    col: type_name.col,
                 });
                 ResolvedType::Error
             },
@@ -537,10 +574,10 @@ impl<'ast> TypeDeclLookupScope<'_, 'ast, '_> {
         }
     }
 
-    fn get_type(&self, name: &QName) -> Option<(TypeId, bool)> {
+    fn get_type(&self, name: &[String]) -> Option<(TypeId, bool)> {
         let mut current_scope = self.scope;
         loop {
-            let full_name = current_scope.append(name);
+            let full_name = current_scope.append_slice(name);
             let found = self.lookup.decls
                 .iter()
                 .find(|&(id, _)| full_name.matches(id));
@@ -792,6 +829,24 @@ type A { f: Foo.Hidden }
         let lookup = TypeDeclLookup::new(&undefined_types);
         resolver.define_types(undefined_types, lookup.root_scope());
         assert!(!resolver.errors.is_empty());
+    }
+
+    #[test]
+    fn union() {
+        let src = "type Option<T> = Some { t: T } | None { }";
+        let (ast, errs) = crate::parser::parse(src);
+        assert!(errs.is_empty());
+        let mod_name = Rc::new(String::new());
+        let mut resolver = Resolver::new(Rc::clone(&mod_name), &[]);
+        let mut undefined_types = Vec::new();
+        resolver.add_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
+        assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
+        let lookup = TypeDeclLookup::new(&undefined_types);
+        resolver.define_types(undefined_types, lookup.root_scope());
+        assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
+
+        assert_eq!(3, resolver.type_declarations.len());
+        // TODO more asserts?
     }
 
     fn to_qname(strs: &Vec<&str>) -> QName {

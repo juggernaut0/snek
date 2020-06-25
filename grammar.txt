@@ -10,7 +10,7 @@ type = 'type' type_name_decl (type_cases | type_fields)?
 type_name_decl = IDENT type_params?
 type_params = '<' IDENT+ '>'
 type_cases = '=' type_case ('|' type_case)*
-type_case = ('public'? type_name_decl type_fields) | type_name
+type_case = ('public'? IDENT type_fields) | type_name
 type_fields = '{' type_field_list? '}'
 type_field_list = type_field  (',' type_field)* ','?
 type_field = 'public'? IDENT ':' type_name

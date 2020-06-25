@@ -6,15 +6,21 @@ type MyFoo = Foo # A union with only one case is an alias.
 type Some<T> { t: T }
 # empty
 type None
-# equivalent:
-# type None {}
+# equivalent: type None {}
 type Option<T> = Some<T> | None
 
 # shorthand - declares Some and None record types inline
 # note, braces after None are required here to declare new type rather than reference an existing type
-# note, types defined inline can be made public independent of the parent union
-public type Option<T> = T | public None { }
-# For empty records, you may want to provide a singleton
+# note, record types defined inline can be made public independent of the parent union
+# note, record types defined inline inherit ALL of the type parameters of the parent union. Here, Some is parameterized
+# by T just as above
+public type Option<T> = public Some { t: T } | None { }
+
+# You may not define type parameters on records defined inline in unions
+# type Foo = Bar<U> { u: U } -- Error
+# Instead, define the type parameter on the union and use it in the record (as seen above with Option)
+
+# For empty record types, you may want to provide a singleton
 public let None = new None { }
 
 # Compile Error: A union type may not be directly recursive. Wrap with a record type
@@ -26,6 +32,7 @@ let foo = new Foo { a: 1337, b: "Hello" }
 let box = new Some<Number> { t: 0 }
 # Can omit type if it can be inferred some other way
 let foo: Foo = new { a: 1337, b: "Hello" }
+# You can only construct a type if all of its fields are accessible
 
 # You'll most likely want to keep your types private and provide public constructors and aliases
 public type NonZero = NonZeroImpl { value: Number }

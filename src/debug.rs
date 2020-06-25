@@ -267,15 +267,15 @@ impl Display for TypeNameDecl {
 
 impl Display for TypeName {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        match self {
-            TypeName::Named(name) => name.fmt(f),
-            TypeName::Func(func) => {
+        match &self.type_name_type {
+            TypeNameType::Named(name) => name.fmt(f),
+            TypeNameType::Func(func) => {
                 write!(f, "{{ {} -> {} }}", func.params.iter().map(|it| it.to_string()).collect::<Vec<String>>().join(" "), func.return_type)
             }
-            TypeName::Any => write!(f, "*"),
-            TypeName::Unit => write!(f, "()"),
-            TypeName::Nothing => write!(f, "!"),
-            TypeName::Inferred => write!(f, "_")
+            TypeNameType::Any => write!(f, "*"),
+            TypeNameType::Unit => write!(f, "()"),
+            TypeNameType::Nothing => write!(f, "!"),
+            TypeNameType::Inferred => write!(f, "_")
         }
     }
 }

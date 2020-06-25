@@ -103,7 +103,13 @@ pub struct NamePattern {
 
 // TODO line and column on TypeName
 #[derive(Eq, PartialEq, Hash)]
-pub enum TypeName {
+pub struct TypeName {
+    pub line: u32,
+    pub col: u32,
+    pub type_name_type: TypeNameType,
+}
+#[derive(Eq, PartialEq, Hash)]
+pub enum TypeNameType {
     Named(NamedType),
     Func(FuncType),
     Unit,

@@ -277,17 +277,13 @@ impl<'a> Parser<'a> {
 
     fn type_name_decl(&mut self) -> Option<TypeNameDecl> {
         let (line, col) = self.pos();
-        let init = self.require("identifier", IDENT)?;
-        self.type_name_decl_with_init(init, line, col)
-    }
-
-    fn type_name_decl_with_init(&mut self, init: &str, line: u32, col: u32) -> Option<TypeNameDecl> {
+        let name = self.require("identifier", IDENT)?;
         let type_params = if self.current.matches_value(SYMBOL, "<") {
             self.type_params()?
         } else {
             Vec::new()
         };
-        Some(TypeNameDecl { name: init.to_string(), type_params, line, col })
+        Some(TypeNameDecl { name: name.to_string(), type_params, line, col })
     }
 
     fn type_params(&mut self) -> Option<Vec<String>> {
@@ -315,7 +311,7 @@ impl<'a> Parser<'a> {
         if public {
             // For sure a record
             Some(TypeCase::Record(self.type_case_record(public)?))
-        } else if self.current.matches_value(SYMBOL, "{") {
+        } else if self.current.matches_value(SYMBOL, "{") { // TODO this isn't correct, could be ()
             // For sure a func_type
             Some(TypeCase::Case(self.type_name()?))
         } else if let Some(first_ident) = self.current.matches(IDENT) {
@@ -326,7 +322,11 @@ impl<'a> Parser<'a> {
                 // For sure a record
                 Some(TypeCase::Record(self.type_case_record_with_init(public, first_ident, line, col)?))
             } else {
-                Some(TypeCase::Case(TypeName::Named(self.named_type_with_init(first_ident)?)))
+                let type_name = TypeName {
+                    line, col,
+                    type_name_type: TypeNameType::Named(self.named_type_with_init(first_ident)?)
+                };
+                Some(TypeCase::Case(type_name))
             }
         } else {
             self.error_at_current("type declaration or case");
@@ -341,7 +341,7 @@ impl<'a> Parser<'a> {
     }
 
     fn type_case_record_with_init(&mut self, public: bool, init: &str, line: u32, col: u32) -> Option<TypeCaseRecord> {
-        let name = self.type_name_decl_with_init(init, line, col)?;
+        let name = TypeNameDecl { name: init.to_string(), type_params: Vec::new(), line, col };
         let fields = self.type_fields()?;
         Some(TypeCaseRecord { public, name, fields })
     }
@@ -447,11 +447,13 @@ impl<'a> Parser<'a> {
     }
 
     fn type_name(&mut self) -> Option<TypeName> {
-        if let Some(init) = self.advance_if_matches(IDENT) {
+        let (line, col) = self.pos();
+        let type_name_type = if let Some(init) = self.advance_if_matches(IDENT) {
             if init == "_" {
-                Some(TypeName::Inferred)
+                TypeNameType::Inferred
             } else {
-                self.named_type_with_init(init).map(|it| TypeName::Named(it))
+                let named = self.named_type_with_init(init)?;
+                TypeNameType::Named(named)
             }
         } else if self.advance_if_matches_value(SYMBOL, "{") {
             let type_params = if self.current.matches_value(SYMBOL, "<") {
@@ -466,18 +468,19 @@ impl<'a> Parser<'a> {
             self.advance(); // advance past ->
             let ret = self.type_name()?;
             self.require_value(SYMBOL, "}")?;
-            Some(TypeName::Func(FuncType { type_params, params, return_type: Box::new(ret) }))
+            TypeNameType::Func(FuncType { type_params, params, return_type: Box::new(ret) })
         } else if self.advance_if_matches_value(SYMBOL, "*") {
-            Some(TypeName::Any)
+            TypeNameType::Any
         } else if self.advance_if_matches_value(SYMBOL, "(") {
             self.require_value(SYMBOL, ")")?;
-            Some(TypeName::Unit)
+            TypeNameType::Unit
         } else if self.advance_if_matches_value(SYMBOL, "!") {
-            Some(TypeName::Nothing)
+            TypeNameType::Nothing
         } else {
             self.error_at_current("type identifier");
-            None
-        }
+            return None
+        };
+        Some(TypeName { line, col, type_name_type })
     }
 
     fn named_type(&mut self) -> Option<NamedType> {
