@@ -5,39 +5,18 @@ use std::fmt::{Debug, Formatter, Display};
 
 pub struct ModuleDecls {
     name: Rc<String>,
-    root_ns: NamespaceDeclaration,
+    types: Vec<TypeDeclaration>,
+    globals: Vec<ValueDeclaration>,
 }
 
 impl ModuleDecls {
-    fn goto_ns(&self, name: &QName) -> Option<&NamespaceDeclaration> {
-        let mut current = &self.root_ns;
-        let last_index = name.parts.len() - 1;
-        for part in &name.parts[0..last_index] {
-            current = current.namespaces.iter().find(|it| &it.name == part)?;
-        }
-        Some(current)
+    fn get_type(&self, name: &QName) -> Option<&TypeDeclaration> {
+        self.types.iter().find(|it| it.id.fqn() == name.parts.as_slice())
     }
 
-    fn get_type(&self, _name: &QName) -> Option<&TypeDeclaration> {
-        /*let ns = self.goto_ns(name)?;
-        let last = name.parts.last().unwrap();
-        ns.types.iter().find(|it| &it.name == last)*/
+    fn get_value(&self, _name: &QName) -> Option<&ValueDeclaration> {
         todo!()
     }
-
-    fn get_value(&self, name: &QName) -> Option<&ValueDeclaration> {
-        let ns = self.goto_ns(name)?;
-        let last = name.parts.last().unwrap();
-        ns.bindings.iter().find(|it| &it.name == last)
-    }
-}
-
-#[derive(Default)]
-pub struct NamespaceDeclaration {
-    name: String,
-    types: Vec<TypeDeclaration>,
-    bindings: Vec<ValueDeclaration>,
-    namespaces: Vec<NamespaceDeclaration>,
 }
 
 pub struct TypeDeclaration {
@@ -163,7 +142,8 @@ impl Resolver<'_> {
         }
         let exports = ModuleDecls {
             name,
-            root_ns: NamespaceDeclaration::default(),
+            types: Vec::default(),
+            globals: Vec::default(),
         };
         Resolver {
             declarations: HashMap::new(),
@@ -392,7 +372,16 @@ impl Resolver<'_> {
                     ResolvedType::Error
                 }
             },
-            TypeNameType::Func(_) => todo!(),
+            TypeNameType::Func(ft) => {
+                let params = ft.params.iter()
+                    .map(|tn| self.resolve_field_type(tn, type_params, scope, false))
+                    .collect();
+                let return_type = self.resolve_field_type(&ft.return_type, type_params, scope, true);
+                ResolvedType::Func(ResolvedFuncType {
+                    params,
+                    return_type: Box::new(return_type)
+                })
+            },
             TypeNameType::Unit => ResolvedType::Unit,
             TypeNameType::Any => ResolvedType::Any,
             TypeNameType::Nothing => {
@@ -400,7 +389,7 @@ impl Resolver<'_> {
                     ResolvedType::Nothing
                 } else {
                     self.errors.push(Error {
-                        message: "Cannot use '!' as a record field type".to_string(),
+                        message: "Cannot use '!' here".to_string(),
                         line: type_name.line,
                         col: type_name.col,
                     });
@@ -601,17 +590,17 @@ fn is_visible(scope: QNameList, visibility: &[String]) -> bool {
 }
 
 #[derive(Clone, Copy)]
-enum QNameList<'ast, 'parent> {
+enum QNameList<'parent, 'ast> {
     Empty,
-    List(&'parent QNameList<'ast, 'parent>, &'ast [String])
+    List(&'parent QNameList<'parent, 'ast>, &'ast [String])
 }
 
 impl<'parent, 'ast> QNameList<'parent, 'ast> {
     fn append(&'parent self, qname: &'ast QName) -> QNameList<'parent, 'ast> {
-        QNameList::List(self, &qname.parts)
+        self.append_slice(&qname.parts)
     }
 
-    fn append_slice(&'parent self, slice: &'ast [String]) -> QNameList<'ast, 'parent> {
+    fn append_slice(&'parent self, slice: &'ast [String]) -> QNameList<'parent, 'ast> {
         QNameList::List(self, slice)
     }
 
@@ -643,8 +632,7 @@ impl<'parent, 'ast> QNameList<'parent, 'ast> {
                 if names_len == 1 {
                     *parent
                 } else {
-                    //parent.append_slice(&names[0..names_len-1])
-                    QNameList::List(parent, &names[0..names_len-1])
+                    parent.append_slice(&names[0..names_len-1])
                 }
             }
         }
@@ -663,7 +651,7 @@ struct QNameListIter<'ast> {
 }
 
 impl<'ast> QNameListIter<'ast> {
-    fn new(list: &'ast QNameList<'ast, '_>) -> QNameListIter<'ast> {
+    fn new(list: &'ast QNameList<'_, 'ast>) -> QNameListIter<'ast> {
         match list {
             QNameList::Empty => QNameListIter {
                 parent: None,
@@ -682,18 +670,24 @@ impl<'ast> Iterator for QNameListIter<'ast> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(parent) = &mut self.parent {
-            // TODO short circuit when parent returns None
-            parent.next().or_else(|| self.name.as_mut().unwrap().next())
-        } else {
-            None
+            let p_next = parent.next();
+            if p_next.is_some() {
+                return p_next
+            } else {
+                self.parent = None
+            }
         }
+        if let Some(name) = &mut self.name {
+            return name.next()
+        }
+        None
     }
 }
 
 #[cfg(test)]
 mod test {
     use crate::ast::QName;
-    use crate::resolver::{QNameList, TypeId, TypeDeclLookup, Resolver, TypeDefinition, ResolvedType, UndefinedType};
+    use crate::resolver::{QNameList, TypeId, TypeDeclLookup, Resolver, TypeDefinition, ResolvedType, TypeDeclaration};
     use std::rc::Rc;
 
     #[test]
@@ -846,10 +840,65 @@ type A { f: Foo.Hidden }
         assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
 
         assert_eq!(3, resolver.type_declarations.len());
-        // TODO more asserts?
+        {
+            let option = get_type(&resolver, "Option");
+            assert_eq!(1, option.num_type_params);
+            if let TypeDefinition::Union(cases) = &option.definition {
+                assert_eq!(2, cases.len());
+            } else {
+                panic!()
+            }
+        }
+        {
+            let some = get_type(&resolver, "Some");
+            assert_eq!(1, some.num_type_params);
+            if let TypeDefinition::Record(fields) = &some.definition {
+                assert_eq!(1, fields.len());
+                assert_eq!("t", &fields[0].0)
+            } else {
+                panic!()
+            }
+        }
+        {
+            let none = get_type(&resolver, "None");
+            assert_eq!(1, none.num_type_params);
+            if let TypeDefinition::Record(fields) = &none.definition {
+                assert_eq!(0, fields.len());
+            } else {
+                panic!()
+            }
+        }
+    }
+
+    #[test]
+    fn func_field() {
+        let src = "type BiConsumer<T> { consume: { T T -> () } }";
+        let (ast, errs) = crate::parser::parse(src);
+        assert!(errs.is_empty());
+        let mod_name = Rc::new(String::new());
+        let mut resolver = Resolver::new(Rc::clone(&mod_name), &[]);
+        let mut undefined_types = Vec::new();
+        resolver.add_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
+        assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
+        let lookup = TypeDeclLookup::new(&undefined_types);
+        resolver.define_types(undefined_types, lookup.root_scope());
+        assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
+
+        let t = resolver.type_declarations.values().next().unwrap();
+        let fields = if let TypeDefinition::Record(fields) = &t.definition { fields } else { panic!() };
+        let consume = fields.first().unwrap();
+        assert_eq!("consume", consume.0);
+        let rft = if let ResolvedType::Func(rft) = &consume.1 { rft } else { panic!() };
+        assert_eq!(ResolvedType::TypeParam(0), rft.params[0]);
+        assert_eq!(ResolvedType::TypeParam(0), rft.params[1]);
+        assert_eq!(&ResolvedType::Unit, rft.return_type.as_ref());
     }
 
     fn to_qname(strs: &Vec<&str>) -> QName {
         QName { parts: strs.into_iter().map(|s| s.to_string()).collect() }
+    }
+
+    fn get_type<'a>(resolver: &'a Resolver, name: &str) -> &'a TypeDeclaration {
+        resolver.type_declarations.values().find(|it| it.id.fqn().last().unwrap() == name).unwrap()
     }
 }
