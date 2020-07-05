@@ -109,6 +109,13 @@ impl Resolver<'_> {
 
         let mut undefined_globals = Vec::new();
         self.find_globals(&mut undefined_globals, &ast.root_namespace, QNameList::Empty, QNameList::Empty, lookup.root_scope());
+
+        #[cfg(debug_assertions)] {
+            println!("Undefined Globals: ");
+            for global in &undefined_globals {
+                println!("{}: {:?}", global.fqn.join("."), global.declared_type)
+            }
+        }
         //let declarations = ast.root_namespace.decls.iter().flat_map(|d| self.find_declarations(d)).collect();
         //let root_scope = Scope::new(val_decls, type_decls, None);
         //self.add_declarations(&declarations);
@@ -272,7 +279,8 @@ impl Resolver<'_> {
     fn resolve_field_type(&mut self, type_name: &TypeName, type_params: &[String], scope: &TypeDeclLookupScope, nothing_allowed: bool) -> ResolvedType {
         match &type_name.type_name_type {
             TypeNameType::Named(nt) => {
-                let tp = if nt.name.parts.len() == 1 && nt.params.is_empty() {
+                // If the name has is not a qualified name and has no args of its own, it may be a type param
+                let tp = if nt.name.parts.len() == 1 && nt.type_args.is_empty() {
                     let name = &nt.name.parts[0];
                     type_params.iter().position(|p| p == name)
                 } else {
@@ -289,7 +297,7 @@ impl Resolver<'_> {
                             col: type_name.col,
                         });
                     }
-                    let params = nt.params.iter()
+                    let params = nt.type_args.iter()
                         .map(|param| self.resolve_field_type(param, type_params, scope, true))
                         .collect();
                     ResolvedType::Id(id, params)
@@ -377,14 +385,160 @@ impl Resolver<'_> {
                     .unwrap_or(ResolvedType::Inferred);
                 names.push((np.name.as_str(), rt))
             },
-            Pattern::Destruct(_, _) => { todo!() },
-            Pattern::List(_) => { todo!() },
+            Pattern::Destruct(fields, tn) => {
+                let declared_type_fields = tn.as_ref()
+                    .map(|it| (self.resolve_binding_type(it, &[], scope), it))
+                    .and_then(|(rt, tn)| {
+                        match rt {
+                            ResolvedType::Id(id, args) => {
+                                let type_decl = self.types.get(&id).expect("Missing type def");
+                                if let TypeDefinition::Record(fs) = &type_decl.definition {
+                                    // instantiate type params
+                                    let subs: Vec<_> = fs
+                                        .iter()
+                                        .map(|(name, ty)| {
+                                            let new_ty = if let ResolvedType::TypeParam(i) = ty {
+                                                &args[*i]
+                                            } else {
+                                                ty
+                                            };
+                                            (name.clone(), new_ty.clone())
+                                        })
+                                        .collect();
+                                    Some(subs)
+                                } else {
+                                    self.errors.push(Error {
+                                        message: "Destructuring pattern must be for a record type".to_string(),
+                                        line: tn.line,
+                                        col: tn.col,
+                                    });
+                                    None
+                                }
+                            },
+                            ResolvedType::Inferred => { None },
+                            _ => {
+                                self.errors.push(Error {
+                                    message: "Destructuring pattern must be for a record type".to_string(),
+                                    line: tn.line,
+                                    col: tn.col,
+                                });
+                                None
+                            }
+                        }
+                    });
+
+                for field in fields {
+                    match field {
+                        FieldPattern::Name(np) => {
+                            let inferred_field_type = declared_type_fields
+                                .as_ref()
+                                .and_then(|fs| {
+                                    fs.iter()
+                                        .find(|(name, _)| &np.name == name)
+                                        .map(|(_, ty)| ty)
+                                })
+                                .cloned()
+                                .unwrap_or(ResolvedType::Inferred);
+
+                            let declared_type = np.type_name.as_ref()
+                                .map(|it| self.resolve_binding_type(it, &[], scope))
+                                .unwrap_or(ResolvedType::Inferred);
+
+                            names.push((&np.name, self.unify(inferred_field_type, declared_type, np.line, np.col)))
+                        },
+                        FieldPattern::Binding(_, _) => { todo!("destructure pattern binding case") },
+                    }
+                }
+            },
+            Pattern::List(_) => { todo!("list pattern") },
         }
         names
     }
 
     fn resolve_binding_type(&mut self, type_name: &TypeName, type_params: &[String], scope: &TypeDeclLookupScope) -> ResolvedType {
-        todo!("resolve_binding_type")
+        match &type_name.type_name_type {
+            TypeNameType::Named(nt) => {
+                // If the name has is not a qualified name and has no args of its own, it may be a type param
+                let tp = if nt.name.parts.len() == 1 && nt.type_args.is_empty() {
+                    let name = &nt.name.parts[0];
+                    type_params.iter().position(|p| p == name)
+                } else {
+                    None
+                };
+
+                if let Some(tpi) = tp {
+                    ResolvedType::TypeParam(tpi)
+                } else if let Some((id, visible)) = scope.get_type(&nt.name.parts) {
+                    if !visible {
+                        self.errors.push(Error {
+                            message: format!("Cannot access type '{}'", &nt.name.parts.join(".")),
+                            line: type_name.line,
+                            col: type_name.col,
+                        });
+                    }
+                    let args = nt.type_args.iter()
+                        .map(|arg| self.resolve_binding_type(arg, type_params, scope))
+                        .collect();
+                    ResolvedType::Id(id, args)
+                } else {
+                    self.errors.push(Error {
+                        message: format!("Unknown type name '{}'", &nt.name.parts.join(".")),
+                        line: type_name.line,
+                        col: type_name.col,
+                    });
+                    ResolvedType::Error
+                }
+            },
+            TypeNameType::Func(_) => { todo!("resolve_binding_type Func") },
+            TypeNameType::Unit => ResolvedType::Unit,
+            TypeNameType::Any => ResolvedType::Any,
+            TypeNameType::Nothing => ResolvedType::Nothing,
+            TypeNameType::Inferred => ResolvedType::Inferred,
+        }
+    }
+
+    fn unify(&mut self, expected: ResolvedType, actual: ResolvedType, line: u32, col: u32) -> ResolvedType {
+        let mut error = None;
+        let unified = match (expected, actual) {
+            (ResolvedType::Inferred, actual) => actual,
+            (ResolvedType::Any, _) => ResolvedType::Any,
+            (expected, ResolvedType::Nothing) => expected,
+            (expected, ResolvedType::Inferred) => expected,
+            (ResolvedType::Id(e_id, e_type_args), ResolvedType::Id(a_id, a_type_args)) => {
+                if e_id != a_id {
+                    error = Some((e_id.fqn().join("."), a_id.fqn().join(".")));
+                    ResolvedType::Id(e_id, e_type_args)
+                } else {
+                    let unified_args = e_type_args
+                        .into_iter()
+                        .zip(a_type_args)
+                        .map(|(e, a)| self.unify(e, a, line, col))
+                        .collect();
+                    ResolvedType::Id(e_id, unified_args)
+                }
+            },
+            (ResolvedType::TypeParam(e_i), ResolvedType::TypeParam(a_i)) => {
+                if e_i != a_i {
+                    // TODO sub in type param names
+                    error = Some((format!("type param {}", e_i), format!("type param {}", a_i)));
+                }
+                ResolvedType::TypeParam(e_i)
+            }
+            (ResolvedType::Unit, ResolvedType::Unit) => ResolvedType::Unit,
+            (expected, actual) => {
+                // TODO make type names better
+                error = Some((format!("{:?}", expected), format!("{:?}", actual)));
+                expected
+            }
+        };
+        if let Some((e_name, a_name)) = error {
+            self.errors.push(Error {
+                message: format!("Type mismatch. Expected: {} Actual: {}", e_name, a_name),
+                line,
+                col,
+            });
+        }
+        unified
     }
 
     fn gen_global_id(&mut self) -> GlobalId {
@@ -585,10 +739,7 @@ impl<'parent, 'ast> QNameList<'parent, 'ast> {
     // element-wise equality
     fn matches(&self, names: &[String]) -> bool {
         if names.len() != self.len() { return false }
-        for (a, b) in names.iter().zip(self.iter()) {
-            if a != b { return false }
-        }
-        true
+        names.iter().zip(self.iter()).all(|(a, b)| a == b)
     }
 
     fn pop_namespace(self) -> QNameList<'parent, 'ast> {
@@ -652,254 +803,4 @@ impl<'ast> Iterator for QNameListIter<'ast> {
 }
 
 #[cfg(test)]
-mod test {
-    use std::rc::Rc;
-
-    use crate::ast::QName;
-
-    use super::*;
-
-    #[test]
-    fn qname_list_iter() {
-        let a = vec![String::from("a"), String::from("b")];
-        let b = vec![String::from("c")];
-        let c = vec![String::from("d"), String::from("e")];
-
-        let l1 = QNameList::Empty;
-        let l2 = QNameList::List(&l1, &a);
-        let l3 = QNameList::List(&l2, &b);
-        let l4 = QNameList::List(&l3, &c);
-
-        assert_eq!(5, l4.len());
-        let full: Vec<_> = l4.iter().collect();
-        assert_eq!(vec!["a", "b", "c", "d", "e"], full);
-    }
-
-    #[test]
-    fn qname_list_matches() {
-        let type_id = TypeId::new(
-            Rc::new(String::new()),
-            to_qname(vec!["a", "b", "c"])
-        );
-
-        let a = vec![String::from("a"), String::from("b")];
-        let b = vec![String::from("c")];
-
-        let l1 = QNameList::Empty;
-        let l2 = QNameList::List(&l1, &a);
-        let l3 = QNameList::List(&l2, &b);
-
-        assert!(l3.matches(type_id.fqn()))
-    }
-
-    #[test]
-    fn type_decl_visibility() {
-        let src = "
-namespace A {
-    namespace B {
-        public type A # visibility: A
-        type B # visibility: A.B
-    }
-    public namespace B {
-        public type C # visibility: <root>
-        type D # visibility: A.B
-    }
-    type E # visibility: A
-}
-type F # visibility: <root>
-        ";
-        let (ast, errs) = crate::parser::parse(src);
-        assert!(errs.is_empty());
-        let resolver = Resolver::new(Rc::new(String::new()), &[]);
-        let mut type_declarations = Vec::new();
-        resolver.find_types(&mut type_declarations, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
-
-        println!("{:?}", resolver.types.keys());
-        let assert_vis = |name: Vec<&str>, expected_vis: Vec<&str>| {
-            println!("{:?}", name);
-            let t = type_declarations.iter().find(|it| it.id.fqn() == name.as_slice()).unwrap();
-            assert_eq!(expected_vis, t.visibility.parts, "type: {:?}", name)
-        };
-
-        assert_vis(vec!["A", "B", "A"], vec!["A"]);
-        assert_vis(vec!["A", "B", "B"], vec!["A", "B"]);
-        assert_vis(vec!["A", "B", "C"], vec![]);
-        assert_vis(vec!["A", "B", "D"], vec!["A", "B"]);
-        assert_vis(vec!["A", "E"], vec!["A"]);
-        assert_vis(vec!["F"], vec![]);
-    }
-
-    #[test]
-    fn type_definition() {
-        let src = "
-type Foo { a: Foo.Bar.A }
-namespace Foo {
-    public namespace Bar {
-        public type A { b: Foo.B }
-        type X { b: B }
-    }
-    type B { c: C }
-    type Y { a: Bar.A }
-}
-type C
-        ";
-        let (ast, errs) = crate::parser::parse(src);
-        assert!(errs.is_empty());
-        let mod_name = Rc::new(String::new());
-        let mut resolver = Resolver::new(Rc::clone(&mod_name), &[]);
-        let mut undefined_types = Vec::new();
-        resolver.find_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
-        assert!(resolver.errors.is_empty());
-        let lookup = TypeDeclLookup::new(&undefined_types);
-        resolver.define_types(undefined_types, lookup.root_scope());
-        assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
-
-        let check_type_def = |name: Vec<&str>, expected_fields: Vec<(&str, Vec<&str>)>| {
-            let id = TypeId::new(Rc::clone(&mod_name), to_qname(name));
-            let t = resolver.types.get(&id).unwrap();
-
-            if let TypeDefinition::Record(fields) = &t.definition {
-                assert_eq!(expected_fields.len(), fields.len(), "In type {:?}", id);
-                 for ((name, res_type), (exp_name, exp_type)) in fields.iter().zip(&expected_fields) {
-                     assert_eq!(exp_name, name, "In type {:?}", id);
-                     assert_eq!(&ResolvedType::Id(TypeId::new(Rc::clone(&mod_name), to_qname(exp_type.clone())), Vec::new()), res_type, "In type {:?}", id)
-                 }
-            } else {
-                panic!("expected a record for {:?}", id.fqn())
-            }
-        };
-
-        check_type_def(vec!["Foo"], vec![("a", vec!["Foo", "Bar", "A"])]);
-        check_type_def(vec!["Foo", "Bar", "A"], vec![("b", vec!["Foo", "B"])]);
-        check_type_def(vec!["Foo", "Bar", "X"], vec![("b", vec!["Foo", "B"])]);
-        check_type_def(vec!["Foo", "B"], vec![("c", vec!["C"])]);
-        check_type_def(vec!["Foo", "Y"], vec![("a", vec!["Foo", "Bar", "A"])]);
-        check_type_def(vec!["C"], vec![]);
-    }
-
-    #[test]
-    fn visibility_error() {
-        let src = "
-namespace Foo {
-    type Hidden
-}
-type A { f: Foo.Hidden }
-";
-        let (ast, errs) = crate::parser::parse(src);
-        assert!(errs.is_empty());
-        let mod_name = Rc::new(String::new());
-        let mut resolver = Resolver::new(Rc::clone(&mod_name), &[]);
-        let mut undefined_types = Vec::new();
-        resolver.find_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
-        assert!(resolver.errors.is_empty());
-        let lookup = TypeDeclLookup::new(&undefined_types);
-        resolver.define_types(undefined_types, lookup.root_scope());
-        assert!(!resolver.errors.is_empty());
-    }
-
-    #[test]
-    fn union() {
-        let src = "type Option<T> = Some { t: T } | None { }";
-        let (ast, errs) = crate::parser::parse(src);
-        assert!(errs.is_empty());
-        let mod_name = Rc::new(String::new());
-        let mut resolver = Resolver::new(Rc::clone(&mod_name), &[]);
-        let mut undefined_types = Vec::new();
-        resolver.find_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
-        assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
-        let lookup = TypeDeclLookup::new(&undefined_types);
-        resolver.define_types(undefined_types, lookup.root_scope());
-        assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
-
-        assert_eq!(3, resolver.types.len());
-        {
-            let option = get_type(&resolver, "Option");
-            assert_eq!(1, option.num_type_params);
-            if let TypeDefinition::Union(cases) = &option.definition {
-                assert_eq!(2, cases.len());
-            } else {
-                panic!()
-            }
-        }
-        {
-            let some = get_type(&resolver, "Some");
-            assert_eq!(1, some.num_type_params);
-            if let TypeDefinition::Record(fields) = &some.definition {
-                assert_eq!(1, fields.len());
-                assert_eq!("t", &fields[0].0)
-            } else {
-                panic!()
-            }
-        }
-        {
-            let none = get_type(&resolver, "None");
-            assert_eq!(1, none.num_type_params);
-            if let TypeDefinition::Record(fields) = &none.definition {
-                assert_eq!(0, fields.len());
-            } else {
-                panic!()
-            }
-        }
-    }
-
-    #[test]
-    fn func_field() {
-        let src = "type BiConsumer<T> { consume: { T T -> () } }";
-        let (ast, errs) = crate::parser::parse(src);
-        assert!(errs.is_empty());
-        let mod_name = Rc::new(String::new());
-        let mut resolver = Resolver::new(Rc::clone(&mod_name), &[]);
-        let mut undefined_types = Vec::new();
-        resolver.find_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
-        assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
-        let lookup = TypeDeclLookup::new(&undefined_types);
-        resolver.define_types(undefined_types, lookup.root_scope());
-        assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
-
-        let t = resolver.types.values().next().unwrap();
-        let fields = if let TypeDefinition::Record(fields) = &t.definition { fields } else { panic!() };
-        let consume = fields.first().unwrap();
-        assert_eq!("consume", consume.0);
-        let rft = if let ResolvedType::Func(rft) = &consume.1 { rft } else { panic!() };
-        assert_eq!(ResolvedType::TypeParam(0), rft.params[0]);
-        assert_eq!(ResolvedType::TypeParam(0), rft.params[1]);
-        assert_eq!(&ResolvedType::Unit, rft.return_type.as_ref());
-    }
-
-    #[test]
-    fn named_globals() {
-        let src = "\
-let a = 5
-namespace A { let a = 1 }
-namespace B { let a = 2 }
-namespace A.B.C { let a = 3 }
-namespace A.B {
-    namespace C.D {
-        let a = 4
-    }
-}";
-        let (ast, errs) = crate::parser::parse(src);
-        assert!(errs.is_empty());
-        let mod_name = Rc::new(String::new());
-        let mut resolver = Resolver::new(Rc::clone(&mod_name), &[]);
-        let mut undefined_globals = Vec::new();
-        let lookup = TypeDeclLookup::new(&[]);
-        resolver.find_globals(&mut undefined_globals, &ast.root_namespace, QNameList::Empty, QNameList::Empty, lookup.root_scope());
-        assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
-
-        assert_eq!(5, undefined_globals.len());
-        undefined_globals.iter().find(|it| it.fqn == vec!["a"]).expect("Expected a");
-        undefined_globals.iter().find(|it| it.fqn == vec!["A", "a"]).expect("Expected A.a");
-        undefined_globals.iter().find(|it| it.fqn == vec!["B", "a"]).expect("Expected B.a");
-        undefined_globals.iter().find(|it| it.fqn == vec!["A", "B", "C", "a"]).expect("Expected A.B.C.a");
-        undefined_globals.iter().find(|it| it.fqn == vec!["A", "B", "C", "D", "a"]).expect("Expected A.B.C.D.a");
-    }
-
-    fn to_qname(strs: Vec<&str>) -> QName {
-        QName { parts: strs.into_iter().map(|s| s.to_string()).collect() }
-    }
-
-    fn get_type<'a>(resolver: &'a Resolver, name: &str) -> &'a TypeDeclaration {
-        resolver.types.values().find(|it| it.id.fqn().last().unwrap() == name).unwrap()
-    }
-}
+mod test;

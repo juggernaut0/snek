@@ -282,10 +282,10 @@ impl Display for TypeName {
 
 impl Display for NamedType {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        if self.params.is_empty() {
+        if self.type_args.is_empty() {
             write!(f, "{}", self.name)
         } else {
-            write!(f, "{}<{}>", self.name, self.params.iter().map(|it| it.to_string()).collect::<Vec<String>>().join(" "))
+            write!(f, "{}<{}>", self.name, self.type_args.iter().map(|it| it.to_string()).collect::<Vec<String>>().join(" "))
         }
     }
 }

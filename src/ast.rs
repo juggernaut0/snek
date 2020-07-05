@@ -121,7 +121,7 @@ pub enum TypeNameType {
 #[derive(Eq, PartialEq, Hash)]
 pub struct NamedType {
     pub name: QName,
-    pub params: Vec<TypeName>
+    pub type_args: Vec<TypeName>
 }
 
 #[derive(Eq, PartialEq, Hash)]

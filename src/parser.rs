@@ -498,7 +498,7 @@ impl<'a> Parser<'a> {
             }
             self.advance(); // advance past >
         }
-        Some(NamedType { name, params })
+        Some(NamedType { name, type_args: params })
     }
 
     fn expr(&mut self) -> Option<Expr> {

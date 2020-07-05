@@ -1,0 +1,3 @@
+type A
+type B { x: A }
+let { x: A }: B = new { x: new {} }
