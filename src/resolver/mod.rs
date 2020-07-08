@@ -3,10 +3,14 @@ use std::fmt::Debug;
 use std::rc::Rc;
 
 use types::*;
+use lookup::*;
+use qname_list::*;
 
 use crate::ast::*;
 
 mod types;
+mod lookup;
+mod qname_list;
 
 pub struct ModuleDecls {
     name: Rc<String>,
@@ -34,6 +38,7 @@ struct GlobalDeclaration {
 struct UndefinedGlobal<'ast> {
     id: GlobalId,
     fqn: Vec<String>,
+    visibility: Vec<String>,
     declared_type: ResolvedType,
     ast_node: &'ast Binding,
 }
@@ -104,11 +109,11 @@ impl Resolver<'_> {
         self.import_names(&ast.imports);
         let mut undefined_types = Vec::new();
         self.find_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
-        let lookup = TypeDeclLookup::new(&undefined_types);
-        self.define_types(undefined_types, lookup.root_scope());
+        let type_lookup = TypeDeclLookup::new(&undefined_types);
+        self.define_types(undefined_types, type_lookup.root_scope());
 
         let mut undefined_globals = Vec::new();
-        self.find_globals(&mut undefined_globals, &ast.root_namespace, QNameList::Empty, QNameList::Empty, lookup.root_scope());
+        self.find_globals(&mut undefined_globals, &ast.root_namespace, QNameList::Empty, QNameList::Empty, type_lookup.root_scope());
 
         #[cfg(debug_assertions)] {
             println!("Undefined Globals: ");
@@ -223,7 +228,13 @@ impl Resolver<'_> {
                     let definition = match &t.contents {
                         TypeContents::Record(fields) => {
                             let res_fields = fields.iter()
-                                .map(|f| (f.name.clone(), self.resolve_field_type(&f.type_name, type_params, &scope, false)))
+                                .map(|f| {
+                                    ResolvedField {
+                                        name: f.name.clone(),
+                                        public: f.public, // TODO does this need to be a full visibility vec?
+                                        resolved_type: self.resolve_field_type(&f.type_name, type_params, &scope, false)
+                                    }
+                                })
                                 .collect();
                             TypeDefinition::Record(res_fields)
                         },
@@ -252,7 +263,13 @@ impl Resolver<'_> {
                 },
                 UndefinedTypeNode::Case(tcr, type_params) => {
                     let res_fields = tcr.fields.iter()
-                        .map(|f| (f.name.clone(), self.resolve_field_type(&f.type_name, type_params, &scope, false)))
+                        .map(|f| {
+                            ResolvedField {
+                                name: f.name.clone(),
+                                public: f.public,
+                                resolved_type: self.resolve_field_type(&f.type_name, type_params, &scope, false)
+                            }
+                        })
                         .collect();
                     (TypeDefinition::Record(res_fields), type_params.len())
                 },
@@ -363,6 +380,7 @@ impl Resolver<'_> {
                         let ug = UndefinedGlobal {
                             id: self.gen_global_id(),
                             fqn,
+                            visibility: vis.to_qname().parts,
                             declared_type,
                             ast_node: b,
                         };
@@ -396,13 +414,13 @@ impl Resolver<'_> {
                                     // instantiate type params
                                     let subs: Vec<_> = fs
                                         .iter()
-                                        .map(|(name, ty)| {
-                                            let new_ty = if let ResolvedType::TypeParam(i) = ty {
+                                        .map(|rf| {
+                                            let new_ty = if let ResolvedType::TypeParam(i) = &rf.resolved_type {
                                                 &args[*i]
                                             } else {
-                                                ty
+                                                &rf.resolved_type
                                             };
-                                            (name.clone(), new_ty.clone())
+                                            (rf.name.clone(), new_ty.clone())
                                         })
                                         .collect();
                                     Some(subs)
@@ -658,147 +676,30 @@ pub struct Error {
     pub col: u32,
 }
 
-trait Lookup {
-    type Id;
-
-    fn find(&self, fqn: QNameList) -> Option<&(Self::Id, Vec<String>)>;
-
-    fn root_scope(&self) -> LookupScope<Self> {
-        LookupScope {
-            lookup: self,
-            scope: QNameList::Empty,
-        }
-    }
-}
-
-struct LookupScope<'lookup, 'ast, 'parent, TLookup : Lookup + ?Sized> {
-    lookup: &'lookup TLookup,
-    scope: QNameList<'ast, 'parent>,
-}
-
-impl<'ast, TLookup : Lookup> LookupScope<'_, 'ast, '_, TLookup> where TLookup::Id : Clone {
-    fn enter_scope(&self, name: &'ast [String]) -> LookupScope<TLookup> {
-        LookupScope {
-            lookup: self.lookup,
-            scope: self.scope.append_slice(name),
-        }
-    }
-
-    fn get_type(&self, name: &[String]) -> Option<(TLookup::Id, bool)> {
-        let mut current_scope = self.scope;
-        loop {
-            let full_name = current_scope.append_slice(name);
-            let found = self.lookup.find(full_name);
-            if let Some((id, visibility)) = found {
-                let visible = is_visible(self.scope, &visibility);
-                return Some((id.clone(), visible))
-            }
-            if let QNameList::Empty = current_scope {
-                break
-            }
-            current_scope = current_scope.pop_namespace();
-        }
-        None
-    }
-}
-
-// Is an object with visibility visible from scope?
-fn is_visible(scope: QNameList, visibility: &[String]) -> bool {
-    if scope.len() < visibility.len() { return false }
-    scope.iter().zip(visibility).all(|(sp, vp)| sp == vp)
-}
-
 type TypeDeclLookupScope<'lookup, 'ast, 'parent> = LookupScope<'lookup, 'ast, 'parent, TypeDeclLookup>;
 
-#[derive(Clone, Copy)]
-enum QNameList<'parent, 'ast> {
-    Empty,
-    List(&'parent QNameList<'parent, 'ast>, &'ast [String])
+struct GlobalLookup {
+    globals: Vec<(Vec<String>, GlobalId, Vec<String>)>,
 }
 
-impl<'parent, 'ast> QNameList<'parent, 'ast> {
-    fn append(&'parent self, qname: &'ast QName) -> QNameList<'parent, 'ast> {
-        self.append_slice(&qname.parts)
-    }
-
-    fn append_slice(&'parent self, slice: &'ast [String]) -> QNameList<'parent, 'ast> {
-        QNameList::List(self, slice)
-    }
-
-    fn len(&self) -> usize {
-        match self {
-            QNameList::Empty => 0,
-            QNameList::List(parent, name) => parent.len() + name.len()
-        }
-    }
-
-    fn iter(&self) -> QNameListIter {
-        QNameListIter::new(self)
-    }
-
-    // element-wise equality
-    fn matches(&self, names: &[String]) -> bool {
-        if names.len() != self.len() { return false }
-        names.iter().zip(self.iter()).all(|(a, b)| a == b)
-    }
-
-    fn pop_namespace(self) -> QNameList<'parent, 'ast> {
-        match self {
-            QNameList::Empty => QNameList::Empty,
-            QNameList::List(parent, names) => {
-                let names_len = names.len();
-                if names_len == 1 {
-                    *parent
-                } else {
-                    parent.append_slice(&names[0..names_len-1])
-                }
-            }
-        }
-    }
-
-    fn to_qname(&self) -> QName {
-        QName {
-            parts: self.iter().cloned().collect()
+impl GlobalLookup {
+    fn new(undefined_globals: &[UndefinedGlobal]) -> GlobalLookup {
+        // TODO reduce the number of string clones here
+        GlobalLookup {
+            globals: undefined_globals.iter()
+                .map(|ug| (ug.fqn.clone(), ug.id.clone(), ug.visibility.clone()))
+                .collect()
         }
     }
 }
 
-struct QNameListIter<'ast> {
-    parent: Option<Box<QNameListIter<'ast>>>,
-    name: Option<std::slice::Iter<'ast, String>>
-}
+impl Lookup for GlobalLookup {
+    type Id = GlobalId;
 
-impl<'ast> QNameListIter<'ast> {
-    fn new(list: &'ast QNameList<'_, 'ast>) -> QNameListIter<'ast> {
-        match list {
-            QNameList::Empty => QNameListIter {
-                parent: None,
-                name: None,
-            },
-            QNameList::List(parent, name) => QNameListIter {
-                parent: Some(Box::new(parent.iter())),
-                name: Some(name.iter()),
-            },
-        }
-    }
-}
-
-impl<'ast> Iterator for QNameListIter<'ast> {
-    type Item = &'ast String;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if let Some(parent) = &mut self.parent {
-            let p_next = parent.next();
-            if p_next.is_some() {
-                return p_next
-            } else {
-                self.parent = None
-            }
-        }
-        if let Some(name) = &mut self.name {
-            return name.next()
-        }
-        None
+    fn find(&self, fqn: QNameList) -> Option<(GlobalId, &[String])> {
+        self.globals.iter()
+            .find(|(g_fqn, _, _)| fqn.matches(&g_fqn))
+            .map(|(_, id, vis)| (id.clone(), vis.as_slice()))
     }
 }
 

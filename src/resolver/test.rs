@@ -105,9 +105,9 @@ type C
 
         if let TypeDefinition::Record(fields) = &t.definition {
             assert_eq!(expected_fields.len(), fields.len(), "In type {:?}", id);
-            for ((name, res_type), (exp_name, exp_type)) in fields.iter().zip(&expected_fields) {
-                assert_eq!(exp_name, name, "In type {:?}", id);
-                assert_eq!(&ResolvedType::Id(TypeId::new(Rc::clone(&mod_name), to_qname(exp_type.clone())), Vec::new()), res_type, "In type {:?}", id)
+            for (rf, (exp_name, exp_type)) in fields.iter().zip(&expected_fields) {
+                assert_eq!(exp_name, &rf.name, "In type {:?}", id);
+                assert_eq!(&ResolvedType::Id(TypeId::new(Rc::clone(&mod_name), to_qname(exp_type.clone())), Vec::new()), &rf.resolved_type, "In type {:?}", id)
             }
         } else {
             panic!("expected a record for {:?}", id.fqn())
@@ -171,7 +171,7 @@ fn union() {
         assert_eq!(1, some.num_type_params);
         if let TypeDefinition::Record(fields) = &some.definition {
             assert_eq!(1, fields.len());
-            assert_eq!("t", &fields[0].0)
+            assert_eq!("t", &fields[0].name)
         } else {
             panic!()
         }
@@ -204,8 +204,8 @@ fn func_field() {
     let t = resolver.types.values().next().unwrap();
     let fields = if let TypeDefinition::Record(fields) = &t.definition { fields } else { panic!() };
     let consume = fields.first().unwrap();
-    assert_eq!("consume", consume.0);
-    let rft = if let ResolvedType::Func(rft) = &consume.1 { rft } else { panic!() };
+    assert_eq!("consume", consume.name);
+    let rft = if let ResolvedType::Func(rft) = &consume.resolved_type { rft } else { panic!() };
     assert_eq!(ResolvedType::TypeParam(0), rft.params[0]);
     assert_eq!(ResolvedType::TypeParam(0), rft.params[1]);
     assert_eq!(&ResolvedType::Unit, rft.return_type.as_ref());

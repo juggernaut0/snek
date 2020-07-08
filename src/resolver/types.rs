@@ -1,7 +1,8 @@
 use std::rc::Rc;
 use crate::ast::{QName, Type, TypeCaseRecord};
 use std::fmt::{Debug, Formatter, Display};
-use crate::resolver::{Lookup, QNameList};
+use crate::resolver::qname_list::QNameList;
+use crate::resolver::lookup::Lookup;
 
 #[derive(Clone, Eq, PartialEq, Hash)]
 pub struct TypeId(Rc<(Rc<String>, Vec<String>)>);
@@ -13,8 +14,14 @@ pub struct TypeDeclaration {
 }
 #[derive(Clone)]
 pub enum TypeDefinition {
-    Record(Vec<(String, ResolvedType)>),
+    Record(Vec<ResolvedField>),
     Union(Vec<ResolvedType>),
+}
+#[derive(Clone)]
+pub struct ResolvedField {
+    pub name: String,
+    pub public: bool,
+    pub resolved_type: ResolvedType
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResolvedType {
@@ -100,9 +107,10 @@ impl TypeDeclLookup {
 impl Lookup for TypeDeclLookup {
     type Id = TypeId;
 
-    fn find(&self, fqn: QNameList) -> Option<&(TypeId, Vec<String>)> {
+    fn find(&self, fqn: QNameList) -> Option<(TypeId, &[String])> {
         self.decls
             .iter()
-            .find(|&(id, _)| fqn.matches(id.fqn()))
+            .find(|(id, _)| fqn.matches(id.fqn()))
+            .map(|(id, vis)| (id.clone(), vis.as_slice()))
     }
 }
