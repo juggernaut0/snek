@@ -1,16 +1,16 @@
 use std::rc::Rc;
-use crate::ast::{QName, Type, TypeCaseRecord};
+use crate::ast::{Type, TypeCaseRecord};
 use std::fmt::{Debug, Formatter, Display};
-use crate::resolver::qname_list::QNameList;
+use crate::resolver::qname_list::{QNameList, Fqn};
 use crate::resolver::lookup::Lookup;
 
 #[derive(Clone, Eq, PartialEq, Hash)]
-pub struct TypeId(Rc<(Rc<String>, Vec<String>)>);
+pub struct TypeId(Rc<String>, Fqn);
 pub struct TypeDeclaration {
     pub id: TypeId,
     pub num_type_params: usize,
     pub definition: TypeDefinition,
-    pub visibility: QName,
+    pub visibility: Vec<String>,
 }
 #[derive(Clone)]
 pub enum TypeDefinition {
@@ -42,7 +42,7 @@ pub struct ResolvedFuncType {
 }
 pub struct UndefinedType<'ast> {
     pub id: TypeId,
-    pub visibility: QName,
+    pub visibility: Vec<String>,
     pub ast_node: UndefinedTypeNode<'ast>
 }
 pub enum UndefinedTypeNode<'ast> {
@@ -62,29 +62,24 @@ impl UndefinedType<'_> {
 }
 
 impl TypeId {
-    pub fn new(mod_name: Rc<String>, fqn: QName) -> TypeId {
-        TypeId(Rc::new((mod_name, fqn.parts)))
+    pub fn new(mod_name: Rc<String>, fqn: Fqn) -> TypeId {
+        TypeId(mod_name, fqn)
     }
 
-    pub fn fqn(&self) -> &[String] {
-        &(self.0).1
-    }
-
-    pub fn namespace(&self) -> &[String] {
-        let fqn = self.fqn();
-        &fqn[0..fqn.len()-1]
+    pub fn fqn(&self) -> &Fqn {
+        &self.1
     }
 }
 
 impl Debug for TypeId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}:{:?}", (self.0).0, (self.0).1)
+        write!(f, "{:?}:{}", self.0, self.1)
     }
 }
 
 impl Display for TypeId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.fqn().join("."))
+        write!(f, "{}", self.fqn())
     }
 }
 
@@ -94,11 +89,11 @@ pub struct TypeDeclLookup {
 
 impl TypeDeclLookup {
     pub fn new(undefined_types: &[UndefinedType]) -> TypeDeclLookup {
-        // TODO don't clone visibility
+        // TODO avoid cloning visibility
         TypeDeclLookup {
             decls: undefined_types
                 .iter()
-                .map(|ut| (ut.id.clone(), ut.visibility.parts.clone()))
+                .map(|ut| (ut.id.clone(), ut.visibility.clone()))
                 .collect()
         }
     }

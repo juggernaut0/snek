@@ -1,7 +1,5 @@
 use std::rc::Rc;
 
-use crate::ast::QName;
-
 use super::*;
 
 #[test]
@@ -24,7 +22,7 @@ fn qname_list_iter() {
 fn qname_list_matches() {
     let type_id = TypeId::new(
         Rc::new(String::new()),
-        to_qname(vec!["a", "b", "c"])
+        vec!["a", "b", "c"].into(),
     );
 
     let a = vec![String::from("a"), String::from("b")];
@@ -62,8 +60,8 @@ type F # visibility: <root>
     println!("{:?}", resolver.types.keys());
     let assert_vis = |name: Vec<&str>, expected_vis: Vec<&str>| {
         println!("{:?}", name);
-        let t = type_declarations.iter().find(|it| it.id.fqn() == name.as_slice()).unwrap();
-        assert_eq!(expected_vis, t.visibility.parts, "type: {:?}", name)
+        let t = type_declarations.iter().find(|it| it.id.fqn().as_slice() == name.as_slice()).unwrap();
+        assert_eq!(expected_vis, t.visibility, "type: {:?}", name)
     };
 
     assert_vis(vec!["A", "B", "A"], vec!["A"]);
@@ -100,17 +98,17 @@ type C
     assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
 
     let check_type_def = |name: Vec<&str>, expected_fields: Vec<(&str, Vec<&str>)>| {
-        let id = TypeId::new(Rc::clone(&mod_name), to_qname(name));
+        let id = TypeId::new(Rc::clone(&mod_name), name.into());
         let t = resolver.types.get(&id).unwrap();
 
         if let TypeDefinition::Record(fields) = &t.definition {
             assert_eq!(expected_fields.len(), fields.len(), "In type {:?}", id);
             for (rf, (exp_name, exp_type)) in fields.iter().zip(&expected_fields) {
                 assert_eq!(exp_name, &rf.name, "In type {:?}", id);
-                assert_eq!(&ResolvedType::Id(TypeId::new(Rc::clone(&mod_name), to_qname(exp_type.clone())), Vec::new()), &rf.resolved_type, "In type {:?}", id)
+                assert_eq!(&ResolvedType::Id(TypeId::new(Rc::clone(&mod_name), exp_type.as_slice().into()), Vec::new()), &rf.resolved_type, "In type {:?}", id)
             }
         } else {
-            panic!("expected a record for {:?}", id.fqn())
+            panic!("expected a record for {}", id.fqn())
         }
     };
 
@@ -233,11 +231,11 @@ namespace A.B {
     assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
 
     assert_eq!(5, undefined_globals.len());
-    undefined_globals.iter().find(|it| it.fqn == vec!["a"]).expect("Expected a");
-    undefined_globals.iter().find(|it| it.fqn == vec!["A", "a"]).expect("Expected A.a");
-    undefined_globals.iter().find(|it| it.fqn == vec!["B", "a"]).expect("Expected B.a");
-    undefined_globals.iter().find(|it| it.fqn == vec!["A", "B", "C", "a"]).expect("Expected A.B.C.a");
-    undefined_globals.iter().find(|it| it.fqn == vec!["A", "B", "C", "D", "a"]).expect("Expected A.B.C.D.a");
+    undefined_globals.iter().find(|it| it.fqn.as_slice() == ["a"]).expect("Expected a");
+    undefined_globals.iter().find(|it| it.fqn.as_slice() == ["A", "a"]).expect("Expected A.a");
+    undefined_globals.iter().find(|it| it.fqn.as_slice() == ["B", "a"]).expect("Expected B.a");
+    undefined_globals.iter().find(|it| it.fqn.as_slice() == ["A", "B", "C", "a"]).expect("Expected A.B.C.a");
+    undefined_globals.iter().find(|it| it.fqn.as_slice() == ["A", "B", "C", "D", "a"]).expect("Expected A.B.C.D.a");
 }
 
 #[test]
@@ -272,16 +270,16 @@ namespace Four {
     assert_eq!(4, undefined_globals.len());
 
     // Does this need to be order-independent?
-    assert_eq!(vec!["One", "x"], undefined_globals[0].fqn);
+    assert_eq!(["One", "x"], undefined_globals[0].fqn.as_slice());
     assert_eq!(ResolvedType::Inferred, undefined_globals[0].declared_type);
 
-    assert_eq!(vec!["Two", "x"], undefined_globals[1].fqn);
+    assert_eq!(["Two", "x"], undefined_globals[1].fqn.as_slice());
     assert_eq!(ResolvedType::Unit, undefined_globals[1].declared_type);
 
-    assert_eq!(vec!["Three", "x"], undefined_globals[2].fqn);
+    assert_eq!(["Three", "x"], undefined_globals[2].fqn.as_slice());
     assert_eq!(ResolvedType::Unit, undefined_globals[2].declared_type);
 
-    assert_eq!(vec!["Four", "x"], undefined_globals[3].fqn);
+    assert_eq!(["Four", "x"], undefined_globals[3].fqn.as_slice());
     assert_eq!(ResolvedType::Unit, undefined_globals[3].declared_type);
 }
 
@@ -306,7 +304,7 @@ let { x }: A<()> = (TODO)
     assert_eq!(1, undefined_globals.len());
 
     let global = &undefined_globals[0];
-    assert_eq!(vec!["x"], global.fqn);
+    assert_eq!(["x"], global.fqn.as_slice());
     assert_eq!(ResolvedType::Unit, global.declared_type);
 }
 
@@ -332,18 +330,69 @@ let { x: A }: B = (TODO)
     assert_eq!(1, undefined_globals.len());
 
     let global = &undefined_globals[0];
-    assert_eq!(vec!["x"], global.fqn);
+    assert_eq!(["x"], global.fqn.as_slice());
     let type_id = match &global.declared_type {
         ResolvedType::Id(id, _) => id,
         _ => panic!()
     };
-    assert_eq!(vec!["A"], type_id.fqn());
+    assert_eq!(["A"], type_id.fqn().as_slice());
 }
 
-fn to_qname(strs: Vec<&str>) -> QName {
-    QName { parts: strs.into_iter().map(|s| s.to_string()).collect() }
+#[test]
+#[ignore] // TODO detecting field visibility will happen at a later stage
+fn destructured_private_field() {
+    let src = "\
+namespace A {
+    public type A { x: () }
+}
+let { x }: A.A = (TODO)
+";
+    let resolver = find_globals(src);
+
+    // should error
+    assert!(!resolver.errors.is_empty());
+}
+
+#[test]
+fn destructured_private_field_same_ns() {
+    let src = "\
+namespace A {
+    public type A { x: () }
+    let { x }: A = (TODO)
+}
+";
+    let resolver = find_globals(src);
+
+    assert!(resolver.errors.is_empty());
+}
+
+#[test]
+fn destructured_public_field() {
+    let src = "\
+namespace A {
+    public type A { public x: () }
+}
+let { x }: A.A = (TODO)
+";
+    let resolver = find_globals(src);
+
+    assert!(resolver.errors.is_empty());
+}
+
+fn find_globals(src: &str) -> Resolver {
+    let (ast, errs) = crate::parser::parse(src);
+    assert!(errs.is_empty());
+    let mod_name = Rc::new(String::new());
+    let mut resolver = Resolver::new(Rc::clone(&mod_name), &[]);
+    let mut undefined_types = Vec::new();
+    resolver.find_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
+    let lookup = TypeDeclLookup::new(&undefined_types);
+    resolver.define_types(undefined_types, lookup.root_scope());
+    let mut undefined_globals = Vec::new();
+    resolver.find_globals(&mut undefined_globals, &ast.root_namespace, QNameList::Empty, QNameList::Empty, lookup.root_scope());
+    resolver
 }
 
 fn get_type<'a>(resolver: &'a Resolver, name: &str) -> &'a TypeDeclaration {
-    resolver.types.values().find(|it| it.id.fqn().last().unwrap() == name).unwrap()
+    resolver.types.values().find(|it| it.id.fqn().as_slice().last().unwrap() == name).unwrap()
 }

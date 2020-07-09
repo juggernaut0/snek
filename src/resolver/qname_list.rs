@@ -1,4 +1,6 @@
 use crate::ast::QName;
+use std::fmt::{Display, Formatter};
+use std::rc::Rc;
 
 #[derive(Clone, Copy)]
 pub enum QNameList<'parent, 'ast> {
@@ -27,7 +29,8 @@ impl<'parent, 'ast> QNameList<'parent, 'ast> {
     }
 
     // element-wise equality
-    pub fn matches(&self, names: &[String]) -> bool {
+    pub fn matches(&self, fqn: &Fqn) -> bool {
+        let names = fqn.as_slice();
         if self.len() != names.len() { return false }
         self.iter().zip(names.iter()).all(|(a, b)| a == b)
     }
@@ -51,10 +54,8 @@ impl<'parent, 'ast> QNameList<'parent, 'ast> {
         }
     }
 
-    pub fn to_qname(&self) -> QName {
-        QName {
-            parts: self.iter().cloned().collect()
-        }
+    pub fn to_vec(&self) -> Vec<String> {
+        self.iter().cloned().collect()
     }
 }
 
@@ -94,5 +95,47 @@ impl<'ast> Iterator for QNameListIter<'ast> {
             return name.next()
         }
         None
+    }
+}
+
+#[derive(Clone, Eq, PartialEq, Hash)]
+pub struct Fqn {
+    parts: Rc<Vec<String>>,
+}
+
+impl Fqn {
+    pub fn new(namespace: QNameList, name: String) -> Fqn {
+        let mut parts = namespace.to_vec();
+        parts.push(name);
+        Fqn {
+            parts: Rc::new(parts),
+        }
+    }
+
+    pub fn as_slice(&self) -> &[String] {
+        &self.parts
+    }
+
+    pub fn namespace(&self) -> &[String] {
+        let len = self.parts.len();
+        &self.parts[..len-1]
+    }
+}
+
+impl Display for Fqn {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.parts.join("."))
+    }
+}
+
+impl<S: Into<String>> From<Vec<S>> for Fqn {
+    fn from(its: Vec<S>) -> Self {
+        Fqn { parts: Rc::new(its.into_iter().map(|it| it.into()).collect()) }
+    }
+}
+
+impl<S: ToString> From<&[S]> for Fqn {
+    fn from(its: &[S]) -> Self {
+        Fqn { parts: Rc::new(its.iter().map(|it| it.to_string()).collect()) }
     }
 }
