@@ -9,7 +9,7 @@ let box = new Box { t: box }
 # runtime error: cannot access name box before it is initialized
 let box: Box<_> = new { t: box }
 
-type F = () -> F
+type F = { () -> F }
 # works!
 let f: F = { -> f }
 

@@ -28,6 +28,7 @@ pub enum ResolvedType {
     Id(TypeId, Vec<ResolvedType>),
     TypeParam(usize),
     Func(ResolvedFuncType),
+    Callable(Box<ResolvedType>),
     Unit,
     Any,
     Nothing,
@@ -40,6 +41,18 @@ pub struct ResolvedFuncType {
     pub params: Vec<ResolvedType>,
     pub return_type: Box<ResolvedType>,
 }
+
+impl ResolvedType {
+    pub fn is_inferred(&self) -> bool {
+        match self {
+            ResolvedType::Inferred => true,
+            ResolvedType::Id(_, args) => args.iter().any(|rt| rt.is_inferred()),
+            ResolvedType::Func(rft) => rft.params.iter().any(|rt| rt.is_inferred()) || rft.return_type.is_inferred(),
+            _ => false
+        }
+    }
+}
+
 pub struct UndefinedType<'ast> {
     pub id: TypeId,
     pub visibility: Vec<String>,

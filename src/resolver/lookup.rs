@@ -26,7 +26,7 @@ impl<'ast, TLookup : Lookup> LookupScope<'_, 'ast, '_, TLookup> {
         }
     }
 
-    pub fn get_type(&self, name: &[String]) -> Option<(TLookup::Id, bool)> {
+    pub fn get(&self, name: &[String]) -> Option<(TLookup::Id, bool)> {
         let mut current_scope = self.scope;
         loop {
             let full_name = current_scope.append_slice(name);

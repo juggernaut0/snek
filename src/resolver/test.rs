@@ -86,15 +86,8 @@ namespace Foo {
 }
 type C
         ";
-    let (ast, errs) = crate::parser::parse(src);
-    assert!(errs.is_empty());
     let mod_name = Rc::new(String::new());
-    let mut resolver = Resolver::new(Rc::clone(&mod_name), &[]);
-    let mut undefined_types = Vec::new();
-    resolver.find_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
-    assert!(resolver.errors.is_empty());
-    let lookup = TypeDeclLookup::new(&undefined_types);
-    resolver.define_types(undefined_types, lookup.root_scope());
+    let resolver = define_types(src);
     assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
 
     let check_type_def = |name: Vec<&str>, expected_fields: Vec<(&str, Vec<&str>)>| {
@@ -121,6 +114,13 @@ type C
 }
 
 #[test]
+fn unknown_type() {
+    let src = "type Test { x: What }";
+    let resolver = define_types(src);
+    assert!(!resolver.errors.is_empty());
+}
+
+#[test]
 fn visibility_error() {
     let src = "
 namespace Foo {
@@ -128,30 +128,14 @@ namespace Foo {
 }
 type A { f: Foo.Hidden }
 ";
-    let (ast, errs) = crate::parser::parse(src);
-    assert!(errs.is_empty());
-    let mod_name = Rc::new(String::new());
-    let mut resolver = Resolver::new(Rc::clone(&mod_name), &[]);
-    let mut undefined_types = Vec::new();
-    resolver.find_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
-    assert!(resolver.errors.is_empty());
-    let lookup = TypeDeclLookup::new(&undefined_types);
-    resolver.define_types(undefined_types, lookup.root_scope());
+    let resolver = define_types(src);
     assert!(!resolver.errors.is_empty());
 }
 
 #[test]
 fn union() {
     let src = "type Option<T> = Some { t: T } | None { }";
-    let (ast, errs) = crate::parser::parse(src);
-    assert!(errs.is_empty());
-    let mod_name = Rc::new(String::new());
-    let mut resolver = Resolver::new(Rc::clone(&mod_name), &[]);
-    let mut undefined_types = Vec::new();
-    resolver.find_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
-    assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
-    let lookup = TypeDeclLookup::new(&undefined_types);
-    resolver.define_types(undefined_types, lookup.root_scope());
+    let resolver = define_types(src);
     assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
 
     assert_eq!(3, resolver.types.len());
@@ -229,13 +213,14 @@ namespace A.B {
     let lookup = TypeDeclLookup::new(&[]);
     resolver.find_globals(&mut undefined_globals, &ast.root_namespace, QNameList::Empty, QNameList::Empty, lookup.root_scope());
     assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
+    let globals: Vec<_> = undefined_globals.iter().flat_map(|it| &it.decls).collect();
 
-    assert_eq!(5, undefined_globals.len());
-    undefined_globals.iter().find(|it| it.fqn.as_slice() == ["a"]).expect("Expected a");
-    undefined_globals.iter().find(|it| it.fqn.as_slice() == ["A", "a"]).expect("Expected A.a");
-    undefined_globals.iter().find(|it| it.fqn.as_slice() == ["B", "a"]).expect("Expected B.a");
-    undefined_globals.iter().find(|it| it.fqn.as_slice() == ["A", "B", "C", "a"]).expect("Expected A.B.C.a");
-    undefined_globals.iter().find(|it| it.fqn.as_slice() == ["A", "B", "C", "D", "a"]).expect("Expected A.B.C.D.a");
+    assert_eq!(5, globals.len());
+    globals.iter().find(|it| it.fqn.as_slice() == ["a"]).expect("Expected a");
+    globals.iter().find(|it| it.fqn.as_slice() == ["A", "a"]).expect("Expected A.a");
+    globals.iter().find(|it| it.fqn.as_slice() == ["B", "a"]).expect("Expected B.a");
+    globals.iter().find(|it| it.fqn.as_slice() == ["A", "B", "C", "a"]).expect("Expected A.B.C.a");
+    globals.iter().find(|it| it.fqn.as_slice() == ["A", "B", "C", "D", "a"]).expect("Expected A.B.C.D.a");
 }
 
 #[test]
@@ -270,17 +255,17 @@ namespace Four {
     assert_eq!(4, undefined_globals.len());
 
     // Does this need to be order-independent?
-    assert_eq!(["One", "x"], undefined_globals[0].fqn.as_slice());
-    assert_eq!(ResolvedType::Inferred, undefined_globals[0].declared_type);
+    assert_eq!(["One", "x"], undefined_globals[0].decls[0].fqn.as_slice());
+    assert_eq!(ResolvedType::Inferred, undefined_globals[0].decls[0].declared_type);
 
-    assert_eq!(["Two", "x"], undefined_globals[1].fqn.as_slice());
-    assert_eq!(ResolvedType::Unit, undefined_globals[1].declared_type);
+    assert_eq!(["Two", "x"], undefined_globals[1].decls[0].fqn.as_slice());
+    assert_eq!(ResolvedType::Unit, undefined_globals[1].decls[0].declared_type);
 
-    assert_eq!(["Three", "x"], undefined_globals[2].fqn.as_slice());
-    assert_eq!(ResolvedType::Unit, undefined_globals[2].declared_type);
+    assert_eq!(["Three", "x"], undefined_globals[2].decls[0].fqn.as_slice());
+    assert_eq!(ResolvedType::Unit, undefined_globals[2].decls[0].declared_type);
 
-    assert_eq!(["Four", "x"], undefined_globals[3].fqn.as_slice());
-    assert_eq!(ResolvedType::Unit, undefined_globals[3].declared_type);
+    assert_eq!(["Four", "x"], undefined_globals[3].decls[0].fqn.as_slice());
+    assert_eq!(ResolvedType::Unit, undefined_globals[3].decls[0].declared_type);
 }
 
 #[test]
@@ -303,7 +288,7 @@ let { x }: A<()> = (TODO)
 
     assert_eq!(1, undefined_globals.len());
 
-    let global = &undefined_globals[0];
+    let global = &undefined_globals[0].decls[0];
     assert_eq!(["x"], global.fqn.as_slice());
     assert_eq!(ResolvedType::Unit, global.declared_type);
 }
@@ -329,7 +314,7 @@ let { x: A }: B = (TODO)
 
     assert_eq!(1, undefined_globals.len());
 
-    let global = &undefined_globals[0];
+    let global = &undefined_globals[0].decls[0];
     assert_eq!(["x"], global.fqn.as_slice());
     let type_id = match &global.declared_type {
         ResolvedType::Id(id, _) => id,
@@ -377,6 +362,18 @@ let { x }: A.A = (TODO)
     let resolver = find_globals(src);
 
     assert!(resolver.errors.is_empty());
+}
+
+fn define_types(src: &str) -> Resolver {
+    let (ast, errs) = crate::parser::parse(src);
+    assert!(errs.is_empty());
+    let mod_name = Rc::new(String::new());
+    let mut resolver = Resolver::new(Rc::clone(&mod_name), &[]);
+    let mut undefined_types = Vec::new();
+    resolver.find_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
+    let lookup = TypeDeclLookup::new(&undefined_types);
+    resolver.define_types(undefined_types, lookup.root_scope());
+    resolver
 }
 
 fn find_globals(src: &str) -> Resolver {

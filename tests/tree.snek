@@ -1,15 +1,16 @@
-type Node data left right
+type Option<T> = T | None {}
+type Node { data: Number, left: Option<Node>, right: Option<Node> }
 
 let make_fun = { mul ->
-	let f = { (Node data left right) ->
+	let f = { { data, left, right }: Node ->
 		(match left
-			{ (Some node) -> (f node) }
-			{ (None) -> () }
+			{ node: Node -> (f node) }
+			{ _ -> () }
 		)
 		(println (mul * data))
 		(match right
-			{ (Some node) -> (f node) }
-			{ (None) -> () }
+			{ node: Node -> (f node) }
+			{ _ -> () }
 		)
 	}
 	f

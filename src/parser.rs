@@ -329,7 +329,7 @@ impl<'a> Parser<'a> {
                 Some(TypeCase::Case(type_name))
             }
         } else {
-            self.error_at_current("type declaration or case");
+            self.error_at_current("type declaration or type name");
             None
         }
     }

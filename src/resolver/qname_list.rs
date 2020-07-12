@@ -14,7 +14,7 @@ impl<'parent, 'ast> QNameList<'parent, 'ast> {
     }
 
     pub fn append_slice(&'parent self, slice: &'ast [String]) -> QNameList<'parent, 'ast> {
-        QNameList::List(self, slice)
+        if slice.is_empty() { *self } else { QNameList::List(self, slice) }
     }
 
     pub fn len(&self) -> usize {
