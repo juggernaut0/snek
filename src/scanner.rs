@@ -149,7 +149,13 @@ impl<'a> Scanner<'a> {
 
     fn match_string(&mut self) -> ScanResult<'a> {
         let start = self.consume()?;
-        self.consume_while(|c| c != '\n' && c != start);
+        loop {
+            if self.consume_if(|it| it == '\\') {
+                self.consume()?;
+            } else if !self.consume_if(|c| c != '\n' && c != start) {
+                break
+            }
+        }
         self.require(|c| c == start, &format!("Expected {}", start))?;
         self.token(STRING)
     }

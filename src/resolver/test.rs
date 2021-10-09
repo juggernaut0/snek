@@ -449,3 +449,8 @@ fn get_type<'a>(resolver: &'a Resolver, name: &str) -> &'a TypeDeclaration {
 fn get_global<'a>(resolver: &'a Resolver, name: &str) -> &'a GlobalDeclaration {
     resolver.globals.values().find(|it| it.fqn.as_slice().last().unwrap() == name).unwrap()
 }
+
+#[test]
+fn test_unescape() {
+    assert_eq!(unescape("'\\'\\\"\\n\\\\'"), Ok("'\"\n\\".into()));
+}

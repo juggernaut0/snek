@@ -906,14 +906,16 @@ impl DefineGlobalResult {
 fn unescape(s: &str) -> Result<String, String> {
     let mut res = String::new();
     let mut chars = s[..s.len()-1].chars(); // strip off last quote, scanner already checked it matches
-    let quote_char = chars.next().unwrap();
+    chars.next().unwrap();
     while let Some(c) = chars.next() {
         if c == '\\' {
             res.push(match chars.next() {
                 None => return Err("Unexpected end of string literal".to_string()),
-                Some(q) if q == quote_char => q,
+                Some('"') => '"',
+                Some('\'') => '\'',
                 Some('n') => '\n',
                 Some('t') => '\t',
+                Some('\\') => '\\',
                 Some(huh) => return Err(format!("Unknown escape sequence: \\{}", huh))
             });
         } else {
