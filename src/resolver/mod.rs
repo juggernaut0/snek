@@ -363,7 +363,7 @@ impl Resolver<'_> {
                     let (names, expected_type) = self.extract_names(&b.pattern, &scope);
                     let decls = names
                         .into_iter()
-                        .map(|(name, declared_type)| {
+                        .map(|(name, declared_type, from)| {
                             let id = self.gen_global_id();
                             let fqn = Fqn::new(namespace, name.to_string());
                             if !declared_type.is_inferred() {
@@ -378,6 +378,7 @@ impl Resolver<'_> {
                                 fqn,
                                 visibility: vis.to_vec(),
                                 declared_type,
+                                from,
                             }
                         })
                         .collect();
@@ -394,8 +395,8 @@ impl Resolver<'_> {
         }
     }
 
-    // returns a pair of (list of pairs of (name, type for that name), type for whole pattern)
-    fn extract_names<'ast>(&mut self, pattern: &'ast Pattern, scope: &LookupScope<TypeDeclLookup>) -> (Vec<(&'ast str, ResolvedType)>, ResolvedType) {
+    // returns a pair of (list of tuples of (name, type for that name, BindingFrom for that name), type for whole pattern)
+    fn extract_names<'ast>(&mut self, pattern: &'ast Pattern, scope: &LookupScope<TypeDeclLookup>) -> (Vec<(&'ast str, ResolvedType, BindingFrom<'ast>)>, ResolvedType) {
         let mut names = Vec::new();
         let expected_type = match pattern {
             Pattern::Wildcard(otn) => {
@@ -415,7 +416,7 @@ impl Resolver<'_> {
                 let rt = np.type_name.as_ref()
                     .map(|it| self.resolve_binding_type(it, &[], scope))
                     .unwrap_or(ResolvedType::Inferred);
-                names.push((np.name.as_str(), rt.clone()));
+                names.push((np.name.as_str(), rt.clone(), BindingFrom::Direct));
                 rt
             },
             Pattern::Destruct(fields, tn) => {
@@ -480,7 +481,7 @@ impl Resolver<'_> {
                                 .map(|it| self.resolve_binding_type(it, &[], scope))
                                 .unwrap_or(ResolvedType::Inferred);
 
-                            names.push((&np.name, self.unify(inferred_field_type, declared_type, np.line, np.col)))
+                            names.push((&np.name, self.unify(inferred_field_type, declared_type, np.line, np.col), BindingFrom::Destructured(&np.name)))
                         },
                         FieldPattern::Binding(_, _) => { todo!("destructure pattern binding case") },
                     }
@@ -546,7 +547,7 @@ impl Resolver<'_> {
         };
 
         let mut stack: Vec<_> = undefined_globals.iter().enumerate().collect();
-        stack.reverse();
+        stack.reverse(); // so that pop comes off the "top" of the code
 
         let mut result = Vec::new();
         result.resize_with(undefined_globals.len(), || None);
@@ -571,13 +572,26 @@ impl Resolver<'_> {
                     }
                     continue
                 },
-                DefineGlobalResult::Success(unified_type) => {
-                    result[i] = Some(unified_type);
-                    todo!("never thought I'd get this far")
+                DefineGlobalResult::Success(irt_expr) => {
+                    if irt_expr.resolved_type.is_inferred() {
+                        self.errors.push(Error {
+                            message: "Unable to infer type of global binding".into(),
+                            line: ugb.ast_node.expr.line,
+                            col: ugb.ast_node.expr.col,
+                        })
+                    }
+                    for ug in &ugb.decls {
+                        let resolved_type = match ug.from {
+                            BindingFrom::Direct => irt_expr.resolved_type.clone(),
+                            BindingFrom::Destructured(_) => todo!("destructured globals") // get type of field
+                        };
+                        self.globals.insert(ug.id, ug.define(resolved_type));
+                    }
+                    result[i] = Some(irt_expr);
                 }
             }
         }
-        todo!("something with result")
+        //todo!("something with result")
     }
 
     fn resolve_expr(
@@ -846,6 +860,10 @@ impl Resolver<'_> {
        let qne = QNameExpr::from(qname).unwrap(); // only called with a QName Expr
         self.usages.insert(qne, (declaration.id, declaration.name().clone()));
     }*/
+
+    pub fn errors(&self) -> &[Error] {
+        &self.errors
+    }
 }
 
 struct LocalScope<'a> {

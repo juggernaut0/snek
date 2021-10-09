@@ -56,10 +56,18 @@ fn run_from_file(path: &Path) {
             }
         }
     }
-    let root_name = asts.root();
-    let (root, _) = asts.get_ast(&root_name);
-    let mut resolver = Resolver::new(Rc::clone(root_name), &[]); // TODO deps
-    resolver.resolve(root);
+
+    {
+        // this is all provisional for debugging
+        let root_name = asts.root();
+        let (root, _) = asts.get_ast(&root_name);
+        let mut resolver = Resolver::new(Rc::clone(root_name), &[]); // TODO deps
+        resolver.resolve(root);
+        resolver.errors().iter().for_each(|e| {
+            eprintln!("{} [{}:{}] [ERROR] {}", root_name, e.line, e.col, e.message)
+        })
+    }
+
     /*let code = match codegen::compile(&ast) {
         Ok(code) => code,
         Err(errs) => {

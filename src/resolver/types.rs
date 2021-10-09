@@ -51,6 +51,15 @@ impl ResolvedType {
             _ => false
         }
     }
+
+    pub fn is_error(&self) -> bool {
+        match self {
+            ResolvedType::Error => true,
+            ResolvedType::Id(_, args) => args.iter().any(|rt| rt.is_error()),
+            ResolvedType::Func(rft) => rft.params.iter().any(|rt| rt.is_error()) || rft.return_type.is_error(),
+            _ => false
+        }
+    }
 }
 
 pub struct UndefinedType<'ast> {

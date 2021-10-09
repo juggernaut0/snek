@@ -18,7 +18,7 @@ pub struct GlobalDeclaration {
     pub resolved_type: ResolvedType,
 }
 pub struct UndefinedGlobalBinding<'ast> {
-    pub decls: Vec<UndefinedGlobal>,
+    pub decls: Vec<UndefinedGlobal<'ast>>,
     pub expected_type: ResolvedType,
     pub ast_node: &'ast Binding,
 }
@@ -29,11 +29,28 @@ impl UndefinedGlobalBinding<'_> {
     }
 }
 
-pub struct UndefinedGlobal {
+pub struct UndefinedGlobal<'ast> {
     pub id: GlobalId,
     pub fqn: Fqn,
     pub visibility: Vec<String>,
     pub declared_type: ResolvedType,
+    pub from: BindingFrom<'ast>,
+}
+
+impl UndefinedGlobal<'_> {
+    // TODO why can't I own self
+    pub fn define(&self, resolved_type: ResolvedType) -> GlobalDeclaration {
+        GlobalDeclaration {
+            id: self.id,
+            fqn: self.fqn.clone(),
+            resolved_type,
+        }
+    }
+}
+
+pub enum BindingFrom<'ast> {
+    Direct,                  // let x = ...
+    Destructured(&'ast str), // let { x } = ...
 }
 
 pub struct GlobalLookup {
