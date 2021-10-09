@@ -364,6 +364,42 @@ let { x }: A.A = (TODO)
     assert!(resolver.errors.is_empty());
 }
 
+// TODO these two fail for now but not ignoring because the real failure would be it looping forever
+#[test]
+fn loopy() {
+    let src = "let a = a";
+    let resolver = define_globals(src);
+    assert!(!resolver.errors.is_empty());
+}
+
+#[test]
+fn no_loopy() {
+    let src = "let a: () = a";
+    let resolver = define_globals(src);
+    assert!(resolver.errors.is_empty());
+}
+
+#[test]
+fn inference() {
+    let src = "\
+let x = 5
+let y = x
+    ";
+    let resolver = define_globals(src);
+    assert!(resolver.errors.is_empty(), "resolver had errors: {:?}", resolver.errors);
+
+    let number_type = ResolvedType::Id(BUILTIN_TYPE_NAMES.with(|btn| btn.number.clone()), Vec::new());
+
+    {
+        let global = get_global(&resolver, "x");
+        assert_eq!(number_type.clone(), global.resolved_type);
+    }
+    {
+        let global = get_global(&resolver, "y");
+        assert_eq!(number_type.clone(), global.resolved_type);
+    }
+}
+
 fn define_types(src: &str) -> Resolver {
     let (ast, errs) = crate::parser::parse(src);
     assert!(errs.is_empty());
@@ -390,6 +426,26 @@ fn find_globals(src: &str) -> Resolver {
     resolver
 }
 
+fn define_globals(src: &str) -> Resolver {
+    let (ast, errs) = crate::parser::parse(src);
+    assert!(errs.is_empty(), "parser had errors: {:?}", errs);
+    let mod_name = Rc::new(String::new());
+    let mut resolver = Resolver::new(Rc::clone(&mod_name), &[]);
+    let mut undefined_types = Vec::new();
+    resolver.find_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
+    let type_lookup = TypeDeclLookup::new(&undefined_types);
+    resolver.define_types(undefined_types, type_lookup.root_scope());
+    let mut undefined_globals = Vec::new();
+    resolver.find_globals(&mut undefined_globals, &ast.root_namespace, QNameList::Empty, QNameList::Empty, type_lookup.root_scope());
+    let global_lookup = GlobalLookup::new(&undefined_globals);
+    resolver.define_globals(undefined_globals, type_lookup.root_scope(), global_lookup.root_scope());
+    resolver
+}
+
 fn get_type<'a>(resolver: &'a Resolver, name: &str) -> &'a TypeDeclaration {
     resolver.types.values().find(|it| it.id.fqn().as_slice().last().unwrap() == name).unwrap()
+}
+
+fn get_global<'a>(resolver: &'a Resolver, name: &str) -> &'a GlobalDeclaration {
+    resolver.globals.values().find(|it| it.fqn.as_slice().last().unwrap() == name).unwrap()
 }

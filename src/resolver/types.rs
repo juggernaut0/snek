@@ -29,10 +29,10 @@ pub enum ResolvedType {
     TypeParam(usize),
     Func(ResolvedFuncType),
     Callable(Box<ResolvedType>),
-    Unit,
-    Any,
-    Nothing,
-    Inferred,
+    Unit,      // ()
+    Any,       // *
+    Nothing,   // !
+    Inferred,  // _
     Error,
 }
 #[derive(Clone, Debug, Eq, PartialEq)]

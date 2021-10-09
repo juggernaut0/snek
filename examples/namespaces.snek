@@ -1,13 +1,17 @@
 # A namespace groups declarations into a logical unit
 namespace MyNs {
-    let my_fun = { -> 5 }
+    # Binding initializers in a namespace cannot directly access items declared after them.
+    # You can still reference items declared after in function bodies.
+    # let my_val = top_level # error: cannot access top_level as it is uninitialized
+    let my_fun = { -> top_level }
 }
 
-# Binding initializers in a namespace cannot access items declared after them. However, a namespace can be "redeclared".
-# The subsequent declarations will be merged into the first.
+
+
 let top_level = "top level"
 
-# Same namespace as above, not a conflicting declaration
+# a namespace can be "redeclared" to continue declaring items. The subsequent declarations will be merged into the
+# same namespace. For example, this is the same MyNs namespace as above, not a conflicting declaration.
 namespace MyNs {
     let inner = top_level
 }
@@ -33,7 +37,7 @@ public namespace MyNs.InnerNs {
 # Namespace members are accessed with . syntax
 let myns_n = MyNs.InnerNs.n
 
-# visiblity
+# visibility
 namespace Wrap {
     namespace Blah {
         public let x = 5 # visibility: Wrap

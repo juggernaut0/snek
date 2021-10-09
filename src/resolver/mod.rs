@@ -8,32 +8,33 @@ mod types;
 mod globals;
 mod lookup;
 mod qname_list;
+pub mod irt;
 
 use types::*;
 use globals::*;
 use lookup::*;
 use qname_list::*;
-use crate::resolver::DefineGlobalResult::Success;
 use std::iter::repeat;
 
 struct BuiltinTypeNames {
-    number: String,
-    string: String,
-    boolean: String,
+    number: TypeId,
+    string: TypeId,
+    boolean: TypeId,
 }
 
 impl BuiltinTypeNames {
     fn new() -> BuiltinTypeNames {
+        let builtin_mod = Rc::new(String::from("__builtin"));
         BuiltinTypeNames {
-            number: String::from("Number"),
-            string: String::from("String"),
-            boolean: String::from("Boolean"),
+            number: TypeId::new(Rc::clone(&builtin_mod), Fqn::from(&["Number"][..])),
+            string: TypeId::new(Rc::clone(&builtin_mod), Fqn::from(&["String"][..])),
+            boolean: TypeId::new(Rc::clone(&builtin_mod), Fqn::from(&["Boolean"][..])),
         }
     }
 }
 
-lazy_static! {
-    static ref BUILTIN_TYPE_NAMES: BuiltinTypeNames = BuiltinTypeNames::new();
+thread_local! {
+    static BUILTIN_TYPE_NAMES: BuiltinTypeNames = BuiltinTypeNames::new();
 }
 
 pub struct ModuleDecls {
@@ -59,7 +60,8 @@ pub struct Resolver<'deps> {
     dependencies: HashMap<&'deps String, &'deps ModuleDecls>,
     exports: ModuleDecls,
     global_id_seq: u16,
-    errors: Vec<Error>
+    errors: Vec<Error>,
+
 }
 
 impl Resolver<'_> {
@@ -162,6 +164,7 @@ impl Resolver<'_> {
         }
     }
 
+    // walks the namespace tree, inserting type names into `type_declarations`
     fn find_types<'ast>(&self, type_declarations: &mut Vec<UndefinedType<'ast>>, ns_decl: &'ast Namespace, namespace: QNameList, visibility: QNameList) {
         for decl in &ns_decl.decls {
             let vis = if decl.is_public() { visibility } else { namespace };
@@ -271,6 +274,7 @@ impl Resolver<'_> {
         }
     }
 
+    // given a ast TypeName and a scope, resolve the type
     fn resolve_field_type(&mut self, type_name: &TypeName, type_params: &[String], scope: &LookupScope<TypeDeclLookup>, nothing_allowed: bool) -> ResolvedType {
         match &type_name.type_name_type {
             TypeNameType::Named(nt) => {
@@ -340,6 +344,7 @@ impl Resolver<'_> {
         }
     }
 
+    // walks the namespace tree, inserting global binding names into `undefined_globals`
     fn find_globals<'ast>(
         &mut self,
         undefined_globals: &mut Vec<UndefinedGlobalBinding<'ast>>,
@@ -389,6 +394,7 @@ impl Resolver<'_> {
         }
     }
 
+    // returns a pair of (list of pairs of (name, type for that name), type for whole pattern)
     fn extract_names<'ast>(&mut self, pattern: &'ast Pattern, scope: &LookupScope<TypeDeclLookup>) -> (Vec<(&'ast str, ResolvedType)>, ResolvedType) {
         let mut names = Vec::new();
         let expected_type = match pattern {
@@ -399,9 +405,9 @@ impl Resolver<'_> {
             },
             Pattern::Constant(lit) => {
                 match lit.lit_type {
-                    LiteralType::NUMBER => ResolvedType::Id(scope.get(std::slice::from_ref(&BUILTIN_TYPE_NAMES.number)).unwrap().0, Vec::new()),
-                    LiteralType::STRING => ResolvedType::Id(scope.get(std::slice::from_ref(&BUILTIN_TYPE_NAMES.string)).unwrap().0, Vec::new()),
-                    LiteralType::BOOL => ResolvedType::Id(scope.get(std::slice::from_ref(&BUILTIN_TYPE_NAMES.boolean)).unwrap().0, Vec::new()),
+                    LiteralType::NUMBER => ResolvedType::Id(BUILTIN_TYPE_NAMES.with(|btn| btn.number.clone()), Vec::new()),
+                    LiteralType::STRING => ResolvedType::Id(BUILTIN_TYPE_NAMES.with(|btn| btn.string.clone()), Vec::new()),
+                    LiteralType::BOOL => ResolvedType::Id(BUILTIN_TYPE_NAMES.with(|btn| btn.boolean.clone()), Vec::new()),
                     LiteralType::UNIT => ResolvedType::Unit,
                 }
             },
@@ -489,7 +495,7 @@ impl Resolver<'_> {
     fn resolve_binding_type(&mut self, type_name: &TypeName, type_params: &[String], scope: &LookupScope<TypeDeclLookup>) -> ResolvedType {
         match &type_name.type_name_type {
             TypeNameType::Named(nt) => {
-                // If the name has is not a qualified name and has no args of its own, it may be a type param
+                // If the name is not a qualified name and has no args of its own, it may be a type param
                 let tp = if nt.name.parts.len() == 1 && nt.type_args.is_empty() {
                     let name = &nt.name.parts[0];
                     type_params.iter().position(|p| p == name)
@@ -542,7 +548,8 @@ impl Resolver<'_> {
         let mut stack: Vec<_> = undefined_globals.iter().enumerate().collect();
         stack.reverse();
 
-        let mut result = vec![None; undefined_globals.len()];
+        let mut result = Vec::new();
+        result.resize_with(undefined_globals.len(), || None);
         while let Some((i, ugb)) = stack.pop() {
             if result[i].is_some() { continue }
 
@@ -552,7 +559,16 @@ impl Resolver<'_> {
             let dgr = self.resolve_expr(ugb.expected_type.clone(), &ugb.ast_node.expr, &type_scope, &global_scope, &LocalScope::new(None));
             match dgr {
                 DefineGlobalResult::NeedsType(id) => {
-                    stack.push(ugbs_by_gid.get(&id).copied().unwrap());
+                    let dep = ugbs_by_gid.get(&id).copied().unwrap();
+                    if std::ptr::eq(ugb, dep.1) {
+                        self.errors.push(Error {
+                            message: "Recursive error while resolving expression".to_string(),
+                            line: ugb.ast_node.expr.line,
+                            col: ugb.ast_node.expr.col,
+                        })
+                    } else {
+                        stack.push(dep); // TODO do I need push (i, ugb) back onto the stack?
+                    }
                     continue
                 },
                 DefineGlobalResult::Success(unified_type) => {
@@ -572,7 +588,7 @@ impl Resolver<'_> {
         global_scope: &LookupScope<GlobalLookup>,
         local_scope: &LocalScope
     ) -> DefineGlobalResult {
-        match &expr.expr_type {
+        let (actual_type, irt_expr_type) = match &expr.expr_type {
             ExprType::QName(qn) => {
                 // TODO local scope
                 if let Some((global, visible)) = global_scope.get(&qn.parts) {
@@ -590,25 +606,64 @@ impl Resolver<'_> {
                         return DefineGlobalResult::NeedsType(global)
                     };
 
-                    Success(self.unify(expected_type, actual_type, expr.line, expr.col))
+                    (actual_type, irt::ExprType::LoadGlobal(global))
                 } else {
                     self.errors.push(Error {
                         message: format!("Unknown name {}", qn.parts.join(".")),
                         line: expr.line,
                         col: expr.col,
                     });
-                    Success(ResolvedType::Error)
+                    return DefineGlobalResult::error_expr()
                 }
             },
-            ExprType::Constant(_) => todo!(),
+            ExprType::Constant(lit) => {
+                let actual_type = match lit.lit_type {
+                    LiteralType::NUMBER => ResolvedType::Id(BUILTIN_TYPE_NAMES.with(|btn| btn.number.clone()), Vec::new()),
+                    LiteralType::STRING => ResolvedType::Id(BUILTIN_TYPE_NAMES.with(|btn| btn.string.clone()), Vec::new()),
+                    LiteralType::BOOL => ResolvedType::Id(BUILTIN_TYPE_NAMES.with(|btn| btn.boolean.clone()), Vec::new()),
+                    LiteralType::UNIT => ResolvedType::Unit,
+                };
+                let cons = match lit.lit_type {
+                    LiteralType::NUMBER => irt::Constant::Number(lit.value.parse().unwrap()), // TODO handle out of range numbers?
+                    LiteralType::STRING => {
+                        let raw = match unescape(&lit.value) {
+                            Ok(raw) => raw,
+                            Err(msg) => {
+                                self.errors.push(Error {
+                                    message: msg,
+                                    line: expr.line,
+                                    col: expr.col,
+                                });
+                                String::new()
+                            }
+                        };
+                        irt::Constant::String(raw)
+                    },
+                    LiteralType::BOOL => irt::Constant::Boolean(lit.value.parse().unwrap()), // lit.value is guaranteed to be "true" or "false" by parser
+                    LiteralType::UNIT => irt::Constant::Unit,
+                };
+                (actual_type, irt::ExprType::LoadConstant(cons))
+            },
             ExprType::Unary(_, _) => todo!(),
             ExprType::Binary(_, _, _) => todo!(),
             ExprType::Call(call_expr) => {
-                let callee = self.resolve_expr(ResolvedType::Callable(Box::new(expected_type)), &call_expr.callee, type_scope, global_scope, local_scope);
-                let rft = match callee {
-                    DefineGlobalResult::Success(ResolvedType::Func(rft)) => rft,
-                    DefineGlobalResult::Success(_) => unreachable!(),
-                    DefineGlobalResult::NeedsType(_) => return callee,
+                let callee_result = self.resolve_expr(ResolvedType::Callable(Box::new(expected_type.clone())), &call_expr.callee, type_scope, global_scope, local_scope);
+                let callee = match callee_result {
+                    DefineGlobalResult::NeedsType(_) => return callee_result,
+                    DefineGlobalResult::Success(callee_expr) => callee_expr,
+                };
+                let rft = match callee.resolved_type.clone() {
+                    ResolvedType::Func(rft) => rft,
+                    ResolvedType::Callable(_) => {
+                        self.errors.push(Error {
+                            message: "Unable to infer callable type".into(),
+                            line: expr.line,
+                            col: expr.col,
+                        });
+                        todo!() // need to return something
+                    },
+                    ResolvedType::Error => return DefineGlobalResult::error_expr(),
+                    _ => unreachable!() // Callable does not unify with anything except Func or Callable
                 };
 
                 if rft.params.len() < call_expr.args.len() {
@@ -626,16 +681,37 @@ impl Resolver<'_> {
                     })
                 }
 
-                for (exp_arg_type, arg_expr) in rft.params.iter().cloned().chain(repeat(ResolvedType::Inferred)).zip(&call_expr.args) {
-                    self.resolve_expr(exp_arg_type, arg_expr, type_scope, global_scope, local_scope);
+                let arg_results = rft.params
+                    .iter()
+                    .cloned()
+                    .chain(repeat(ResolvedType::Inferred))
+                    .zip(&call_expr.args)
+                    .map(|(exp_arg_type, arg_expr)| {
+                        self.resolve_expr(exp_arg_type, arg_expr, type_scope, global_scope, local_scope)
+                    });
+
+                let mut args = Vec::new();
+                for arg_result in arg_results {
+                    match arg_result {
+                        DefineGlobalResult::NeedsType(_) => return arg_result,
+                        DefineGlobalResult::Success(expr) => args.push(expr),
+                    }
                 }
-                DefineGlobalResult::Success(*rft.return_type)
+                (*rft.return_type, irt::ExprType::Call(irt::CallExpr {
+                    callee: Box::new(callee),
+                    args,
+                }))
             },
             ExprType::Lambda(_) => todo!(),
             ExprType::List(_) => todo!(),
             ExprType::New(_, _) => todo!(),
             ExprType::Dot => todo!(),
-        }
+        };
+        let resolved_type = self.unify(expected_type, actual_type, expr.line, expr.col);
+        DefineGlobalResult::Success(irt::Expr {
+            resolved_type,
+            expr_type: irt_expr_type,
+        })
     }
 
     fn unify(&mut self, expected: ResolvedType, actual: ResolvedType, line: u32, col: u32) -> ResolvedType {
@@ -796,5 +872,35 @@ mod test;
 
 enum DefineGlobalResult {
     NeedsType(GlobalId),
-    Success(ResolvedType),
+    Success(irt::Expr),
+}
+
+impl DefineGlobalResult {
+    fn error_expr() -> DefineGlobalResult {
+        DefineGlobalResult::Success(irt::Expr {
+            resolved_type: ResolvedType::Error,
+            expr_type: irt::ExprType::Error
+        })
+    }
+}
+
+// takes a quoted, escaped string
+fn unescape(s: &str) -> Result<String, String> {
+    let mut res = String::new();
+    let mut chars = s[..s.len()-1].chars(); // strip off last quote, scanner already checked it matches
+    let quote_char = chars.next().unwrap();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            res.push(match chars.next() {
+                None => return Err("Unexpected end of string literal".to_string()),
+                Some(q) if q == quote_char => q,
+                Some('n') => '\n',
+                Some('t') => '\t',
+                Some(huh) => return Err(format!("Unknown escape sequence: \\{}", huh))
+            });
+        } else {
+            res.push(c);
+        }
+    }
+    Ok(res)
 }

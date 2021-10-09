@@ -1,9 +1,9 @@
 # There is no special language support for polymorphism, traits or typeclasses
-# However, you can make a record type with function fields and pass that around as a "polymorhic" bundle.
+# However, you can make a record type with function fields and pass that around as a "polymorphic" bundle.
 
 type Iterator<T> { current: { -> Option<T> }, advance: { -> Iterator<T> } }
 
-let for_each = { f: { * -> () } { current, advance }: Iterator<*> ->
+let for_each = { <T> f: { T -> () } { current, advance }: Iterator<T> ->
     (match (current)
         { _: None -> () }
         { x -> (f x) (. f (advance)) }
