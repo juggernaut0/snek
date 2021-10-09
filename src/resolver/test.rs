@@ -53,9 +53,9 @@ type F # visibility: <root>
         ";
     let (ast, errs) = crate::parser::parse(src);
     assert!(errs.is_empty());
-    let resolver = Resolver::new(Rc::new(String::new()), &[]);
-    let mut type_declarations = Vec::new();
-    resolver.find_types(&mut type_declarations, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
+    let mut resolver = Resolver::new(Rc::new(String::new()), &[]);
+    let mut type_declarations = resolver.resolve_1(&ast);
+    assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
 
     println!("{:?}", resolver.types.keys());
     let assert_vis = |name: Vec<&str>, expected_vis: Vec<&str>| {
@@ -138,7 +138,7 @@ fn union() {
     let resolver = define_types(src);
     assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
 
-    assert_eq!(3, resolver.types.len());
+    assert_eq!(3, resolver.types.iter().filter(|(t, _)| t.module() != "__builtin").count());
     {
         let option = get_type(&resolver, "Option");
         assert_eq!(1, option.num_type_params);
@@ -172,18 +172,13 @@ fn union() {
 #[test]
 fn func_field() {
     let src = "type BiConsumer<T> { consume: { T T -> () } }";
-    let (ast, errs) = crate::parser::parse(src);
-    assert!(errs.is_empty());
-    let mod_name = Rc::new(String::new());
-    let mut resolver = Resolver::new(Rc::clone(&mod_name), &[]);
-    let mut undefined_types = Vec::new();
-    resolver.find_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
-    assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
-    let lookup = TypeDeclLookup::new(&undefined_types);
-    resolver.define_types(undefined_types, lookup.root_scope());
+    let resolver = define_types(&src);
     assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
 
-    let t = resolver.types.values().next().unwrap();
+    let t = resolver.types
+        .iter()
+        .find_map(|(id, d)| if id.fqn().as_slice() == &["BiConsumer"] { Some(d) } else { None })
+        .unwrap();
     let fields = if let TypeDefinition::Record(fields) = &t.definition { fields } else { panic!() };
     let consume = fields.first().unwrap();
     assert_eq!("consume", consume.name);
@@ -205,15 +200,9 @@ namespace A.B {
         let a = 4
     }
 }";
-    let (ast, errs) = crate::parser::parse(src);
-    assert!(errs.is_empty());
-    let mod_name = Rc::new(String::new());
-    let mut resolver = Resolver::new(Rc::clone(&mod_name), &[]);
-    let mut undefined_globals = Vec::new();
-    let lookup = TypeDeclLookup::new(&[]);
-    resolver.find_globals(&mut undefined_globals, &ast.root_namespace, QNameList::Empty, QNameList::Empty, lookup.root_scope());
+    let resolver = define_globals(&src);
     assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
-    let globals: Vec<_> = undefined_globals.iter().flat_map(|it| &it.decls).collect();
+    let globals: Vec<_> = resolver.globals.values().collect();
 
     assert_eq!(5, globals.len());
     globals.iter().find(|it| it.fqn.as_slice() == ["a"]).expect("Expected a");
@@ -244,12 +233,7 @@ namespace Four {
     assert!(errs.is_empty());
     let mod_name = Rc::new(String::new());
     let mut resolver = Resolver::new(Rc::clone(&mod_name), &[]);
-    let mut undefined_types = Vec::new();
-    resolver.find_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
-    let lookup = TypeDeclLookup::new(&undefined_types);
-    resolver.define_types(undefined_types, lookup.root_scope());
-    let mut undefined_globals = Vec::new();
-    resolver.find_globals(&mut undefined_globals, &ast.root_namespace, QNameList::Empty, QNameList::Empty, lookup.root_scope());
+    let (undefined_globals, _) = resolver.resolve_3(&ast);
     assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
 
     assert_eq!(4, undefined_globals.len());
@@ -278,12 +262,7 @@ let { x }: A<()> = (TODO)
     assert!(errs.is_empty());
     let mod_name = Rc::new(String::new());
     let mut resolver = Resolver::new(Rc::clone(&mod_name), &[]);
-    let mut undefined_types = Vec::new();
-    resolver.find_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
-    let lookup = TypeDeclLookup::new(&undefined_types);
-    resolver.define_types(undefined_types, lookup.root_scope());
-    let mut undefined_globals = Vec::new();
-    resolver.find_globals(&mut undefined_globals, &ast.root_namespace, QNameList::Empty, QNameList::Empty, lookup.root_scope());
+    let (undefined_globals, _) = resolver.resolve_3(&ast);
     assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
 
     assert_eq!(1, undefined_globals.len());
@@ -304,12 +283,7 @@ let { x: A }: B = (TODO)
     assert!(errs.is_empty());
     let mod_name = Rc::new(String::new());
     let mut resolver = Resolver::new(Rc::clone(&mod_name), &[]);
-    let mut undefined_types = Vec::new();
-    resolver.find_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
-    let lookup = TypeDeclLookup::new(&undefined_types);
-    resolver.define_types(undefined_types, lookup.root_scope());
-    let mut undefined_globals = Vec::new();
-    resolver.find_globals(&mut undefined_globals, &ast.root_namespace, QNameList::Empty, QNameList::Empty, lookup.root_scope());
+    let (undefined_globals, _) = resolver.resolve_3(&ast);
     assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
 
     assert_eq!(1, undefined_globals.len());
@@ -400,15 +374,33 @@ let y = x
     }
 }
 
+#[test]
+fn type_conflict() {
+    let src = "let x: String = 5";
+
+    let resolver = define_globals(src);
+    assert!(!resolver.errors.is_empty());
+}
+
+#[test]
+fn explicit_types() {
+    let src = "\
+let n: Number = 5
+let s: String = 'hello'
+let u: () = ()
+let b: Boolean = true
+";
+
+    let resolver = define_globals(src);
+    assert!(resolver.errors.is_empty(), "resolver had errors: {:?}", resolver.errors);
+}
+
 fn define_types(src: &str) -> Resolver {
     let (ast, errs) = crate::parser::parse(src);
     assert!(errs.is_empty());
     let mod_name = Rc::new(String::new());
     let mut resolver = Resolver::new(Rc::clone(&mod_name), &[]);
-    let mut undefined_types = Vec::new();
-    resolver.find_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
-    let lookup = TypeDeclLookup::new(&undefined_types);
-    resolver.define_types(undefined_types, lookup.root_scope());
+    resolver.resolve_2(&ast);
     resolver
 }
 
@@ -417,12 +409,7 @@ fn find_globals(src: &str) -> Resolver {
     assert!(errs.is_empty());
     let mod_name = Rc::new(String::new());
     let mut resolver = Resolver::new(Rc::clone(&mod_name), &[]);
-    let mut undefined_types = Vec::new();
-    resolver.find_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
-    let lookup = TypeDeclLookup::new(&undefined_types);
-    resolver.define_types(undefined_types, lookup.root_scope());
-    let mut undefined_globals = Vec::new();
-    resolver.find_globals(&mut undefined_globals, &ast.root_namespace, QNameList::Empty, QNameList::Empty, lookup.root_scope());
+    resolver.resolve_3(&ast);
     resolver
 }
 
@@ -431,14 +418,7 @@ fn define_globals(src: &str) -> Resolver {
     assert!(errs.is_empty(), "parser had errors: {:?}", errs);
     let mod_name = Rc::new(String::new());
     let mut resolver = Resolver::new(Rc::clone(&mod_name), &[]);
-    let mut undefined_types = Vec::new();
-    resolver.find_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
-    let type_lookup = TypeDeclLookup::new(&undefined_types);
-    resolver.define_types(undefined_types, type_lookup.root_scope());
-    let mut undefined_globals = Vec::new();
-    resolver.find_globals(&mut undefined_globals, &ast.root_namespace, QNameList::Empty, QNameList::Empty, type_lookup.root_scope());
-    let global_lookup = GlobalLookup::new(&undefined_globals);
-    resolver.define_globals(undefined_globals, type_lookup.root_scope(), global_lookup.root_scope());
+    resolver.resolve_4(&ast);
     resolver
 }
 

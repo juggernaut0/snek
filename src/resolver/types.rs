@@ -16,6 +16,7 @@ pub struct TypeDeclaration {
 pub enum TypeDefinition {
     Record(Vec<ResolvedField>),
     Union(Vec<ResolvedType>),
+    Primitive,
 }
 #[derive(Clone)]
 pub struct ResolvedField {
@@ -62,6 +63,46 @@ impl ResolvedType {
     }
 }
 
+impl Display for ResolvedType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResolvedType::Id(id, args) => {
+                write!(f, "{}", id)?;
+                if args.len() > 0 {
+                    write!(f, "<")?;
+                    join(f, &args, " ")?;
+                    write!(f, ">")?;
+                }
+                Ok(())
+            }
+            ResolvedType::TypeParam(id) => todo!("Need type param name"),
+            ResolvedType::Func(rft) => {
+                write!(f, "{{ ")?;
+                join(f, &rft.params, " ")?;
+                write!(f, " -> {} }}", rft.return_type)
+            },
+            ResolvedType::Callable(ret) => write!(f, "{{ ? -> {} }}", ret),
+            ResolvedType::Unit => write!(f, "()"),
+            ResolvedType::Any => write!(f, "*"),
+            ResolvedType::Nothing => write!(f, "!"),
+            ResolvedType::Inferred => write!(f, "_"),
+            ResolvedType::Error => write!(f, "Error"),
+        }
+    }
+}
+
+fn join<T: Display>(f: &mut Formatter<'_>, ts: &[T], sep: &str) -> std::fmt::Result {
+    if ts.len() == 0 {
+        return Ok(());
+    }
+    let mut it = ts.iter();
+    write!(f, "{}", it.next().unwrap())?;
+    for t in it {
+        write!(f, "{}{}", sep, t)?;
+    }
+    Ok(())
+}
+
 pub struct UndefinedType<'ast> {
     pub id: TypeId,
     pub visibility: Vec<String>,
@@ -88,6 +129,10 @@ impl TypeId {
         TypeId(mod_name, fqn)
     }
 
+    pub fn module(&self) -> &str {
+        &self.0
+    }
+
     pub fn fqn(&self) -> &Fqn {
         &self.1
     }
@@ -110,12 +155,13 @@ pub struct TypeDeclLookup {
 }
 
 impl TypeDeclLookup {
-    pub fn new(undefined_types: &[UndefinedType]) -> TypeDeclLookup {
+    pub fn new<'a>(undefined_types: &[UndefinedType], imported_types: impl IntoIterator<Item=&'a TypeDeclaration>) -> TypeDeclLookup {
         // TODO avoid cloning visibility
         TypeDeclLookup {
             decls: undefined_types
                 .iter()
                 .map(|ut| (ut.id.clone(), ut.visibility.clone()))
+                .chain(imported_types.into_iter().map(|td| (td.id.clone(), Vec::new()))) // Double check that imported types must have root vis
                 .collect()
         }
     }

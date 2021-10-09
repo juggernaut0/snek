@@ -53,6 +53,27 @@ impl ModuleDecls {
     }
 }
 
+fn make_primitive_type(id: TypeId) -> TypeDeclaration {
+    TypeDeclaration {
+        id,
+        num_type_params: 0,
+        definition: TypeDefinition::Primitive,
+        visibility: Vec::new(),
+    }
+}
+
+fn make_builtins() -> ModuleDecls {
+    ModuleDecls {
+        name: Rc::new(String::from("__builtin")),
+        types: vec![
+            make_primitive_type(BUILTIN_TYPE_NAMES.with(|btn| btn.number.clone())),
+            make_primitive_type(BUILTIN_TYPE_NAMES.with(|btn| btn.string.clone())),
+            make_primitive_type(BUILTIN_TYPE_NAMES.with(|btn| btn.boolean.clone())),
+        ],
+        globals: vec![],
+    }
+}
+
 pub struct Resolver<'deps> {
     types: HashMap<TypeId, TypeDeclaration>,
     globals: HashMap<GlobalId, GlobalDeclaration>,
@@ -98,17 +119,7 @@ impl Resolver<'_> {
     */
 
     pub fn resolve(&mut self, ast: &Ast) {
-        self.import_names(&ast.imports);
-
-        let mut undefined_types = Vec::new();
-        self.find_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
-        let type_lookup = TypeDeclLookup::new(&undefined_types);
-        self.define_types(undefined_types, type_lookup.root_scope());
-
-        let mut undefined_globals = Vec::new();
-        self.find_globals(&mut undefined_globals, &ast.root_namespace, QNameList::Empty, QNameList::Empty, type_lookup.root_scope());
-        let global_lookup = GlobalLookup::new(&undefined_globals);
-        self.define_globals(undefined_globals, type_lookup.root_scope(), global_lookup.root_scope());
+        self.resolve_4(ast);
 
         //let declarations = ast.root_namespace.decls.iter().flat_map(|d| self.find_declarations(d)).collect();
         //let root_scope = Scope::new(val_decls, type_decls, None);
@@ -121,6 +132,35 @@ impl Resolver<'_> {
         }*/
     }
 
+    fn resolve_1<'ast>(&mut self, ast: &'ast Ast) -> Vec<UndefinedType<'ast>> {
+        self.import_from_module(&make_builtins(), &[]);
+        self.import_names(&ast.imports);
+
+        let mut undefined_types = Vec::new();
+        self.find_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
+        undefined_types
+    }
+
+    fn resolve_2(&mut self, ast: &Ast) -> TypeDeclLookup {
+        let undefined_types = self.resolve_1(ast);
+        let type_lookup = TypeDeclLookup::new(&undefined_types, self.types.values());
+        self.define_types(undefined_types, type_lookup.root_scope());
+        type_lookup
+    }
+
+    fn resolve_3<'ast>(&mut self, ast: &'ast Ast) -> (Vec<UndefinedGlobalBinding<'ast>>, TypeDeclLookup) {
+        let type_lookup = self.resolve_2(ast);
+        let mut undefined_globals = Vec::new();
+        self.find_globals(&mut undefined_globals, &ast.root_namespace, QNameList::Empty, QNameList::Empty, type_lookup.root_scope());
+        (undefined_globals, type_lookup)
+    }
+
+    fn resolve_4(&mut self, ast: &Ast) {
+        let (undefined_globals, type_lookup) = self.resolve_3(ast);
+        let global_lookup = GlobalLookup::new(&undefined_globals);
+        self.define_globals(undefined_globals, type_lookup.root_scope(), global_lookup.root_scope());
+    }
+
     fn add_type(&mut self, type_decl: TypeDeclaration) {
         self.types.insert(type_decl.id.clone(), type_decl);
     }
@@ -131,35 +171,51 @@ impl Resolver<'_> {
 
     fn import_names(&mut self, imports: &[Import]) {
         for import in imports {
-            let dep = *self.dependencies.get(&import.filename).expect("Missing dependency");
-            for name in &import.names {
-                let mut found = false;
-                if let Some(td) = dep.get_type(&name.name) {
-                    let imported_type = TypeDeclaration {
-                        id: td.id.clone(),
-                        num_type_params: td.num_type_params,
-                        definition: td.definition.clone(),
-                        visibility: Vec::new(),
-                    };
-                    self.add_type(imported_type);
-                    found = true;
-                }
-                if let Some(gd) = dep.get_global(&name.name) {
-                    let imported_global = GlobalDeclaration {
-                        id: self.gen_global_id(),
-                        fqn: gd.fqn.clone(),
-                        resolved_type: gd.resolved_type.clone(),
-                    };
-                    self.add_global(imported_global);
-                    found = true;
-                }
-                if !found {
-                    self.errors.push(Error {
-                        message: format!("{} not found in imported file {}", name.name, import.filename),
-                        line: name.line,
-                        col: name.col
-                    });
-                }
+            let exports = *self.dependencies.get(&import.filename).expect("Missing dependency");
+            self.import_from_module(exports, &import.names)
+        }
+    }
+
+    fn import_from_module<'ast>(&mut self, module: &ModuleDecls, names: &'ast [ImportedName]) {
+        // if names is empty, import everything from module
+        if names.is_empty() {
+            for td in &module.types {
+                let imported_type = TypeDeclaration {
+                    id: td.id.clone(),
+                    num_type_params: td.num_type_params,
+                    definition: td.definition.clone(),
+                    visibility: Vec::new(),
+                };
+                self.add_type(imported_type);
+            }
+        }
+        for name in names {
+            let mut found = false;
+            if let Some(td) = module.get_type(&name.name) {
+                let imported_type = TypeDeclaration {
+                    id: td.id.clone(),
+                    num_type_params: td.num_type_params,
+                    definition: td.definition.clone(),
+                    visibility: Vec::new(),
+                };
+                self.add_type(imported_type);
+                found = true;
+            }
+            if let Some(gd) = module.get_global(&name.name) {
+                let imported_global = GlobalDeclaration {
+                    id: self.gen_global_id(),
+                    fqn: gd.fqn.clone(),
+                    resolved_type: gd.resolved_type.clone(),
+                };
+                self.add_global(imported_global);
+                found = true;
+            }
+            if !found {
+                self.errors.push(Error {
+                    message: format!("{} not found in imported file {}", name.name, module.name),
+                    line: name.line,
+                    col: name.col
+                });
             }
         }
     }
@@ -735,6 +791,7 @@ impl Resolver<'_> {
             (ResolvedType::Any, _) => ResolvedType::Any,
             (expected, ResolvedType::Nothing) => expected,
             (expected, ResolvedType::Inferred) => expected,
+            (ResolvedType::Error, _) => ResolvedType::Error,
             (ResolvedType::Id(e_id, e_type_args), ResolvedType::Id(a_id, a_type_args)) => {
                 if e_id != a_id {
                     error = Some((e_id.fqn().to_string(), a_id.fqn().to_string()));
@@ -757,8 +814,7 @@ impl Resolver<'_> {
             }
             (ResolvedType::Unit, ResolvedType::Unit) => ResolvedType::Unit,
             (expected, actual) => {
-                // TODO make type names better
-                error = Some((format!("{:?}", expected), format!("{:?}", actual)));
+                error = Some((format!("{}", expected), format!("{}", actual)));
                 expected
             }
         };
