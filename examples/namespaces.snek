@@ -1,12 +1,11 @@
 # A namespace groups declarations into a logical unit
 namespace MyNs {
     # Binding initializers in a namespace cannot directly access items declared after them.
-    # You can still reference items declared after in function bodies.
-    # let my_val = top_level # error: cannot access top_level as it is uninitialized
+    # let my_val = top_level # error: cannot access top_level as it is uninitialized.
+    # You can still reference items declared after in function bodies. Calling such a function before the referenced
+    # item is initialized will crash the program
     let my_fun = { -> top_level }
 }
-
-
 
 let top_level = "top level"
 
@@ -25,6 +24,16 @@ namespace MyNs {
     namespace InnerNs {
 
     }
+}
+
+# Items within a namespace may elide the namespace prefix with referencing other items within the same or a parent namespace
+namespace MyNs {
+    let x = ()
+    let y = x # equivalent to `let y = MyNs.x`
+    namespace InnerNs {
+        let z = x # equivalent to `let z = MyNs.x`
+    }
+    let w = InnerNs.z # equivalent to `let w = MyNs.InnerNs.z`
 }
 
 # Items in a namespace must be declared public to be visible from outside the namespace. The declaration AND all of the

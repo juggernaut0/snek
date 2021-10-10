@@ -1,0 +1,33 @@
+# A public top-level declaration is *exported*, and can be referenced with an import statement in another file
+
+# another file cannot import S, despite S being globally visible within this file.
+type S
+# another file can use T with `import T from 'imports.snek'`
+public type T
+
+# A public namespace exports all of its public members
+public namespace A {
+    # Another file cannot import A.A, nor can a namespace A in another file access A implicity
+    type S
+    # another file can use T with `import A.T from 'imports.snek'`
+    public type T
+}
+
+# When importing items, you must always use the fully qualified name. However once imported, the namespace prefix may
+# be elided as usual
+import X.y from 'other.snek'
+namespace X {
+    let z = y
+}
+
+# Note that a requirement of an item within a namespace being exported is that it is visible from top-level. It is not
+# possible to export a namespace item from within a non-public namespace
+public namespace Exported {
+    namespace NotPublic {
+        public type IAmNotExported
+    }
+}
+
+# Two non-exported items with the same fully qualified name may exist in separate files.
+# If two exported items with the same fully qualified name exist in separate files, another file cannot import both of
+# them at the same time

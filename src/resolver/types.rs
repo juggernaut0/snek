@@ -6,12 +6,47 @@ use crate::resolver::lookup::Lookup;
 
 #[derive(Clone, Eq, PartialEq, Hash)]
 pub struct TypeId(Rc<String>, Fqn);
+
+impl TypeId {
+    pub fn new(mod_name: Rc<String>, fqn: Fqn) -> TypeId {
+        TypeId(mod_name, fqn)
+    }
+
+    pub fn module(&self) -> &str {
+        &self.0
+    }
+
+    pub fn fqn(&self) -> &Fqn {
+        &self.1
+    }
+}
+
+impl Debug for TypeId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}:{}", self.0, self.1)
+    }
+}
+
+impl Display for TypeId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.fqn())
+    }
+}
+
 pub struct TypeDeclaration {
     pub id: TypeId,
     pub num_type_params: usize,
     pub definition: TypeDefinition,
     pub visibility: Vec<String>,
+    pub export: bool,
 }
+
+impl TypeDeclaration {
+    pub fn is_exported(&self) -> bool {
+        self.visibility.is_empty() && self.export
+    }
+}
+
 #[derive(Clone)]
 pub enum TypeDefinition {
     Record(Vec<ResolvedField>),
@@ -106,6 +141,7 @@ fn join<T: Display>(f: &mut Formatter<'_>, ts: &[T], sep: &str) -> std::fmt::Res
 pub struct UndefinedType<'ast> {
     pub id: TypeId,
     pub visibility: Vec<String>,
+    pub export: bool,
     pub ast_node: UndefinedTypeNode<'ast>
 }
 pub enum UndefinedTypeNode<'ast> {
@@ -120,33 +156,8 @@ impl UndefinedType<'_> {
             num_type_params,
             definition,
             visibility: self.visibility,
+            export: self.export,
         }
-    }
-}
-
-impl TypeId {
-    pub fn new(mod_name: Rc<String>, fqn: Fqn) -> TypeId {
-        TypeId(mod_name, fqn)
-    }
-
-    pub fn module(&self) -> &str {
-        &self.0
-    }
-
-    pub fn fqn(&self) -> &Fqn {
-        &self.1
-    }
-}
-
-impl Debug for TypeId {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}:{}", self.0, self.1)
-    }
-}
-
-impl Display for TypeId {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.fqn())
     }
 }
 

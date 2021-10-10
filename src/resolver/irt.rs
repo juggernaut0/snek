@@ -1,5 +1,10 @@
-use crate::resolver::types::ResolvedType;
 use crate::resolver::globals::GlobalId;
+use crate::resolver::types::ResolvedType;
+
+pub struct IrTree {
+    pub globals: Vec<(GlobalId, Expr)>,
+    pub expr: Expr,
+}
 
 pub struct Expr {
     pub resolved_type: ResolvedType,

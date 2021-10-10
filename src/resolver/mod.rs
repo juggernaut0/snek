@@ -1,8 +1,15 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::iter::repeat;
 use std::rc::Rc;
 
+use globals::*;
+use lookup::*;
+use qname_list::*;
+use types::*;
+
 use crate::ast::*;
+use crate::resolver::irt::IrTree;
 
 mod types;
 mod globals;
@@ -10,11 +17,17 @@ mod lookup;
 mod qname_list;
 pub mod irt;
 
-use types::*;
-use globals::*;
-use lookup::*;
-use qname_list::*;
-use std::iter::repeat;
+type ResolveResult = Result<(ModuleDecls, IrTree), Vec<Error>>;
+
+pub fn resolve(name: Rc<String>, deps: &[ModuleDecls], ast: &Ast) -> ResolveResult {
+    let mut resolver = Resolver::new(name, deps);
+    let irt = resolver.resolve(ast);
+    if resolver.errors.is_empty() {
+        Ok((resolver.exports, irt))
+    } else {
+        Err(resolver.errors)
+    }
+}
 
 struct BuiltinTypeNames {
     number: TypeId,
@@ -39,27 +52,28 @@ thread_local! {
 
 pub struct ModuleDecls {
     name: Rc<String>,
-    types: Vec<TypeDeclaration>,
-    globals: Vec<GlobalDeclaration>,
+    types: Vec<Rc<TypeDeclaration>>,
+    globals: Vec<Rc<GlobalDeclaration>>,
 }
 
 impl ModuleDecls {
-    fn get_type(&self, name: &QName) -> Option<&TypeDeclaration> {
+    fn get_type(&self, name: &QName) -> Option<&Rc<TypeDeclaration>> {
         self.types.iter().find(|it| it.id.fqn().as_slice() == name.parts.as_slice())
     }
 
-    fn get_global(&self, name: &QName) -> Option<&GlobalDeclaration> {
+    fn get_global(&self, name: &QName) -> Option<&Rc<GlobalDeclaration>> {
         self.globals.iter().find(|it| it.fqn.as_slice() == name.parts.as_slice())
     }
 }
 
-fn make_primitive_type(id: TypeId) -> TypeDeclaration {
-    TypeDeclaration {
+fn make_primitive_type(id: TypeId) -> Rc<TypeDeclaration> {
+    Rc::new(TypeDeclaration {
         id,
         num_type_params: 0,
         definition: TypeDefinition::Primitive,
         visibility: Vec::new(),
-    }
+        export: true,
+    })
 }
 
 fn make_builtins() -> ModuleDecls {
@@ -75,11 +89,14 @@ fn make_builtins() -> ModuleDecls {
 }
 
 pub struct Resolver<'deps> {
-    types: HashMap<TypeId, TypeDeclaration>,
-    globals: HashMap<GlobalId, GlobalDeclaration>,
+    // in scope items, including imports
+    types: HashMap<TypeId, Rc<TypeDeclaration>>,
+    globals: HashMap<GlobalId, Rc<GlobalDeclaration>>,
+    // This module's types
+    exports: ModuleDecls,
+
     //usages: HashMap<QNameExpr, (ValueId, String)>,
     dependencies: HashMap<&'deps String, &'deps ModuleDecls>,
-    exports: ModuleDecls,
     global_id_seq: u16,
     errors: Vec<Error>,
 
@@ -118,7 +135,7 @@ impl Resolver<'_> {
     }
     */
 
-    pub fn resolve(&mut self, ast: &Ast) {
+    pub fn resolve(&mut self, ast: &Ast) -> IrTree {
         self.resolve_4(ast);
 
         //let declarations = ast.root_namespace.decls.iter().flat_map(|d| self.find_declarations(d)).collect();
@@ -130,6 +147,10 @@ impl Resolver<'_> {
         if let Some(expr) = &ast.expr {
             self.resolve_usages_expr(expr, &root_scope);
         }*/
+        IrTree {
+            globals: vec![],
+            expr: irt::Expr { resolved_type: ResolvedType::Error, expr_type: irt::ExprType::Error }
+        }
     }
 
     fn resolve_1<'ast>(&mut self, ast: &'ast Ast) -> Vec<UndefinedType<'ast>> {
@@ -137,13 +158,13 @@ impl Resolver<'_> {
         self.import_names(&ast.imports);
 
         let mut undefined_types = Vec::new();
-        self.find_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty);
+        self.find_types(&mut undefined_types, &ast.root_namespace, QNameList::Empty, QNameList::Empty, true);
         undefined_types
     }
 
     fn resolve_2(&mut self, ast: &Ast) -> TypeDeclLookup {
         let undefined_types = self.resolve_1(ast);
-        let type_lookup = TypeDeclLookup::new(&undefined_types, self.types.values());
+        let type_lookup = TypeDeclLookup::new(&undefined_types, self.types.values().map(Rc::as_ref));
         self.define_types(undefined_types, type_lookup.root_scope());
         type_lookup
     }
@@ -151,7 +172,7 @@ impl Resolver<'_> {
     fn resolve_3<'ast>(&mut self, ast: &'ast Ast) -> (Vec<UndefinedGlobalBinding<'ast>>, TypeDeclLookup) {
         let type_lookup = self.resolve_2(ast);
         let mut undefined_globals = Vec::new();
-        self.find_globals(&mut undefined_globals, &ast.root_namespace, QNameList::Empty, QNameList::Empty, type_lookup.root_scope());
+        self.find_globals(&mut undefined_globals, &ast.root_namespace, QNameList::Empty, QNameList::Empty, true, type_lookup.root_scope());
         (undefined_globals, type_lookup)
     }
 
@@ -161,11 +182,11 @@ impl Resolver<'_> {
         self.define_globals(undefined_globals, type_lookup.root_scope(), global_lookup.root_scope());
     }
 
-    fn add_type(&mut self, type_decl: TypeDeclaration) {
+    fn import_type(&mut self, type_decl: Rc<TypeDeclaration>) {
         self.types.insert(type_decl.id.clone(), type_decl);
     }
 
-    fn add_global(&mut self, global_decl: GlobalDeclaration) {
+    fn import_global(&mut self, global_decl: Rc<GlobalDeclaration>) {
         self.globals.insert(global_decl.id.clone(), global_decl);
     }
 
@@ -180,34 +201,21 @@ impl Resolver<'_> {
         // if names is empty, import everything from module
         if names.is_empty() {
             for td in &module.types {
-                let imported_type = TypeDeclaration {
-                    id: td.id.clone(),
-                    num_type_params: td.num_type_params,
-                    definition: td.definition.clone(),
-                    visibility: Vec::new(),
-                };
-                self.add_type(imported_type);
+                if td.is_exported() {
+                    self.import_type(Rc::clone(td))
+                }
             }
         }
         for name in names {
             let mut found = false;
             if let Some(td) = module.get_type(&name.name) {
-                let imported_type = TypeDeclaration {
-                    id: td.id.clone(),
-                    num_type_params: td.num_type_params,
-                    definition: td.definition.clone(),
-                    visibility: Vec::new(),
-                };
-                self.add_type(imported_type);
+                if td.is_exported() {
+                    self.import_type(Rc::clone(td))
+                }
                 found = true;
             }
             if let Some(gd) = module.get_global(&name.name) {
-                let imported_global = GlobalDeclaration {
-                    id: self.gen_global_id(),
-                    fqn: gd.fqn.clone(),
-                    resolved_type: gd.resolved_type.clone(),
-                };
-                self.add_global(imported_global);
+                self.import_global(Rc::clone(&gd));
                 found = true;
             }
             if !found {
@@ -221,18 +229,19 @@ impl Resolver<'_> {
     }
 
     // walks the namespace tree, inserting type names into `type_declarations`
-    fn find_types<'ast>(&self, type_declarations: &mut Vec<UndefinedType<'ast>>, ns_decl: &'ast Namespace, namespace: QNameList, visibility: QNameList) {
+    fn find_types<'ast>(&self, type_declarations: &mut Vec<UndefinedType<'ast>>, ns_decl: &'ast Namespace, namespace: QNameList, visibility: QNameList, can_export: bool) {
         for decl in &ns_decl.decls {
             let vis = if decl.is_public() { visibility } else { namespace };
             match decl {
                 Decl::Namespace(ns) => {
-                    self.find_types(type_declarations, ns, namespace.append(&ns.name), vis);
+                    self.find_types(type_declarations, ns, namespace.append(&ns.name), vis, can_export && ns.public);
                 },
                 Decl::Type(t) => {
                     let fqn = Fqn::new(namespace, t.name.name.clone());
                     type_declarations.push(UndefinedType {
                         id: TypeId::new(Rc::clone(&self.exports.name), fqn),
                         visibility: vis.to_vec(),
+                        export: can_export && t.public,
                         ast_node: UndefinedTypeNode::Normal(t),
                     });
                     if let TypeContents::Union(cases) = &t.contents {
@@ -243,6 +252,7 @@ impl Resolver<'_> {
                                 type_declarations.push(UndefinedType {
                                     id: TypeId::new(Rc::clone(&self.exports.name), fqn),
                                     visibility: vis.to_vec(),
+                                    export: can_export && t.public,
                                     ast_node: UndefinedTypeNode::Case(record, &t.name.type_params),
                                 })
                             }
@@ -323,8 +333,9 @@ impl Resolver<'_> {
                     col: name.col
                 })
             } else {
-                let decl = type_decl.define(definition, num_type_params);
-                self.types.insert(decl.id.clone(), decl);
+                let decl = Rc::new(type_decl.define(definition, num_type_params));
+                self.types.insert(decl.id.clone(), Rc::clone(&decl));
+                self.exports.types.push(decl);
             }
 
         }
@@ -407,13 +418,14 @@ impl Resolver<'_> {
         ns_decl: &'ast Namespace,
         namespace: QNameList,
         visibility: QNameList,
+        can_export: bool,
         scope: LookupScope<TypeDeclLookup>
     ) {
         for decl in &ns_decl.decls {
             let vis = if decl.is_public() { visibility } else { namespace };
             match decl {
                 Decl::Namespace(ns) => {
-                    self.find_globals(undefined_globals, ns, namespace.append(&ns.name), vis, scope.enter_scope(&ns.name.parts));
+                    self.find_globals(undefined_globals, ns, namespace.append(&ns.name), vis, can_export && ns.public, scope.enter_scope(&ns.name.parts));
                 },
                 Decl::Binding(b) => {
                     let (names, expected_type) = self.extract_names(&b.pattern, &scope);
@@ -423,11 +435,11 @@ impl Resolver<'_> {
                             let id = self.gen_global_id();
                             let fqn = Fqn::new(namespace, name.to_string());
                             if !declared_type.is_inferred() {
-                                self.add_global(GlobalDeclaration {
+                                self.import_global(Rc::new(GlobalDeclaration {
                                     id: id.clone(),
                                     fqn: fqn.clone(),
                                     resolved_type: declared_type.clone(),
-                                })
+                                }));
                             }
                             UndefinedGlobal {
                                 id,
@@ -641,7 +653,9 @@ impl Resolver<'_> {
                             BindingFrom::Direct => irt_expr.resolved_type.clone(),
                             BindingFrom::Destructured(_) => todo!("destructured globals") // get type of field
                         };
-                        self.globals.insert(ug.id, ug.define(resolved_type));
+                        let decl = Rc::new(ug.define(resolved_type));
+                        self.globals.insert(ug.id, Rc::clone(&decl));
+                        self.exports.globals.push(decl);
                     }
                     result[i] = Some(irt_expr);
                 }

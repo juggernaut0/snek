@@ -54,7 +54,7 @@ type F # visibility: <root>
     let (ast, errs) = crate::parser::parse(src);
     assert!(errs.is_empty());
     let mut resolver = Resolver::new(Rc::new(String::new()), &[]);
-    let mut type_declarations = resolver.resolve_1(&ast);
+    let type_declarations = resolver.resolve_1(&ast);
     assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
 
     println!("{:?}", resolver.types.keys());
@@ -338,19 +338,17 @@ let { x }: A.A = (TODO)
     assert!(resolver.errors.is_empty());
 }
 
-// TODO these two fail for now but not ignoring because the real failure would be it looping forever
 #[test]
 fn loopy() {
     let src = "let a = a";
-    let resolver = define_globals(src);
-    assert!(!resolver.errors.is_empty());
+    let resolver = resolve_from_src(src);
+    assert!(resolver.is_err());
 }
 
 #[test]
 fn no_loopy() {
     let src = "let a: () = a";
-    let resolver = define_globals(src);
-    assert!(resolver.errors.is_empty());
+    assert_no_errs(resolve_from_src(src));
 }
 
 #[test]
@@ -359,17 +357,16 @@ fn inference() {
 let x = 5
 let y = x
     ";
-    let resolver = define_globals(src);
-    assert!(resolver.errors.is_empty(), "resolver had errors: {:?}", resolver.errors);
+    let (decls, _) = assert_no_errs(resolve_from_src(src));
 
     let number_type = ResolvedType::Id(BUILTIN_TYPE_NAMES.with(|btn| btn.number.clone()), Vec::new());
 
     {
-        let global = get_global(&resolver, "x");
+        let global = get_global(&decls, "x");
         assert_eq!(number_type.clone(), global.resolved_type);
     }
     {
-        let global = get_global(&resolver, "y");
+        let global = get_global(&decls, "y");
         assert_eq!(number_type.clone(), global.resolved_type);
     }
 }
@@ -378,8 +375,8 @@ let y = x
 fn type_conflict() {
     let src = "let x: String = 5";
 
-    let resolver = define_globals(src);
-    assert!(!resolver.errors.is_empty());
+    let result = resolve_from_src(src);
+    assert!(result.is_err());
 }
 
 #[test]
@@ -391,8 +388,7 @@ let u: () = ()
 let b: Boolean = true
 ";
 
-    let resolver = define_globals(src);
-    assert!(resolver.errors.is_empty(), "resolver had errors: {:?}", resolver.errors);
+    assert_no_errs(resolve_from_src(src));
 }
 
 fn define_types(src: &str) -> Resolver {
@@ -422,12 +418,29 @@ fn define_globals(src: &str) -> Resolver {
     resolver
 }
 
+fn resolve_from_src(src: &str) -> ResolveResult {
+    let (ast, errs) = crate::parser::parse(src);
+    assert!(errs.is_empty(), "parser had errors: {:?}", errs);
+    let mod_name = Rc::new(String::new());
+    resolve(mod_name, &[], &ast)
+}
+
 fn get_type<'a>(resolver: &'a Resolver, name: &str) -> &'a TypeDeclaration {
     resolver.types.values().find(|it| it.id.fqn().as_slice().last().unwrap() == name).unwrap()
 }
 
-fn get_global<'a>(resolver: &'a Resolver, name: &str) -> &'a GlobalDeclaration {
-    resolver.globals.values().find(|it| it.fqn.as_slice().last().unwrap() == name).unwrap()
+fn get_global<'a>(decls: &'a ModuleDecls, name: &str) -> &'a GlobalDeclaration {
+    decls.globals.iter().find(|it| {
+        println!("{}", it.fqn);
+        it.fqn.as_slice().last().unwrap() == name
+    }).unwrap()
+}
+
+fn assert_no_errs(result: ResolveResult) -> (ModuleDecls, IrTree) {
+    match result {
+        Err(errors) => panic!("resolver had errors: {:?}", errors),
+        Ok(stuff) => stuff,
+    }
 }
 
 #[test]

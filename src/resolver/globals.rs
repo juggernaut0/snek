@@ -3,6 +3,7 @@ use crate::resolver::lookup::Lookup;
 use crate::resolver::qname_list::{Fqn, QNameList};
 use crate::resolver::types::ResolvedType;
 
+// TODO this will need to be more like TypeId
 #[derive(Copy, Clone, Hash, Eq, PartialEq)]
 pub struct GlobalId(u16);
 
