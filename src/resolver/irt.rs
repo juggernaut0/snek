@@ -2,8 +2,18 @@ use crate::resolver::globals::GlobalId;
 use crate::resolver::types::ResolvedType;
 
 pub struct IrTree {
-    pub globals: Vec<(GlobalId, Expr)>,
-    pub expr: Expr,
+    pub statements: Vec<Statement>,
+}
+
+pub enum Statement {
+    SaveGlobal(Save<GlobalId>, Expr),
+    SaveLocal(Save<()>, Expr), // TODO LocalId
+    Discard(Expr),
+}
+
+pub enum Save<Target> {
+    Normal(Target), // Save the whole expr result to T
+    Destructure(Vec<(String, Target)>), // List of field names to T
 }
 
 pub struct Expr {

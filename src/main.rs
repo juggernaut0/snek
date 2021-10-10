@@ -5,7 +5,6 @@ use crate::ast::Ast;
 use crate::parser::ParseError;
 use std::path::Path;
 use crate::importer::BaseError;
-use crate::resolver::Resolver;
 use std::rc::Rc;
 
 mod ast;
@@ -56,17 +55,18 @@ fn run_from_file(path: &Path) {
             }
         }
     }
-
-    {
-        // this is all provisional for debugging
-        let root_name = asts.root();
-        let (root, _) = asts.get_ast(&root_name);
-        let mut resolver = Resolver::new(Rc::clone(root_name), &[]); // TODO deps
-        resolver.resolve(root);
-        resolver.errors().iter().for_each(|e| {
-            eprintln!("{} [{}:{}] [ERROR] {}", root_name, e.line, e.col, e.message)
-        })
-    }
+    let root_name = asts.root();
+    let (root, _deps) = asts.get_ast(&root_name);
+    // TODO deps
+    let (decls, irt) = match resolver::resolve(Rc::clone(&root_name), &[], root) {
+        Ok(stuff) => stuff,
+        Err(errors) => {
+            errors.iter().for_each(|e| {
+                eprintln!("{} [{}:{}] [ERROR] {}", root_name, e.line, e.col, e.message)
+            });
+            exit(1)
+        }
+    };
 
     /*let code = match codegen::compile(&ast) {
         Ok(code) => code,

@@ -58,20 +58,24 @@ impl<'a> Parser<'a> {
 
     fn parse(mut self) -> (Ast, Vec<ParseError>) {
         let imports = self.imports();
-        let decls = self.decls(true);
-        let root_namespace = Namespace { name: QName { parts: Vec::new() }, public: true, decls };
-        let expr = if !self.current.is_eof() {
-            self.call_expr()
-        } else {
-            None
-        };
+        let mut decls = self.decls(true);
+        if !self.current.is_eof() {
+            if let Some(expr) = self.call_expr() {
+                decls.push(Decl::Binding(Binding {
+                    public: false,
+                    pattern: Pattern::Wildcard(None),
+                    expr
+                }));
+            }
+        }
         if !self.current.is_eof() {
             self.error_at_current("EOF")
         }
+        let root_namespace = Namespace { name: QName { parts: Vec::new() }, public: true, decls };
+
         let ast = Ast {
             imports,
             root_namespace,
-            expr
         };
         (ast, self.errors)
     }

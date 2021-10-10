@@ -9,7 +9,7 @@ use qname_list::*;
 use types::*;
 
 use crate::ast::*;
-use crate::resolver::irt::IrTree;
+use crate::resolver::irt::{IrTree, Save, Statement, Expr as IrtExpr, ExprType as IrtExprType};
 
 mod types;
 mod globals;
@@ -136,20 +136,10 @@ impl Resolver<'_> {
     */
 
     pub fn resolve(&mut self, ast: &Ast) -> IrTree {
-        self.resolve_4(ast);
+        let stmts = self.resolve_4(ast);
 
-        //let declarations = ast.root_namespace.decls.iter().flat_map(|d| self.find_declarations(d)).collect();
-        //let root_scope = Scope::new(val_decls, type_decls, None);
-        //self.add_declarations(&declarations);
-        /*for decl in &ast.root_namespace.decls {
-            self.resolve_usages_decl(decl, &root_scope);
-        }
-        if let Some(expr) = &ast.expr {
-            self.resolve_usages_expr(expr, &root_scope);
-        }*/
         IrTree {
-            globals: vec![],
-            expr: irt::Expr { resolved_type: ResolvedType::Error, expr_type: irt::ExprType::Error }
+            statements: stmts
         }
     }
 
@@ -176,10 +166,10 @@ impl Resolver<'_> {
         (undefined_globals, type_lookup)
     }
 
-    fn resolve_4(&mut self, ast: &Ast) {
+    fn resolve_4(&mut self, ast: &Ast) -> Vec<Statement> {
         let (undefined_globals, type_lookup) = self.resolve_3(ast);
         let global_lookup = GlobalLookup::new(&undefined_globals);
-        self.define_globals(undefined_globals, type_lookup.root_scope(), global_lookup.root_scope());
+        self.define_globals(undefined_globals, type_lookup.root_scope(), global_lookup.root_scope())
     }
 
     fn import_type(&mut self, type_decl: Rc<TypeDeclaration>) {
@@ -237,7 +227,7 @@ impl Resolver<'_> {
                     self.find_types(type_declarations, ns, namespace.append(&ns.name), vis, can_export && ns.public);
                 },
                 Decl::Type(t) => {
-                    let fqn = Fqn::new(namespace, t.name.name.clone());
+                    let fqn = Fqn::new_from_qname_list(namespace, t.name.name.clone());
                     type_declarations.push(UndefinedType {
                         id: TypeId::new(Rc::clone(&self.exports.name), fqn),
                         visibility: vis.to_vec(),
@@ -248,7 +238,7 @@ impl Resolver<'_> {
                         for case in cases {
                             if let TypeCase::Record(record) = case {
                                 let vis = if record.public { visibility } else { namespace };
-                                let fqn = Fqn::new(namespace, record.name.name.clone());
+                                let fqn = Fqn::new_from_qname_list(namespace, record.name.name.clone());
                                 type_declarations.push(UndefinedType {
                                     id: TypeId::new(Rc::clone(&self.exports.name), fqn),
                                     visibility: vis.to_vec(),
@@ -433,7 +423,7 @@ impl Resolver<'_> {
                         .into_iter()
                         .map(|(name, declared_type, from)| {
                             let id = self.gen_global_id();
-                            let fqn = Fqn::new(namespace, name.to_string());
+                            let fqn = Fqn::new_from_qname_list(namespace, name.to_string());
                             if !declared_type.is_inferred() {
                                 self.import_global(Rc::new(GlobalDeclaration {
                                     id: id.clone(),
@@ -452,6 +442,7 @@ impl Resolver<'_> {
                         .collect();
 
                     let ugb = UndefinedGlobalBinding {
+                        namespace: namespace.to_vec(),
                         decls,
                         expected_type,
                         ast_node: b,
@@ -603,7 +594,12 @@ impl Resolver<'_> {
         }
     }
 
-    fn define_globals(&mut self, undefined_globals: Vec<UndefinedGlobalBinding>, root_type_scope: LookupScope<TypeDeclLookup>, root_global_scope: LookupScope<GlobalLookup>) {
+    fn define_globals(
+        &mut self,
+        undefined_globals: Vec<UndefinedGlobalBinding>,
+        root_type_scope: LookupScope<TypeDeclLookup>,
+        root_global_scope: LookupScope<GlobalLookup>
+    ) -> Vec<Statement> {
         let ugbs_by_gid = {
             let mut map = HashMap::new();
             for (i, ugb) in undefined_globals.iter().enumerate() {
@@ -622,7 +618,7 @@ impl Resolver<'_> {
         while let Some((i, ugb)) = stack.pop() {
             if result[i].is_some() { continue }
 
-            let ns = ugb.namespace();
+            let ns = ugb.namespace.as_slice();
             let type_scope = root_type_scope.enter_scope(ns);
             let global_scope = root_global_scope.enter_scope(ns);
             let dgr = self.resolve_expr(ugb.expected_type.clone(), &ugb.ast_node.expr, &type_scope, &global_scope, &LocalScope::new(None));
@@ -636,7 +632,8 @@ impl Resolver<'_> {
                             col: ugb.ast_node.expr.col,
                         })
                     } else {
-                        stack.push(dep); // TODO do I need push (i, ugb) back onto the stack?
+                        stack.push((i, ugb));
+                        stack.push(dep);
                     }
                     continue
                 },
@@ -648,20 +645,31 @@ impl Resolver<'_> {
                             col: ugb.ast_node.expr.col,
                         })
                     }
+                    let mut save: Option<Save<GlobalId>> = None;
                     for ug in &ugb.decls {
                         let resolved_type = match ug.from {
-                            BindingFrom::Direct => irt_expr.resolved_type.clone(),
+                            BindingFrom::Direct => {
+                                save = Some(Save::Normal(ug.id));
+                                irt_expr.resolved_type.clone()
+                            },
                             BindingFrom::Destructured(_) => todo!("destructured globals") // get type of field
                         };
                         let decl = Rc::new(ug.define(resolved_type));
                         self.globals.insert(ug.id, Rc::clone(&decl));
                         self.exports.globals.push(decl);
                     }
-                    result[i] = Some(irt_expr);
+                    let stmt = match save {
+                        None => Statement::Discard(irt_expr),
+                        Some(save) => Statement::SaveGlobal(save, irt_expr),
+                    };
+                    result[i] = Some(stmt);
                 }
             }
         }
-        //todo!("something with result")
+
+        result.into_iter()
+            .flatten()
+            .collect()
     }
 
     fn resolve_expr(
@@ -930,10 +938,6 @@ impl Resolver<'_> {
        let qne = QNameExpr::from(qname).unwrap(); // only called with a QName Expr
         self.usages.insert(qne, (declaration.id, declaration.name().clone()));
     }*/
-
-    pub fn errors(&self) -> &[Error] {
-        &self.errors
-    }
 }
 
 struct LocalScope<'a> {
@@ -960,7 +964,7 @@ mod test;
 
 enum DefineGlobalResult {
     NeedsType(GlobalId),
-    Success(irt::Expr),
+    Success(IrtExpr),
 }
 
 impl DefineGlobalResult {

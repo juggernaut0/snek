@@ -38,9 +38,6 @@ impl AstPrinter {
         self.print_open("AST");
         self.print_all(&a.imports);
         self.print_namespace(&a.root_namespace);
-        if let Some(e) = &a.expr {
-            self.print_expr(e);
-        }
         self.print_close();
     }
 

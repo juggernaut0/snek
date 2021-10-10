@@ -3,7 +3,7 @@ use std::rc::Rc;
 pub struct Ast {
     pub imports: Vec<Import>,
     pub root_namespace: Namespace,
-    pub expr: Option<Expr>
+    //pub expr: Option<Expr>
 }
 
 pub struct Import {

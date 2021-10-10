@@ -391,6 +391,16 @@ let b: Boolean = true
     assert_no_errs(resolve_from_src(src));
 }
 
+#[test]
+fn wildcard_discard() {
+    let src = "let _ = 5";
+
+    let (decls, irt) = assert_no_errs(resolve_from_src(src));
+    assert!(decls.globals.is_empty());
+    assert_eq!(irt.statements.len(), 1);
+    assert!(matches!(irt.statements[0], Statement::Discard(irt::Expr { expr_type: irt::ExprType::LoadConstant(irt::Constant::Number(5.0)), .. })));
+}
+
 fn define_types(src: &str) -> Resolver {
     let (ast, errs) = crate::parser::parse(src);
     assert!(errs.is_empty());

@@ -104,12 +104,16 @@ pub struct Fqn {
 }
 
 impl Fqn {
-    pub fn new(namespace: QNameList, name: String) -> Fqn {
-        let mut parts = namespace.to_vec();
+    pub fn new(namespace: Vec<String>, name: String) -> Fqn {
+        let mut parts = namespace;
         parts.push(name);
         Fqn {
             parts: Rc::new(parts),
         }
+    }
+
+    pub fn new_from_qname_list(namespace: QNameList, name: String) -> Fqn {
+        Fqn::new(namespace.to_vec(), name)
     }
 
     pub fn as_slice(&self) -> &[String] {

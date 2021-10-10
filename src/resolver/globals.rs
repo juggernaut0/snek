@@ -19,15 +19,10 @@ pub struct GlobalDeclaration {
     pub resolved_type: ResolvedType,
 }
 pub struct UndefinedGlobalBinding<'ast> {
-    pub decls: Vec<UndefinedGlobal<'ast>>,
+    pub namespace: Vec<String>,
+    pub decls: Vec<UndefinedGlobal<'ast>>, // may be empty
     pub expected_type: ResolvedType,
     pub ast_node: &'ast Binding,
-}
-
-impl UndefinedGlobalBinding<'_> {
-    pub fn namespace(&self) -> &[String] {
-        self.decls[0].fqn.namespace()
-    }
 }
 
 pub struct UndefinedGlobal<'ast> {
