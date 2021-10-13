@@ -1,0 +1,10 @@
+type Foo { a: Foo.Bar.A }
+namespace Foo {
+    public namespace Bar {
+        public type A { b: Foo.B }
+        type X { b: B }
+    }
+    type B { c: C }
+    type Y { a: Bar.A }
+}
+type C

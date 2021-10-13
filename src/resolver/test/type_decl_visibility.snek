@@ -1,0 +1,12 @@
+namespace A {
+    namespace B {
+        public type A
+        type B
+    }
+    public namespace B {
+        public type C
+        type D
+    }
+    type E
+}
+type F

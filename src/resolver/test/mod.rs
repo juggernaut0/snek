@@ -37,20 +37,7 @@ fn qname_list_matches() {
 
 #[test]
 fn type_decl_visibility() {
-    let src = "
-namespace A {
-    namespace B {
-        public type A # visibility: A
-        type B # visibility: A.B
-    }
-    public namespace B {
-        public type C # visibility: <root>
-        type D # visibility: A.B
-    }
-    type E # visibility: A
-}
-type F # visibility: <root>
-        ";
+    let src = include_str!("type_decl_visibility.snek");
     let (ast, errs) = crate::parser::parse(src);
     assert!(errs.is_empty());
     let mut resolver = Resolver::new(Rc::new(String::new()), &[]);
@@ -74,18 +61,7 @@ type F # visibility: <root>
 
 #[test]
 fn type_definition() {
-    let src = "
-type Foo { a: Foo.Bar.A }
-namespace Foo {
-    public namespace Bar {
-        public type A { b: Foo.B }
-        type X { b: B }
-    }
-    type B { c: C }
-    type Y { a: Bar.A }
-}
-type C
-        ";
+    let src = include_str!("type_definition.snek");
     let mod_name = Rc::new(String::new());
     let resolver = define_types(src);
     assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
@@ -190,16 +166,7 @@ fn func_field() {
 
 #[test]
 fn named_globals() {
-    let src = "\
-let a = 5
-namespace A { let a = 1 }
-namespace B { let a = 2 }
-namespace A.B.C { let a = 3 }
-namespace A.B {
-    namespace C.D {
-        let a = 4
-    }
-}";
+    let src = include_str!("named_globals.snek");
     let resolver = define_globals(&src);
     assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
     let globals: Vec<_> = resolver.globals.values().collect();
@@ -214,21 +181,7 @@ namespace A.B {
 
 #[test]
 fn destructured_simple() {
-    let src = "\
-type A { x: () }
-namespace One {
-    let { x } = ()
-}
-namespace Two {
-    let { x }: A = ()
-}
-namespace Three {
-    let { x: () } = ()
-}
-namespace Four {
-    let { x: () }: A = ()
-}
-";
+    let src = include_str!("destructured_simple.snek");
     let (ast, errs) = crate::parser::parse(src);
     assert!(errs.is_empty());
     let mod_name = Rc::new(String::new());

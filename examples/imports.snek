@@ -1,3 +1,15 @@
+# Import items from other files with `import <name> from 'file'` statements, which must appear at the top of a file.
+import thing1 thing2 from 'other.snek'
+# You can import all exported items by using `import from 'file'`
+import from 'other.snek'
+
+# When importing items, you must always use the fully qualified name. However once imported, the namespace prefix may
+# be elided as usual
+import X.y from 'other.snek'
+namespace X {
+    let z = y
+}
+
 # A public top-level declaration is *exported*, and can be referenced with an import statement in another file
 
 # another file cannot import S, despite S being globally visible within this file.
@@ -11,13 +23,6 @@ public namespace A {
     type S
     # another file can use T with `import A.T from 'imports.snek'`
     public type T
-}
-
-# When importing items, you must always use the fully qualified name. However once imported, the namespace prefix may
-# be elided as usual
-import X.y from 'other.snek'
-namespace X {
-    let z = y
 }
 
 # Note that a requirement of an item within a namespace being exported is that it is visible from top-level. It is not

@@ -1,4 +1,4 @@
-let fib = { n ->
+let fib = { n: Number ->
   ({ a b n ->
     (println n)
     (match n

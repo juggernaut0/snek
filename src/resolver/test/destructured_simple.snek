@@ -1,0 +1,13 @@
+type A { x: () }
+namespace One {
+    let { x } = ()
+}
+namespace Two {
+    let { x }: A = ()
+}
+namespace Three {
+    let { x: () } = ()
+}
+namespace Four {
+    let { x: () }: A = ()
+}

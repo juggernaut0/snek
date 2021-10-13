@@ -16,6 +16,8 @@ mod globals;
 mod lookup;
 mod qname_list;
 pub mod irt;
+#[cfg(test)]
+mod test;
 
 type ResolveResult = Result<(ModuleDecls, IrTree), Vec<Error>>;
 
@@ -638,7 +640,7 @@ impl Resolver<'_> {
                     continue
                 },
                 DefineGlobalResult::Success(irt_expr) => {
-                    if irt_expr.resolved_type.is_inferred() {
+                    if ugb.decls.len() > 0 && irt_expr.resolved_type.is_inferred() {
                         self.errors.push(Error {
                             message: "Unable to infer type of global binding".into(),
                             line: ugb.ast_node.expr.line,
@@ -739,60 +741,10 @@ impl Resolver<'_> {
             ExprType::Unary(_, _) => todo!(),
             ExprType::Binary(_, _, _) => todo!(),
             ExprType::Call(call_expr) => {
-                let callee_result = self.resolve_expr(ResolvedType::Callable(Box::new(expected_type.clone())), &call_expr.callee, type_scope, global_scope, local_scope);
-                let callee = match callee_result {
-                    DefineGlobalResult::NeedsType(_) => return callee_result,
-                    DefineGlobalResult::Success(callee_expr) => callee_expr,
-                };
-                let rft = match callee.resolved_type.clone() {
-                    ResolvedType::Func(rft) => rft,
-                    ResolvedType::Callable(_) => {
-                        self.errors.push(Error {
-                            message: "Unable to infer callable type".into(),
-                            line: expr.line,
-                            col: expr.col,
-                        });
-                        todo!() // need to return something
-                    },
-                    ResolvedType::Error => return DefineGlobalResult::error_expr(),
-                    _ => unreachable!() // Callable does not unify with anything except Func or Callable
-                };
-
-                if rft.params.len() < call_expr.args.len() {
-                    self.errors.push(Error {
-                        message: "Too many arguments provided for function".to_string(),
-                        line: expr.line,
-                        col: expr.col,
-                    })
-                } else if rft.params.len() < call_expr.args.len() {
-                    // TODO currying
-                    self.errors.push(Error {
-                        message: "Partial application not yet supported".to_string(),
-                        line: expr.line,
-                        col: expr.col,
-                    })
+                match self.resolve_call_expr(expected_type.clone(), expr, type_scope, global_scope, local_scope, call_expr) {
+                    Ok(it) => it,
+                    Err(dfg) => return dfg
                 }
-
-                let arg_results = rft.params
-                    .iter()
-                    .cloned()
-                    .chain(repeat(ResolvedType::Inferred))
-                    .zip(&call_expr.args)
-                    .map(|(exp_arg_type, arg_expr)| {
-                        self.resolve_expr(exp_arg_type, arg_expr, type_scope, global_scope, local_scope)
-                    });
-
-                let mut args = Vec::new();
-                for arg_result in arg_results {
-                    match arg_result {
-                        DefineGlobalResult::NeedsType(_) => return arg_result,
-                        DefineGlobalResult::Success(expr) => args.push(expr),
-                    }
-                }
-                (*rft.return_type, irt::ExprType::Call(irt::CallExpr {
-                    callee: Box::new(callee),
-                    args,
-                }))
             },
             ExprType::Lambda(_) => todo!(),
             ExprType::List(_) => todo!(),
@@ -806,13 +758,83 @@ impl Resolver<'_> {
         })
     }
 
+    fn resolve_call_expr(
+        &mut self,
+        expected_type: ResolvedType,
+        expr: &Expr,
+        type_scope: &LookupScope<TypeDeclLookup>,
+        global_scope: &LookupScope<GlobalLookup>,
+        local_scope: &LocalScope,
+        call_expr: &CallExpr,
+    ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
+        let callee_result = self.resolve_expr(ResolvedType::Callable(Box::new(expected_type)), &call_expr.callee, type_scope, global_scope, local_scope);
+        let callee = match callee_result {
+            DefineGlobalResult::NeedsType(_) => return Err(callee_result),
+            DefineGlobalResult::Success(callee_expr) => callee_expr,
+        };
+        let rft = match callee.resolved_type.clone() {
+            ResolvedType::Func(rft) => rft,
+            ResolvedType::Callable(et) => {
+                self.errors.push(Error {
+                    message: "Unable to infer callable type".into(),
+                    line: expr.line,
+                    col: expr.col,
+                });
+                return Ok((*et, IrtExprType::Error))
+            },
+            ResolvedType::Error => return Err(DefineGlobalResult::error_expr()),
+            _ => unreachable!() // Callable does not unify with anything except Func or Callable
+        };
+
+        if rft.params.len() < call_expr.args.len() {
+            self.errors.push(Error {
+                message: "Too many arguments provided for function".to_string(),
+                line: expr.line,
+                col: expr.col,
+            })
+        } else if rft.params.len() < call_expr.args.len() {
+            // TODO currying
+            self.errors.push(Error {
+                message: "Partial application not yet supported".to_string(),
+                line: expr.line,
+                col: expr.col,
+            })
+        }
+
+        let arg_results = rft.params
+            .iter()
+            .cloned()
+            .chain(repeat(ResolvedType::Inferred))
+            .zip(&call_expr.args)
+            .map(|(exp_arg_type, arg_expr)| {
+                self.resolve_expr(exp_arg_type, arg_expr, type_scope, global_scope, local_scope)
+            });
+
+        let mut args = Vec::new();
+        for arg_result in arg_results {
+            match arg_result {
+                DefineGlobalResult::NeedsType(_) => return Err(arg_result),
+                DefineGlobalResult::Success(expr) => args.push(expr),
+            }
+        }
+        Ok((
+            *rft.return_type,
+            irt::ExprType::Call(irt::CallExpr {
+                callee: Box::new(callee),
+                args,
+            })
+        ))
+    }
+
     fn unify(&mut self, expected: ResolvedType, actual: ResolvedType, line: u32, col: u32) -> ResolvedType {
         let mut error = None;
+        print!("{:?} {:?}", expected, actual);
         let unified = match (expected, actual) {
             (ResolvedType::Inferred, actual) => actual,
             (ResolvedType::Any, _) => ResolvedType::Any,
             (expected, ResolvedType::Nothing) => expected,
             (expected, ResolvedType::Inferred) => expected,
+            (expected, ResolvedType::Error) => expected,
             (ResolvedType::Error, _) => ResolvedType::Error,
             (ResolvedType::Id(e_id, e_type_args), ResolvedType::Id(a_id, a_type_args)) => {
                 if e_id != a_id {
@@ -847,6 +869,7 @@ impl Resolver<'_> {
                 col,
             });
         }
+        println!(" -> {:?}", unified);
         unified
     }
 
@@ -958,9 +981,6 @@ pub struct Error {
     pub line: u32,
     pub col: u32,
 }
-
-#[cfg(test)]
-mod test;
 
 enum DefineGlobalResult {
     NeedsType(GlobalId),

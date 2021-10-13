@@ -23,8 +23,8 @@ let test = { param ->
   (f)
   ()
 }
-let closed? = (main)
-(closed?)
+let closed = (main)
+(closed)
 
 # Expected output:
 # local

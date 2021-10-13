@@ -1,0 +1,9 @@
+let a = 5
+namespace A { let a = 1 }
+namespace B { let a = 2 }
+namespace A.B.C { let a = 3 }
+namespace A.B {
+    namespace C.D {
+        let a = 4
+    }
+}
