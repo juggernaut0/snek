@@ -169,14 +169,14 @@ fn named_globals() {
     let src = include_str!("named_globals.snek");
     let resolver = define_globals(&src);
     assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
-    let globals: Vec<_> = resolver.globals.values().collect();
+    let globals: Vec<_> = resolver.globals.values().filter(|it| it.id.module() != "__builtin").collect();
 
     assert_eq!(5, globals.len());
-    globals.iter().find(|it| it.fqn.as_slice() == ["a"]).expect("Expected a");
-    globals.iter().find(|it| it.fqn.as_slice() == ["A", "a"]).expect("Expected A.a");
-    globals.iter().find(|it| it.fqn.as_slice() == ["B", "a"]).expect("Expected B.a");
-    globals.iter().find(|it| it.fqn.as_slice() == ["A", "B", "C", "a"]).expect("Expected A.B.C.a");
-    globals.iter().find(|it| it.fqn.as_slice() == ["A", "B", "C", "D", "a"]).expect("Expected A.B.C.D.a");
+    globals.iter().find(|it| it.fqn().as_slice() == ["a"]).expect("Expected a");
+    globals.iter().find(|it| it.fqn().as_slice() == ["A", "a"]).expect("Expected A.a");
+    globals.iter().find(|it| it.fqn().as_slice() == ["B", "a"]).expect("Expected B.a");
+    globals.iter().find(|it| it.fqn().as_slice() == ["A", "B", "C", "a"]).expect("Expected A.B.C.a");
+    globals.iter().find(|it| it.fqn().as_slice() == ["A", "B", "C", "D", "a"]).expect("Expected A.B.C.D.a");
 }
 
 #[test]
@@ -253,12 +253,7 @@ let { x: A }: B = (TODO)
 #[test]
 #[ignore] // TODO detecting field visibility will happen at a later stage
 fn destructured_private_field() {
-    let src = "\
-namespace A {
-    public type A { x: () }
-}
-let { x }: A.A = (TODO)
-";
+    let src = include_str!("destructured_private_field.snek");
     let resolver = find_globals(src);
 
     // should error
@@ -354,6 +349,18 @@ fn wildcard_discard() {
     assert!(matches!(irt.statements[0], Statement::Discard(irt::Expr { expr_type: irt::ExprType::LoadConstant(irt::Constant::Number(5.0)), .. })));
 }
 
+#[test]
+#[ignore] // TODO needs resolve_binding_type Func
+fn inferred_return_type() {
+    let src = include_str!("inferred_return_type.snek");
+    assert_no_errs(resolve_from_src(src));
+}
+
+#[test]
+fn hello() {
+    assert_no_errs(resolve_from_src(include_str!("hello.snek")));
+}
+
 fn define_types(src: &str) -> Resolver {
     let (ast, errs) = crate::parser::parse(src);
     assert!(errs.is_empty());
@@ -394,8 +401,8 @@ fn get_type<'a>(resolver: &'a Resolver, name: &str) -> &'a TypeDeclaration {
 
 fn get_global<'a>(decls: &'a ModuleDecls, name: &str) -> &'a GlobalDeclaration {
     decls.globals.iter().find(|it| {
-        println!("{}", it.fqn);
-        it.fqn.as_slice().last().unwrap() == name
+        println!("{}", it.fqn());
+        it.fqn().as_slice().last().unwrap() == name
     }).unwrap()
 }
 

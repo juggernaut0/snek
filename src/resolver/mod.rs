@@ -32,6 +32,7 @@ pub fn resolve(name: Rc<String>, deps: &[ModuleDecls], ast: &Ast) -> ResolveResu
 }
 
 struct BuiltinTypeNames {
+    mod_name: Rc<String>,
     number: TypeId,
     string: TypeId,
     boolean: TypeId,
@@ -44,6 +45,7 @@ impl BuiltinTypeNames {
             number: TypeId::new(Rc::clone(&builtin_mod), Fqn::from(&["Number"][..])),
             string: TypeId::new(Rc::clone(&builtin_mod), Fqn::from(&["String"][..])),
             boolean: TypeId::new(Rc::clone(&builtin_mod), Fqn::from(&["Boolean"][..])),
+            mod_name: builtin_mod,
         }
     }
 }
@@ -64,7 +66,7 @@ impl ModuleDecls {
     }
 
     fn get_global(&self, name: &QName) -> Option<&Rc<GlobalDeclaration>> {
-        self.globals.iter().find(|it| it.fqn.as_slice() == name.parts.as_slice())
+        self.globals.iter().find(|it| it.fqn().as_slice() == name.parts.as_slice())
     }
 }
 
@@ -79,14 +81,25 @@ fn make_primitive_type(id: TypeId) -> Rc<TypeDeclaration> {
 }
 
 fn make_builtins() -> ModuleDecls {
+    let builtin_mod_name = BUILTIN_TYPE_NAMES.with(|btn| Rc::clone(&btn.mod_name));
     ModuleDecls {
-        name: Rc::new(String::from("__builtin")),
         types: vec![
             make_primitive_type(BUILTIN_TYPE_NAMES.with(|btn| btn.number.clone())),
             make_primitive_type(BUILTIN_TYPE_NAMES.with(|btn| btn.string.clone())),
             make_primitive_type(BUILTIN_TYPE_NAMES.with(|btn| btn.boolean.clone())),
         ],
-        globals: vec![],
+        globals: vec![
+            Rc::new(GlobalDeclaration {
+                id: GlobalId::new(Rc::clone(&builtin_mod_name), Fqn::new(Vec::new(), "println".to_string())),
+                resolved_type: ResolvedType::Func(ResolvedFuncType {
+                    params: vec![ResolvedType::Any],
+                    return_type: Box::new(ResolvedType::Unit)
+                }),
+                visibility: Vec::new(),
+                export: true,
+            })
+        ],
+        name: builtin_mod_name,
     }
 }
 
@@ -170,7 +183,7 @@ impl Resolver<'_> {
 
     fn resolve_4(&mut self, ast: &Ast) -> Vec<Statement> {
         let (undefined_globals, type_lookup) = self.resolve_3(ast);
-        let global_lookup = GlobalLookup::new(&undefined_globals);
+        let global_lookup = GlobalLookup::new(&undefined_globals, self.globals.values().map(Rc::as_ref));
         self.define_globals(undefined_globals, type_lookup.root_scope(), global_lookup.root_scope())
     }
 
@@ -195,6 +208,11 @@ impl Resolver<'_> {
             for td in &module.types {
                 if td.is_exported() {
                     self.import_type(Rc::clone(td))
+                }
+            }
+            for gd in &module.globals {
+                if gd.is_exported() {
+                    self.import_global(Rc::clone(gd))
                 }
             }
         }
@@ -424,19 +442,21 @@ impl Resolver<'_> {
                     let decls = names
                         .into_iter()
                         .map(|(name, declared_type, from)| {
-                            let id = self.gen_global_id();
                             let fqn = Fqn::new_from_qname_list(namespace, name.to_string());
+                            let id = GlobalId::new(Rc::clone(&self.exports.name), fqn.clone());
                             if !declared_type.is_inferred() {
                                 self.import_global(Rc::new(GlobalDeclaration {
                                     id: id.clone(),
-                                    fqn: fqn.clone(),
                                     resolved_type: declared_type.clone(),
+                                    visibility: vis.to_vec(),
+                                    export: can_export && b.public
                                 }));
                             }
                             UndefinedGlobal {
                                 id,
                                 fqn,
                                 visibility: vis.to_vec(),
+                                export: can_export && b.public,
                                 declared_type,
                                 from,
                             }
@@ -651,13 +671,13 @@ impl Resolver<'_> {
                     for ug in &ugb.decls {
                         let resolved_type = match ug.from {
                             BindingFrom::Direct => {
-                                save = Some(Save::Normal(ug.id));
+                                save = Some(Save::Normal(ug.id.clone()));
                                 irt_expr.resolved_type.clone()
                             },
                             BindingFrom::Destructured(_) => todo!("destructured globals") // get type of field
                         };
                         let decl = Rc::new(ug.define(resolved_type));
-                        self.globals.insert(ug.id, Rc::clone(&decl));
+                        self.globals.insert(ug.id.clone(), Rc::clone(&decl));
                         self.exports.globals.push(decl);
                     }
                     let stmt = match save {
@@ -780,6 +800,8 @@ impl Resolver<'_> {
                     line: expr.line,
                     col: expr.col,
                 });
+                // TODO is this a good idea?
+                // let rt = if et.is_inferred() { ResolvedType::Error } else { *et };
                 return Ok((*et, IrtExprType::Error))
             },
             ResolvedType::Error => return Err(DefineGlobalResult::error_expr()),
@@ -871,12 +893,6 @@ impl Resolver<'_> {
         }
         println!(" -> {:?}", unified);
         unified
-    }
-
-    fn gen_global_id(&mut self) -> GlobalId {
-        let id = self.global_id_seq;
-        self.global_id_seq += 1;
-        GlobalId::new(id)
     }
 
     /*fn resolve_usages_decl(&mut self, decl: &Decl, scope: &Scope) {

@@ -1,0 +1,4 @@
+namespace A {
+    public type A { x: () }
+}
+let { x }: A.A = (TODO)

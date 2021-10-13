@@ -11,6 +11,8 @@ let add_one: { Number -> Number } = { a -> (a + 1) }
 # Create generic functions by explicitly specifying type parameters. Note parameter types cannot be specified in the
 # function expression in this case
 let make_list: { <T> T T -> List<T> } = { a b -> [a b] }
+# TODO should this be allowed?
+let make_list = { <T> a: T b: T -> [a b] }
 
 # Specialize a generic function simply by assigning it to a non-generic binding
 let make_number_list: { Number Number -> List<Number> } = make_list

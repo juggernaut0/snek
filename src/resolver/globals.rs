@@ -1,23 +1,41 @@
+use std::rc::Rc;
 use crate::ast::Binding;
 use crate::resolver::lookup::Lookup;
 use crate::resolver::qname_list::{Fqn, QNameList};
 use crate::resolver::types::ResolvedType;
 
-// TODO this will need to be more like TypeId
-#[derive(Copy, Clone, Hash, Eq, PartialEq)]
-pub struct GlobalId(u16);
+#[derive(Clone, Hash, Eq, PartialEq)]
+pub struct GlobalId(Rc<String>, Fqn);
 
 impl GlobalId {
-    pub fn new(id: u16) -> GlobalId {
-        GlobalId(id)
+    pub fn new(mod_name: Rc<String>, fqn: Fqn) -> GlobalId {
+        GlobalId(mod_name, fqn)
+    }
+}
+
+impl GlobalId {
+    pub fn module(&self) -> &str {
+        &self.0
     }
 }
 
 pub struct GlobalDeclaration {
     pub id: GlobalId,
-    pub fqn: Fqn,
     pub resolved_type: ResolvedType,
+    pub visibility: Vec<String>,
+    pub export: bool,
 }
+
+impl GlobalDeclaration {
+    pub fn fqn(&self) -> &Fqn {
+        &self.id.1
+    }
+    pub fn is_exported(&self) -> bool {
+        self.visibility.is_empty() && self.export
+    }
+
+}
+
 pub struct UndefinedGlobalBinding<'ast> {
     pub namespace: Vec<String>,
     pub decls: Vec<UndefinedGlobal<'ast>>, // may be empty
@@ -29,6 +47,7 @@ pub struct UndefinedGlobal<'ast> {
     pub id: GlobalId,
     pub fqn: Fqn,
     pub visibility: Vec<String>,
+    pub export: bool,
     pub declared_type: ResolvedType,
     pub from: BindingFrom<'ast>,
 }
@@ -37,9 +56,10 @@ impl UndefinedGlobal<'_> {
     // TODO why can't I own self
     pub fn define(&self, resolved_type: ResolvedType) -> GlobalDeclaration {
         GlobalDeclaration {
-            id: self.id,
-            fqn: self.fqn.clone(),
+            id: self.id.clone(),
             resolved_type,
+            visibility: self.visibility.clone(),
+            export: self.export,
         }
     }
 }
@@ -50,15 +70,16 @@ pub enum BindingFrom<'ast> {
 }
 
 pub struct GlobalLookup {
-    globals: Vec<(Fqn, GlobalId, Vec<String>)>,
+    globals: Vec<(GlobalId, Vec<String>)>,
 }
 
 impl GlobalLookup {
-    pub fn new(undefined_globals: &[UndefinedGlobalBinding]) -> GlobalLookup {
+    pub fn new<'a>(undefined_globals: &[UndefinedGlobalBinding], imported_globals: impl IntoIterator<Item=&'a GlobalDeclaration>) -> GlobalLookup {
         // TODO eliminate visibility clone?
         let globals = undefined_globals.iter()
             .flat_map(|it| &it.decls)
-            .map(|ug| (ug.fqn.clone(), ug.id.clone(), ug.visibility.clone()))
+            .map(|ug| (ug.id.clone(), ug.visibility.clone()))
+            .chain(imported_globals.into_iter().map(|gd| (gd.id.clone(), Vec::new())))
             .collect();
         GlobalLookup {
             globals,
@@ -71,7 +92,12 @@ impl Lookup for GlobalLookup {
 
     fn find(&self, qn: QNameList) -> Option<(GlobalId, &[String])> {
         self.globals.iter()
-            .find(|(fqn, _, _)| qn.matches(fqn))
-            .map(|(_, id, vis)| (id.clone(), vis.as_slice()))
+            .find_map(|(id, vis)| {
+                if qn.matches(&id.1) {
+                    Some((id.clone(), vis.as_slice()))
+                } else {
+                    None
+                }
+            })
     }
 }

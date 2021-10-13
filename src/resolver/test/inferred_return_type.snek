@@ -1,0 +1,3 @@
+type A
+let f: { <T> T -> T } = { t -> t }
+let a: A = f(new {})
