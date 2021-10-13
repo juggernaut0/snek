@@ -26,6 +26,7 @@ pub enum ExprType {
     LoadConstant(Constant),
     LoadGlobal(GlobalId),
     Call(CallExpr),
+    Binary { op: BinaryOp, left: Box<Expr>, right: Box<Expr> },
 }
 
 pub enum Constant {
@@ -38,4 +39,14 @@ pub enum Constant {
 pub struct CallExpr {
     pub callee: Box<Expr>,
     pub args: Vec<Expr>,
+}
+
+pub enum BinaryOp {
+    Error,
+    Eq,
+    Neq,
+    LessThan,
+    LessEq,
+    GreaterThan,
+    GreaterEq,
 }

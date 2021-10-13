@@ -9,7 +9,7 @@ use qname_list::*;
 use types::*;
 
 use crate::ast::*;
-use crate::resolver::irt::{IrTree, Save, Statement, Expr as IrtExpr, ExprType as IrtExprType};
+use crate::resolver::irt::{IrTree, Save, Statement, Expr as IrtExpr, ExprType as IrtExprType, BinaryOp as IrtBinaryOp};
 
 mod types;
 mod globals;
@@ -47,6 +47,18 @@ impl BuiltinTypeNames {
             boolean: TypeId::new(Rc::clone(&builtin_mod), Fqn::from(&["Boolean"][..])),
             mod_name: builtin_mod,
         }
+    }
+
+    fn number() -> ResolvedType {
+        ResolvedType::Id(BUILTIN_TYPE_NAMES.with(|btn| btn.number.clone()), Vec::new())
+    }
+
+    fn string() -> ResolvedType {
+        ResolvedType::Id(BUILTIN_TYPE_NAMES.with(|btn| btn.string.clone()), Vec::new())
+    }
+
+    fn boolean() -> ResolvedType {
+        ResolvedType::Id(BUILTIN_TYPE_NAMES.with(|btn| btn.boolean.clone()), Vec::new())
     }
 }
 
@@ -487,9 +499,9 @@ impl Resolver<'_> {
             },
             Pattern::Constant(lit) => {
                 match lit.lit_type {
-                    LiteralType::NUMBER => ResolvedType::Id(BUILTIN_TYPE_NAMES.with(|btn| btn.number.clone()), Vec::new()),
-                    LiteralType::STRING => ResolvedType::Id(BUILTIN_TYPE_NAMES.with(|btn| btn.string.clone()), Vec::new()),
-                    LiteralType::BOOL => ResolvedType::Id(BUILTIN_TYPE_NAMES.with(|btn| btn.boolean.clone()), Vec::new()),
+                    LiteralType::NUMBER => BuiltinTypeNames::number(),
+                    LiteralType::STRING => BuiltinTypeNames::string(),
+                    LiteralType::BOOL => BuiltinTypeNames::boolean(),
                     LiteralType::UNIT => ResolvedType::Unit,
                 }
             },
@@ -732,9 +744,9 @@ impl Resolver<'_> {
             },
             ExprType::Constant(lit) => {
                 let actual_type = match lit.lit_type {
-                    LiteralType::NUMBER => ResolvedType::Id(BUILTIN_TYPE_NAMES.with(|btn| btn.number.clone()), Vec::new()),
-                    LiteralType::STRING => ResolvedType::Id(BUILTIN_TYPE_NAMES.with(|btn| btn.string.clone()), Vec::new()),
-                    LiteralType::BOOL => ResolvedType::Id(BUILTIN_TYPE_NAMES.with(|btn| btn.boolean.clone()), Vec::new()),
+                    LiteralType::NUMBER => BuiltinTypeNames::number(),
+                    LiteralType::STRING => BuiltinTypeNames::string(),
+                    LiteralType::BOOL => BuiltinTypeNames::boolean(),
                     LiteralType::UNIT => ResolvedType::Unit,
                 };
                 let cons = match lit.lit_type {
@@ -756,10 +768,43 @@ impl Resolver<'_> {
                     LiteralType::BOOL => irt::Constant::Boolean(lit.value.parse().unwrap()), // lit.value is guaranteed to be "true" or "false" by parser
                     LiteralType::UNIT => irt::Constant::Unit,
                 };
-                (actual_type, irt::ExprType::LoadConstant(cons))
+                (actual_type, IrtExprType::LoadConstant(cons))
             },
             ExprType::Unary(_, _) => todo!(),
-            ExprType::Binary(_, _, _) => todo!(),
+            ExprType::Binary(op, left, right) => {
+                let res_left = match self.resolve_expr(ResolvedType::Inferred, &left, type_scope, global_scope, local_scope) {
+                    DefineGlobalResult::Success(it) => it,
+                    DefineGlobalResult::NeedsType(id) => return DefineGlobalResult::NeedsType(id),
+                };
+                let res_right = match self.resolve_expr(ResolvedType::Inferred, &right, type_scope, global_scope, local_scope) {
+                    DefineGlobalResult::Success(it) => it,
+                    DefineGlobalResult::NeedsType(id) => return DefineGlobalResult::NeedsType(id),
+                };
+                let (rt, op) = match (op, &res_left.resolved_type, &res_right.resolved_type) {
+                    (BinaryOp::EQ, _, _) => (BuiltinTypeNames::boolean(), IrtBinaryOp::Eq),
+                    (BinaryOp::NEQ, _, _) => (BuiltinTypeNames::boolean(), IrtBinaryOp::Neq),
+                    (BinaryOp::LT, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::boolean(), IrtBinaryOp::LessThan),
+                    (BinaryOp::GT, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::boolean(), IrtBinaryOp::GreaterThan),
+                    (BinaryOp::LEQ, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::boolean(), IrtBinaryOp::LessEq),
+                    (BinaryOp::GEQ, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::boolean(), IrtBinaryOp::GreaterEq),
+                    (op, left, right) => {
+                        let message = if left.is_inferred() {
+                            format!("Unable to infer type of left-hand operand")
+                        } else if right.is_inferred() {
+                            format!("Unable to infer type of right-hand operand")
+                        } else {
+                            format!("Incompatible operand types for binary operator {:?}: {} & {}", op, left, right)
+                        };
+                        self.errors.push(Error {
+                            message,
+                            line: expr.line,
+                            col: expr.col,
+                        });
+                        (ResolvedType::Error, IrtBinaryOp::Error)
+                    },
+                };
+                (rt, IrtExprType::Binary { op, left: Box::new(res_left), right: Box::new(res_right) })
+            },
             ExprType::Call(call_expr) => {
                 match self.resolve_call_expr(expected_type.clone(), expr, type_scope, global_scope, local_scope, call_expr) {
                     Ok(it) => it,
@@ -878,7 +923,12 @@ impl Resolver<'_> {
                 }
                 ResolvedType::TypeParam(e_i)
             }
-            (ResolvedType::Unit, ResolvedType::Unit) => ResolvedType::Unit,
+            (ResolvedType::Callable(expected_return_type), ResolvedType::Func(mut rft)) => {
+                let actual_return_type = std::mem::replace(rft.return_type.as_mut(), ResolvedType::Error);
+                *rft.return_type = self.unify(*expected_return_type, actual_return_type, line, col);
+                ResolvedType::Func(rft)
+            }
+            (expected, actual) if expected == actual => expected,
             (expected, actual) => {
                 error = Some((format!("{}", expected), format!("{}", actual)));
                 expected
