@@ -63,7 +63,11 @@ pub struct ResolvedField {
 pub enum ResolvedType {
     Id(TypeId, Vec<ResolvedType>),
     TypeParam(usize),
-    Func(ResolvedFuncType),
+    Func {
+        //pub type_params: Vec<String>, TODO
+        params: Vec<ResolvedType>,
+        return_type: Box<ResolvedType>,
+    },
     Callable(Box<ResolvedType>),
     Unit,      // ()
     Any,       // *
@@ -71,19 +75,13 @@ pub enum ResolvedType {
     Inferred,  // _
     Error,
 }
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ResolvedFuncType {
-    //pub type_params: Vec<String>, TODO
-    pub params: Vec<ResolvedType>,
-    pub return_type: Box<ResolvedType>,
-}
 
 impl ResolvedType {
     pub fn is_inferred(&self) -> bool {
         match self {
             ResolvedType::Inferred => true,
             ResolvedType::Id(_, args) => args.iter().any(|rt| rt.is_inferred()),
-            ResolvedType::Func(rft) => rft.params.iter().any(|rt| rt.is_inferred()) || rft.return_type.is_inferred(),
+            ResolvedType::Func { params, return_type } => params.iter().any(|rt| rt.is_inferred()) || return_type.is_inferred(),
             _ => false
         }
     }
@@ -92,7 +90,7 @@ impl ResolvedType {
         match self {
             ResolvedType::Error => true,
             ResolvedType::Id(_, args) => args.iter().any(|rt| rt.is_error()),
-            ResolvedType::Func(rft) => rft.params.iter().any(|rt| rt.is_error()) || rft.return_type.is_error(),
+            ResolvedType::Func { params, return_type } => params.iter().any(|rt| rt.is_error()) || return_type.is_error(),
             _ => false
         }
     }
@@ -111,10 +109,10 @@ impl Display for ResolvedType {
                 Ok(())
             }
             ResolvedType::TypeParam(id) => todo!("Need type param name"),
-            ResolvedType::Func(rft) => {
+            ResolvedType::Func { params, return_type } => {
                 write!(f, "{{ ")?;
-                join(f, &rft.params, " ")?;
-                write!(f, " -> {} }}", rft.return_type)
+                join(f, &params, " ")?;
+                write!(f, " -> {} }}", return_type)
             },
             ResolvedType::Callable(ret) => write!(f, "{{ ? -> {} }}", ret),
             ResolvedType::Unit => write!(f, "()"),

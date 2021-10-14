@@ -104,10 +104,10 @@ fn make_builtins() -> ModuleDecls {
         globals: vec![
             Rc::new(GlobalDeclaration {
                 id: GlobalId::new(Rc::clone(&builtin_mod_name), Fqn::new(Vec::new(), "println".to_string())),
-                resolved_type: ResolvedType::Func(ResolvedFuncType {
+                resolved_type: ResolvedType::Func {
                     params: vec![ResolvedType::Any],
                     return_type: Box::new(ResolvedType::Unit)
-                }),
+                },
                 visibility: Vec::new(),
                 export: true,
             })
@@ -404,10 +404,10 @@ impl Resolver<'_> {
                     .map(|tn| self.resolve_field_type(tn, type_params, scope, false))
                     .collect();
                 let return_type = self.resolve_field_type(&ft.return_type, type_params, scope, true);
-                ResolvedType::Func(ResolvedFuncType {
+                ResolvedType::Func {
                     params,
                     return_type: Box::new(return_type)
-                })
+                }
             },
             TypeNameType::Unit => ResolvedType::Unit,
             TypeNameType::Any => ResolvedType::Any,
@@ -621,7 +621,13 @@ impl Resolver<'_> {
                     ResolvedType::Error
                 }
             },
-            TypeNameType::Func(_) => { todo!("resolve_binding_type Func") },
+            TypeNameType::Func(ft) => {
+                // TODO type params
+                let params = ft.params.iter().map(|it| self.resolve_binding_type(it, type_params, scope)).collect();
+                let return_type = Box::new(self.resolve_binding_type(&ft.return_type, type_params, scope));
+
+                ResolvedType::Func { params, return_type }
+            },
             TypeNameType::Unit => ResolvedType::Unit,
             TypeNameType::Any => ResolvedType::Any,
             TypeNameType::Nothing => ResolvedType::Nothing,
@@ -817,7 +823,7 @@ impl Resolver<'_> {
                     Err(dfg) => return dfg
                 }
             },
-            ExprType::Lambda(_) => todo!(),
+            ExprType::Lambda(_) => todo!("resolve_expr lambda"),
             ExprType::List(_) => todo!(),
             ExprType::New(_, _) => todo!(),
             ExprType::Dot => todo!(),
@@ -843,8 +849,8 @@ impl Resolver<'_> {
             DefineGlobalResult::NeedsType(_) => return Err(callee_result),
             DefineGlobalResult::Success(callee_expr) => callee_expr,
         };
-        let rft = match callee.resolved_type.clone() {
-            ResolvedType::Func(rft) => rft,
+        let (params, return_type) = match callee.resolved_type.clone() {
+            ResolvedType::Func { params, return_type } => (params, return_type),
             ResolvedType::Callable(et) => {
                 self.errors.push(Error {
                     message: "Unable to infer callable type".into(),
@@ -859,13 +865,13 @@ impl Resolver<'_> {
             _ => unreachable!() // Callable does not unify with anything except Func or Callable
         };
 
-        if rft.params.len() < call_expr.args.len() {
+        if params.len() < call_expr.args.len() {
             self.errors.push(Error {
                 message: "Too many arguments provided for function".to_string(),
                 line: expr.line,
                 col: expr.col,
             })
-        } else if rft.params.len() < call_expr.args.len() {
+        } else if params.len() < call_expr.args.len() {
             // TODO currying
             self.errors.push(Error {
                 message: "Partial application not yet supported".to_string(),
@@ -874,7 +880,7 @@ impl Resolver<'_> {
             })
         }
 
-        let arg_results = rft.params
+        let arg_results = params
             .iter()
             .cloned()
             .chain(repeat(ResolvedType::Inferred))
@@ -891,7 +897,7 @@ impl Resolver<'_> {
             }
         }
         Ok((
-            *rft.return_type,
+            *return_type,
             irt::ExprType::Call {
                 callee: Box::new(callee),
                 args,
@@ -928,10 +934,11 @@ impl Resolver<'_> {
                 }
                 ResolvedType::TypeParam(e_i)
             }
-            (ResolvedType::Callable(expected_return_type), ResolvedType::Func(mut rft)) => {
-                let actual_return_type = std::mem::replace(rft.return_type.as_mut(), ResolvedType::Error);
-                *rft.return_type = self.unify(*expected_return_type, actual_return_type, line, col);
-                ResolvedType::Func(rft)
+            (ResolvedType::Callable(expected_return_type), ResolvedType::Func { params, mut return_type }) => {
+                // Reuse the same Box for the return value
+                let actual_return_type = std::mem::replace(return_type.as_mut(), ResolvedType::Error);
+                *return_type = self.unify(*expected_return_type, actual_return_type, line, col);
+                ResolvedType::Func { params, return_type }
             }
             (expected, actual) if expected == actual => expected,
             (expected, actual) => {

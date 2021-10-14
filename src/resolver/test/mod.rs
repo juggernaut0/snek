@@ -158,10 +158,10 @@ fn func_field() {
     let fields = if let TypeDefinition::Record(fields) = &t.definition { fields } else { panic!() };
     let consume = fields.first().unwrap();
     assert_eq!("consume", consume.name);
-    let rft = if let ResolvedType::Func(rft) = &consume.resolved_type { rft } else { panic!() };
-    assert_eq!(ResolvedType::TypeParam(0), rft.params[0]);
-    assert_eq!(ResolvedType::TypeParam(0), rft.params[1]);
-    assert_eq!(&ResolvedType::Unit, rft.return_type.as_ref());
+    let (params, return_type) = if let ResolvedType::Func { params, return_type } = &consume.resolved_type { (params, return_type) } else { panic!() };
+    assert_eq!(ResolvedType::TypeParam(0), params[0]);
+    assert_eq!(ResolvedType::TypeParam(0), params[1]);
+    assert_eq!(&ResolvedType::Unit, return_type.as_ref());
 }
 
 #[test]
@@ -350,7 +350,7 @@ fn wildcard_discard() {
 }
 
 #[test]
-#[ignore] // TODO needs resolve_binding_type Func
+#[ignore] // TODO needs resolve_expr lambda
 fn inferred_return_type() {
     let src = include_str!("inferred_return_type.snek");
     assert_no_errs(resolve_from_src(src));
