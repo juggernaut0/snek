@@ -25,7 +25,7 @@ pub enum ExprType {
     Error,
     LoadConstant(Constant),
     LoadGlobal(GlobalId),
-    Call(CallExpr),
+    Call { callee: Box<Expr>, args: Vec<Expr> },
     Binary { op: BinaryOp, left: Box<Expr>, right: Box<Expr> },
 }
 
@@ -36,11 +36,6 @@ pub enum Constant {
     Boolean(bool),
 }
 
-pub struct CallExpr {
-    pub callee: Box<Expr>,
-    pub args: Vec<Expr>,
-}
-
 pub enum BinaryOp {
     Error,
     Eq,
@@ -49,4 +44,44 @@ pub enum BinaryOp {
     LessEq,
     GreaterThan,
     GreaterEq,
+    NumberAdd,
+    NumberSub,
+    NumberMul,
+    NumberDiv,
+    StringConcat,
+}
+
+pub trait IrtVisitor {
+    fn visit_ir_tree(&mut self, tree: &IrTree) {}
+    fn visit_statement(&mut self, statement: &Statement) {}
+    fn visit_save_global(&mut self, save: &Save<GlobalId>) {}
+    fn visit_expr(&mut self, expr: &Expr) {}
+}
+
+pub trait IrtNode {
+    fn accept(&self, visitor: &mut impl IrtVisitor);
+}
+
+impl IrtNode for IrTree {
+    fn accept(&self, visitor: &mut impl IrtVisitor) {
+        visitor.visit_ir_tree(self);
+    }
+}
+
+impl IrtNode for Statement {
+    fn accept(&self, visitor: &mut impl IrtVisitor) {
+        visitor.visit_statement(self);
+    }
+}
+
+impl IrtNode for Save<GlobalId> {
+    fn accept(&self, visitor: &mut impl IrtVisitor) {
+        visitor.visit_save_global(self);
+    }
+}
+
+impl IrtNode for Expr {
+    fn accept(&self, visitor: &mut impl IrtVisitor) {
+        visitor.visit_expr(self);
+    }
 }

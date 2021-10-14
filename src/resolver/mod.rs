@@ -4,12 +4,13 @@ use std::iter::repeat;
 use std::rc::Rc;
 
 use globals::*;
+pub use globals::GlobalId;
 use lookup::*;
 use qname_list::*;
 use types::*;
 
 use crate::ast::*;
-use crate::resolver::irt::{IrTree, Save, Statement, Expr as IrtExpr, ExprType as IrtExprType, BinaryOp as IrtBinaryOp};
+use crate::resolver::irt::{BinaryOp as IrtBinaryOp, Expr as IrtExpr, ExprType as IrtExprType, IrTree, Save, Statement};
 
 mod types;
 mod globals;
@@ -787,6 +788,11 @@ impl Resolver<'_> {
                     (BinaryOp::GT, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::boolean(), IrtBinaryOp::GreaterThan),
                     (BinaryOp::LEQ, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::boolean(), IrtBinaryOp::LessEq),
                     (BinaryOp::GEQ, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::boolean(), IrtBinaryOp::GreaterEq),
+                    (BinaryOp::PLUS, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::number(), IrtBinaryOp::NumberAdd),
+                    (BinaryOp::MINUS, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::number(), IrtBinaryOp::NumberSub),
+                    (BinaryOp::TIMES, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::number(), IrtBinaryOp::NumberMul),
+                    (BinaryOp::DIV, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::number(), IrtBinaryOp::NumberDiv),
+                    (BinaryOp::PLUS, l, r) if l == &BuiltinTypeNames::string() && r == &BuiltinTypeNames::string() => (BuiltinTypeNames::string(), IrtBinaryOp::StringConcat),
                     (op, left, right) => {
                         let message = if left.is_inferred() {
                             format!("Unable to infer type of left-hand operand")
@@ -886,16 +892,15 @@ impl Resolver<'_> {
         }
         Ok((
             *rft.return_type,
-            irt::ExprType::Call(irt::CallExpr {
+            irt::ExprType::Call {
                 callee: Box::new(callee),
                 args,
-            })
+            }
         ))
     }
 
     fn unify(&mut self, expected: ResolvedType, actual: ResolvedType, line: u32, col: u32) -> ResolvedType {
         let mut error = None;
-        print!("{:?} {:?}", expected, actual);
         let unified = match (expected, actual) {
             (ResolvedType::Inferred, actual) => actual,
             (ResolvedType::Any, _) => ResolvedType::Any,
@@ -941,7 +946,6 @@ impl Resolver<'_> {
                 col,
             });
         }
-        println!(" -> {:?}", unified);
         unified
     }
 

@@ -358,7 +358,12 @@ fn inferred_return_type() {
 
 #[test]
 fn hello() {
-    assert_no_errs(resolve_from_src(include_str!("hello.snek")));
+    assert_no_errs(resolve_from_src(include_str!("../../../tests/hello.snek")));
+}
+
+#[test]
+fn quick_maffs() {
+    assert_no_errs(resolve_from_src(include_str!("../../../tests/math.snek")));
 }
 
 fn define_types(src: &str) -> Resolver {

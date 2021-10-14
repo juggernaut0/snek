@@ -17,6 +17,10 @@ impl GlobalId {
     pub fn module(&self) -> &str {
         &self.0
     }
+
+    pub fn fqn(&self) -> &Fqn {
+        &self.1
+    }
 }
 
 pub struct GlobalDeclaration {
@@ -28,7 +32,7 @@ pub struct GlobalDeclaration {
 
 impl GlobalDeclaration {
     pub fn fqn(&self) -> &Fqn {
-        &self.id.1
+        &self.id.fqn()
     }
     pub fn is_exported(&self) -> bool {
         self.visibility.is_empty() && self.export

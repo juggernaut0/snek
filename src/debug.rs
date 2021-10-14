@@ -1,36 +1,74 @@
 use crate::ast::*;
 use std::fmt::{Display, Error, Formatter};
+use crate::resolver::GlobalId;
+use crate::resolver::irt::{self, IrtNode, IrTree, IrtVisitor, Save, Statement};
 //use crate::opcode::{OpCode, Code};
+
+trait DebugPrinter {
+    fn indent(&self) -> usize;
+    fn increase_indent(&mut self);
+    fn decrease_indent(&mut self);
+
+    fn print(&self, s: &str) {
+        let sp = "  ".repeat(self.indent());
+        println!("{}{}", sp, s);
+    }
+
+    fn print_open(&mut self, s: &str) {
+        self.print(&format!("{} {{", s));
+        self.increase_indent();
+    }
+
+    fn print_close(&mut self) {
+        self.decrease_indent();
+        self.print("}")
+    }
+
+    fn print_one<T: DebugPrinterNode<Self>>(&mut self, item: &T) {
+        item.print(self);
+    }
+
+    fn print_all<T: DebugPrinterNode<Self>>(&mut self, items: &Vec<T>) {
+        for item in items {
+            item.print(self)
+        }
+    }
+}
+
+trait DebugPrinterNode<T: DebugPrinter + ?Sized> {
+    fn print(&self, printer: &mut T);
+}
+
+// === AST ===
 
 pub struct AstPrinter {
     indent: usize
+}
+
+impl DebugPrinter for AstPrinter {
+    fn indent(&self) -> usize {
+        self.indent
+    }
+
+    fn increase_indent(&mut self) {
+        self.indent += 1;
+    }
+
+    fn decrease_indent(&mut self) {
+        self.indent -= 1;
+    }
+}
+
+impl<T: AstNode> DebugPrinterNode<AstPrinter> for T {
+    fn print(&self, printer: &mut AstPrinter) {
+        self.print(printer)
+    }
 }
 
 impl AstPrinter {
     pub fn new() -> AstPrinter {
         AstPrinter {
             indent: 0
-        }
-    }
-
-    fn print(&self, s: &str) {
-        let sp = "  ".repeat(self.indent);
-        println!("{}{}", sp, s);
-    }
-
-    fn print_open(&mut self, s: &str) {
-        self.print(&format!("{} {{", s));
-        self.indent += 1;
-    }
-
-    fn print_close(&mut self) {
-        self.indent -= 1;
-        self.print("}")
-    }
-
-    fn print_all<T: AstNode>(&mut self, items: &Vec<T>) {
-        for item in items {
-            item.print(self)
         }
     }
 
@@ -291,6 +329,106 @@ fn opt_display<T : Display>(ot: &Option<T>) -> String {
     match ot {
         None => "None".to_string(),
         Some(t) => format!("Some({})", t),
+    }
+}
+
+// === IrTree ===
+
+pub struct IrPrinter {
+    indent: usize,
+}
+
+impl IrPrinter {
+    pub fn new() -> IrPrinter {
+        IrPrinter {
+            indent: 0,
+        }
+    }
+}
+
+impl DebugPrinter for IrPrinter {
+    fn indent(&self) -> usize {
+        self.indent
+    }
+
+    fn increase_indent(&mut self) {
+        self.indent += 1;
+    }
+
+    fn decrease_indent(&mut self) {
+        self.indent -= 1;
+    }
+}
+
+impl<T: IrtNode> DebugPrinterNode<IrPrinter> for T {
+    fn print(&self, printer: &mut IrPrinter) {
+        self.accept(printer)
+    }
+}
+
+impl IrtVisitor for IrPrinter {
+    fn visit_ir_tree(&mut self, tree: &IrTree) {
+        self.print_open("IR");
+        self.print_all(&tree.statements);
+        self.print_close();
+    }
+
+    fn visit_statement(&mut self, statement: &Statement) {
+        match statement {
+            Statement::SaveGlobal(save, expr) => {
+                self.print_open("Save global");
+                self.print_one(save);
+                self.print_one(expr);
+                self.print_close();
+            }
+            Statement::SaveLocal(_, _) => {}
+            Statement::Discard(expr) => self.print_one(expr),
+        }
+    }
+
+    fn visit_save_global(&mut self, save: &Save<GlobalId>) {
+        match save {
+            Save::Normal(id) => self.print(&id.fqn().to_string()),
+            Save::Destructure(_) => {}
+        }
+    }
+
+    fn visit_expr(&mut self, expr: &crate::resolver::irt::Expr) {
+        match &expr.expr_type {
+            irt::ExprType::Error => {}
+            irt::ExprType::LoadConstant(irt::Constant::Unit) => self.print("()"),
+            irt::ExprType::LoadConstant(irt::Constant::Boolean(b)) => self.print(&b.to_string()),
+            irt::ExprType::LoadConstant(irt::Constant::String(s)) => self.print(&format!("{:?}", s)),
+            irt::ExprType::LoadConstant(irt::Constant::Number(f)) => self.print(&f.to_string()),
+            irt::ExprType::LoadGlobal(g) => self.print(&format!("global {}: {}", g.fqn(), expr.resolved_type)),
+            irt::ExprType::Call { callee, args } => {
+                self.print_open("Call");
+                self.print_one(callee.as_ref());
+                self.print_all(args);
+                self.print_close();
+
+            }
+            irt::ExprType::Binary { left, right, op } => {
+                let op_str = match op {
+                    irt::BinaryOp::Error => "?",
+                    irt::BinaryOp::Eq => "equality",
+                    irt::BinaryOp::Neq => "inequality",
+                    irt::BinaryOp::LessThan => "less than",
+                    irt::BinaryOp::LessEq => "less than or equal",
+                    irt::BinaryOp::GreaterThan => "greater than",
+                    irt::BinaryOp::GreaterEq => "greater than or",
+                    irt::BinaryOp::NumberAdd => "add",
+                    irt::BinaryOp::NumberSub => "subtract",
+                    irt::BinaryOp::NumberMul => "multiply",
+                    irt::BinaryOp::NumberDiv => "divide",
+                    irt::BinaryOp::StringConcat => "concat",
+                };
+                self.print_open(&format!("Binary {} : {}", op_str, expr.resolved_type));
+                self.print_one(left.as_ref());
+                self.print_one(right.as_ref());
+                self.print_close();
+            }
+        }
     }
 }
 
