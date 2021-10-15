@@ -366,6 +366,21 @@ fn quick_maffs() {
     assert_no_errs(resolve_from_src(include_str!("../../../tests/math.snek")));
 }
 
+#[test]
+fn union_case_unification() {
+    assert_no_errs(resolve_from_src(include_str!("union_case_unification.snek")));
+}
+
+#[test]
+fn union_case_mismatch() {
+    assert!(resolve_from_src(include_str!("union_case_mismatch.snek")).is_err());
+}
+
+#[test]
+fn generic_union() {
+    assert_no_errs(resolve_from_src(include_str!("generic_union.snek")));
+}
+
 fn define_types(src: &str) -> Resolver {
     let (ast, errs) = crate::parser::parse(src);
     assert!(errs.is_empty());

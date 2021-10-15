@@ -1,0 +1,2 @@
+type MyUn = () | String
+let s: MyUn = 5

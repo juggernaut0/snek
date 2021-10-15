@@ -1,0 +1,2 @@
+type MyUn<T> = T | ()
+let s: MyUn<String> = "hello"

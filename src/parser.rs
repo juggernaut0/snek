@@ -315,8 +315,8 @@ impl<'a> Parser<'a> {
         if public {
             // For sure a record
             Some(TypeCase::Record(self.type_case_record(public)?))
-        } else if self.current.matches_value(SYMBOL, "{") { // TODO this isn't correct, could be ()
-            // For sure a func_type
+        } else if self.current.matches_value(SYMBOL, "{") || self.current.matches_value(SYMBOL, "(") {
+            // Either func_type or unit, let type_name sort it out
             Some(TypeCase::Case(self.type_name()?))
         } else if let Some(first_ident) = self.current.matches(IDENT) {
             let (line, col) = self.pos();
@@ -333,7 +333,7 @@ impl<'a> Parser<'a> {
                 Some(TypeCase::Case(type_name))
             }
         } else {
-            self.error_at_current("type declaration or type name");
+            self.error_at_current("type declaration or type");
             None
         }
     }

@@ -59,6 +59,7 @@ pub struct ResolvedField {
     pub public: bool,
     pub resolved_type: ResolvedType
 }
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResolvedType {
     Id(TypeId, Vec<ResolvedType>),
@@ -94,6 +95,23 @@ impl ResolvedType {
             _ => false
         }
     }
+
+    pub fn instantiate(&mut self, args: &[ResolvedType]) {
+        match self {
+            ResolvedType::Id(_, my_args) => {
+                my_args.iter_mut().for_each(|it| it.instantiate(args))
+            },
+            ResolvedType::TypeParam(i) => *self = args[*i].clone(),
+            ResolvedType::Func { params, return_type } => {
+                params.iter_mut().for_each(|it| it.instantiate(args));
+                return_type.instantiate(args);
+            },
+            ResolvedType::Callable(return_type) => {
+                return_type.instantiate(args);
+            },
+            _other => {}
+        }
+    }
 }
 
 impl Display for ResolvedType {
@@ -108,7 +126,10 @@ impl Display for ResolvedType {
                 }
                 Ok(())
             }
-            ResolvedType::TypeParam(id) => todo!("Need type param name"),
+            ResolvedType::TypeParam(id) => {
+                //todo!("Need type param name")
+                write!(f, "type param {}", id)
+            }
             ResolvedType::Func { params, return_type } => {
                 write!(f, "{{ ")?;
                 join(f, &params, " ")?;

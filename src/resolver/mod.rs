@@ -11,12 +11,14 @@ use types::*;
 
 use crate::ast::*;
 use crate::resolver::irt::{BinaryOp as IrtBinaryOp, Expr as IrtExpr, ExprType as IrtExprType, IrTree, Save, Statement};
+use crate::resolver::unifier::Unifier;
 
 mod types;
 mod globals;
 mod lookup;
 mod qname_list;
 pub mod irt;
+mod unifier;
 #[cfg(test)]
 mod test;
 
@@ -116,6 +118,7 @@ fn make_builtins() -> ModuleDecls {
     }
 }
 
+// TODO move to submod so it can be private
 pub struct Resolver<'deps> {
     // in scope items, including imports
     types: HashMap<TypeId, Rc<TypeDeclaration>>,
@@ -526,9 +529,7 @@ impl Resolver<'_> {
                                     // instantiate type params
                                     let mut subs: Vec<_> = fs.clone();
                                     for rf in &mut subs {
-                                        if let ResolvedType::TypeParam(i) = &rf.resolved_type {
-                                            rf.resolved_type = args[*i].clone()
-                                        };
+                                        rf.resolved_type.instantiate(&args);
                                     }
                                     Some(subs)
                                 } else {
@@ -906,54 +907,7 @@ impl Resolver<'_> {
     }
 
     fn unify(&mut self, expected: ResolvedType, actual: ResolvedType, line: u32, col: u32) -> ResolvedType {
-        let mut error = None;
-        let unified = match (expected, actual) {
-            (ResolvedType::Inferred, actual) => actual,
-            (ResolvedType::Any, _) => ResolvedType::Any,
-            (expected, ResolvedType::Nothing) => expected,
-            (expected, ResolvedType::Inferred) => expected,
-            (expected, ResolvedType::Error) => expected,
-            (ResolvedType::Error, _) => ResolvedType::Error,
-            (ResolvedType::Id(e_id, e_type_args), ResolvedType::Id(a_id, a_type_args)) => {
-                if e_id != a_id {
-                    error = Some((e_id.fqn().to_string(), a_id.fqn().to_string()));
-                    ResolvedType::Id(e_id, e_type_args)
-                } else {
-                    let unified_args = e_type_args
-                        .into_iter()
-                        .zip(a_type_args)
-                        .map(|(e, a)| self.unify(e, a, line, col))
-                        .collect();
-                    ResolvedType::Id(e_id, unified_args)
-                }
-            },
-            (ResolvedType::TypeParam(e_i), ResolvedType::TypeParam(a_i)) => {
-                if e_i != a_i {
-                    // TODO sub in type param names
-                    error = Some((format!("type param {}", e_i), format!("type param {}", a_i)));
-                }
-                ResolvedType::TypeParam(e_i)
-            }
-            (ResolvedType::Callable(expected_return_type), ResolvedType::Func { params, mut return_type }) => {
-                // Reuse the same Box for the return value
-                let actual_return_type = std::mem::replace(return_type.as_mut(), ResolvedType::Error);
-                *return_type = self.unify(*expected_return_type, actual_return_type, line, col);
-                ResolvedType::Func { params, return_type }
-            }
-            (expected, actual) if expected == actual => expected,
-            (expected, actual) => {
-                error = Some((format!("{}", expected), format!("{}", actual)));
-                expected
-            }
-        };
-        if let Some((e_name, a_name)) = error {
-            self.errors.push(Error {
-                message: format!("Type mismatch. Expected: {} Actual: {}", e_name, a_name),
-                line,
-                col,
-            });
-        }
-        unified
+        Unifier::new(self, line, col).unify(expected, actual)
     }
 
     /*fn resolve_usages_decl(&mut self, decl: &Decl, scope: &Scope) {
