@@ -1,5 +1,5 @@
 use crate::resolver::{Error, Resolver};
-use crate::resolver::types::{ResolvedType, TypeDeclaration, TypeDefinition, TypeId};
+use crate::resolver::types::{ResolvedType, TypeDefinition, TypeId};
 
 pub struct Unifier<'r, 'ast> {
     resolver: &'r mut Resolver<'ast>,
@@ -15,9 +15,7 @@ impl Unifier<'_, '_> {
     pub fn unify(&mut self, expected: ResolvedType, actual: ResolvedType) -> ResolvedType {
         let mut errors = Vec::new();
         let res = self.unify_impl(&mut errors, expected, actual);
-        for error in errors {
-            self.resolver.errors.push(error);
-        }
+        self.resolver.errors.extend(errors);
         res
     }
 
@@ -33,12 +31,8 @@ impl Unifier<'_, '_> {
             (ResolvedType::Id(e_id, e_type_args), actual) => {
                 self.unify_id(errors, e_id, e_type_args, actual)
             },
-            (ResolvedType::TypeParam(e_i), ResolvedType::TypeParam(a_i)) => {
-                if e_i != a_i {
-                    self.add_unify_error(errors, ResolvedType::TypeParam(e_i), ResolvedType::TypeParam(a_i))
-                } else {
-                    ResolvedType::TypeParam(e_i)
-                }
+            (ResolvedType::TypeParam(_), ResolvedType::TypeParam(_)) => {
+                panic!("raw type params should never be compared");
             }
             (ResolvedType::Callable(expected_return_type), ResolvedType::Func { params, mut return_type }) => {
                 // Reuse the same Box for the return value
@@ -72,7 +66,7 @@ impl Unifier<'_, '_> {
                     self.add_unify_error(errors, ResolvedType::Id(e_id, e_type_args), actual)
                 }
             }
-            TypeDefinition::Union(mut cases) => {
+            TypeDefinition::Union(cases) => {
                 for mut case in cases {
                     case.instantiate(&e_type_args);
                     let mut errors = Vec::new();

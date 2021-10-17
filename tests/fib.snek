@@ -1,4 +1,4 @@
-let fib = { n ->
+let fib = { n: Number ->
   (match n
     { 1 -> 1 }
     { 2 -> 1 }

@@ -1,6 +1,6 @@
 use crate::ast::*;
 use std::fmt::{Display, Error, Formatter};
-use crate::resolver::GlobalId;
+use crate::resolver::{GlobalId, LocalId};
 use crate::resolver::irt::{self, IrtNode, IrTree, IrtVisitor, Save, Statement};
 //use crate::opcode::{OpCode, Code};
 
@@ -381,15 +381,34 @@ impl IrtVisitor for IrPrinter {
                 self.print_one(expr);
                 self.print_close();
             }
-            Statement::SaveLocal(_, _) => {}
-            Statement::Discard(expr) => self.print_one(expr),
+            Statement::SaveLocal(save, expr) => {
+                self.print_open("Save local");
+                self.print_one(save);
+                self.print_one(expr);
+                self.print_close();
+            }
+            Statement::Discard(expr) => {
+                self.print_open("Discard");
+                self.print_one(expr);
+                self.print_close();
+            },
+            Statement::Return(expr) => {
+                self.print_open("Return");
+                self.print_one(expr);
+                self.print_close();
+            }
         }
     }
 
     fn visit_save_global(&mut self, save: &Save<GlobalId>) {
-        match save {
-            Save::Normal(id) => self.print(&id.fqn().to_string()),
-            Save::Destructure(_) => {}
+        for (path, id) in &save.paths {
+            self.print(&format!("{} -> {}", path.join("::"), id.fqn()));
+        }
+    }
+
+    fn visit_save_local(&mut self, save: &Save<LocalId>) {
+        for (path, id) in &save.paths {
+            self.print(&format!("{} -> {}", path.join("::"), id.0));
         }
     }
 
@@ -401,6 +420,7 @@ impl IrtVisitor for IrPrinter {
             irt::ExprType::LoadConstant(irt::Constant::String(s)) => self.print(&format!("{:?}", s)),
             irt::ExprType::LoadConstant(irt::Constant::Number(f)) => self.print(&f.to_string()),
             irt::ExprType::LoadGlobal(g) => self.print(&format!("global {}: {}", g.fqn(), expr.resolved_type)),
+            irt::ExprType::LoadLocal(l) => self.print(&format!("local {}: {}", l.0, expr.resolved_type)),
             irt::ExprType::Call { callee, args } => {
                 self.print_open("Call");
                 self.print_one(callee.as_ref());
@@ -416,7 +436,7 @@ impl IrtVisitor for IrPrinter {
                     irt::BinaryOp::LessThan => "less than",
                     irt::BinaryOp::LessEq => "less than or equal",
                     irt::BinaryOp::GreaterThan => "greater than",
-                    irt::BinaryOp::GreaterEq => "greater than or",
+                    irt::BinaryOp::GreaterEq => "greater than or equal",
                     irt::BinaryOp::NumberAdd => "add",
                     irt::BinaryOp::NumberSub => "subtract",
                     irt::BinaryOp::NumberMul => "multiply",
@@ -428,30 +448,14 @@ impl IrtVisitor for IrPrinter {
                 self.print_one(right.as_ref());
                 self.print_close();
             }
+            irt::ExprType::LoadParam => {
+                self.print("Pop param")
+            }
+            irt::ExprType::Func { statements } => {
+                self.print_open("Lambda");
+                self.print_all(statements);
+                self.print_close();
+            }
         }
     }
 }
-
-/*pub fn print_code(code: &Code) {
-    let mut ip: usize = 0;
-    let mut last_line = 0;
-    let mut funcs = Vec::new();
-    while ip < code.len() {
-        let (opcode, d) = code.get_op_code(ip);
-        let line = code.get_line(ip);
-        if last_line != line {
-            last_line = line;
-            println!("{}\t{}\t{:?}", line, ip, opcode);
-        } else {
-            println!("\t{}\t{:?}", ip, opcode);
-        }
-        ip += d;
-        if let OpCode::MakeClosure(code, _) = opcode {
-            funcs.push((code, line));
-        }
-    }
-    for (c, line) in funcs {
-        println!("\nFunction @ line {}", line);
-        print_code(&c);
-    }
-}*/

@@ -1,4 +1,5 @@
 use crate::resolver::globals::GlobalId;
+use crate::resolver::locals::LocalId;
 use crate::resolver::types::ResolvedType;
 
 pub struct IrTree {
@@ -7,13 +8,17 @@ pub struct IrTree {
 
 pub enum Statement {
     SaveGlobal(Save<GlobalId>, Expr),
-    SaveLocal(Save<()>, Expr), // TODO LocalId
+    SaveLocal(Save<LocalId>, Expr),
     Discard(Expr),
+    Return(Expr),
 }
 
-pub enum Save<Target> {
+/*pub enum Save<Target> {
     Normal(Target), // Save the whole expr result to T
-    Destructure(Vec<(String, Target)>), // List of field names to T
+    Destructure(Vec<(String, Target)>), // Save fields of expr to Ts
+}*/
+pub struct Save<Target> {
+    pub paths: Vec<(Vec<String>, Target)>, // Field path to save target
 }
 
 pub struct Expr {
@@ -25,8 +30,11 @@ pub enum ExprType {
     Error,
     LoadConstant(Constant),
     LoadGlobal(GlobalId),
+    LoadLocal(LocalId),
+    LoadParam,
     Call { callee: Box<Expr>, args: Vec<Expr> },
     Binary { op: BinaryOp, left: Box<Expr>, right: Box<Expr> },
+    Func { statements: Vec<Statement> },
 }
 
 pub enum Constant {
@@ -51,10 +59,12 @@ pub enum BinaryOp {
     StringConcat,
 }
 
+#[allow(unused)]
 pub trait IrtVisitor {
     fn visit_ir_tree(&mut self, tree: &IrTree) {}
     fn visit_statement(&mut self, statement: &Statement) {}
     fn visit_save_global(&mut self, save: &Save<GlobalId>) {}
+    fn visit_save_local(&mut self, save: &Save<LocalId>) {}
     fn visit_expr(&mut self, expr: &Expr) {}
 }
 
@@ -77,6 +87,12 @@ impl IrtNode for Statement {
 impl IrtNode for Save<GlobalId> {
     fn accept(&self, visitor: &mut impl IrtVisitor) {
         visitor.visit_save_global(self);
+    }
+}
+
+impl IrtNode for Save<LocalId> {
+    fn accept(&self, visitor: &mut impl IrtVisitor) {
+        visitor.visit_save_local(self);
     }
 }
 

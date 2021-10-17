@@ -10,14 +10,19 @@ use qname_list::*;
 use types::*;
 
 use crate::ast::*;
-use crate::resolver::irt::{BinaryOp as IrtBinaryOp, Expr as IrtExpr, ExprType as IrtExprType, IrTree, Save, Statement};
-use crate::resolver::unifier::Unifier;
+use irt::{BinaryOp as IrtBinaryOp, Expr as IrtExpr, ExprType as IrtExprType, IrTree, Save, Statement};
+#[cfg(debug_assertions)]
+pub use locals::LocalId;
+#[cfg(not(debug_assertions))]
+use locals::LocalId;
+use unifier::Unifier;
 
 mod types;
 mod globals;
 mod lookup;
 mod qname_list;
 pub mod irt;
+mod locals;
 mod unifier;
 #[cfg(test)]
 mod test;
@@ -128,9 +133,7 @@ pub struct Resolver<'deps> {
 
     //usages: HashMap<QNameExpr, (ValueId, String)>,
     dependencies: HashMap<&'deps String, &'deps ModuleDecls>,
-    global_id_seq: u16,
     errors: Vec<Error>,
-
 }
 
 impl Resolver<'_> {
@@ -150,7 +153,6 @@ impl Resolver<'_> {
             //usages: HashMap::new(),
             dependencies,
             exports,
-            global_id_seq: 0,
             errors: Vec::new(),
         }
     }
@@ -691,7 +693,7 @@ impl Resolver<'_> {
                     for ug in &ugb.decls {
                         let resolved_type = match ug.from {
                             BindingFrom::Direct => {
-                                save = Some(Save::Normal(ug.id.clone()));
+                                save = Some(Save { paths: vec![(Vec::new(), ug.id.clone())] });
                                 irt_expr.resolved_type.clone()
                             },
                             BindingFrom::Destructured(_) => todo!("destructured globals") // get type of field
@@ -724,8 +726,9 @@ impl Resolver<'_> {
     ) -> DefineGlobalResult {
         let (actual_type, irt_expr_type) = match &expr.expr_type {
             ExprType::QName(qn) => {
-                // TODO local scope
-                if let Some((global, visible)) = global_scope.get(&qn.parts) {
+                if let Some(local) = local_scope.get_from_qname(qn) {
+                    (local.typ.clone(), IrtExprType::LoadLocal(local.id))
+                } else if let Some((global, visible)) = global_scope.get(&qn.parts) {
                     if !visible {
                         self.errors.push(Error {
                             message: format!("{} cannot be accessed here.", qn.parts.join(".")),
@@ -824,7 +827,12 @@ impl Resolver<'_> {
                     Err(dfg) => return dfg
                 }
             },
-            ExprType::Lambda(_) => todo!("resolve_expr lambda"),
+            ExprType::Lambda(lambda_expr) => {
+                match self.resolve_lambda_expr(expected_type.clone(), expr, type_scope, global_scope, local_scope, lambda_expr) {
+                    Ok(it) => it,
+                    Err(dfg) => return dfg
+                }
+            }
             ExprType::List(_) => todo!(),
             ExprType::New(_, _) => todo!(),
             ExprType::Dot => todo!(),
@@ -904,6 +912,116 @@ impl Resolver<'_> {
                 args,
             }
         ))
+    }
+
+    fn resolve_lambda_expr(
+        &mut self,
+        expected_type: ResolvedType,
+        expr: &Expr,
+        type_scope: &LookupScope<TypeDeclLookup>,
+        global_scope: &LookupScope<GlobalLookup>,
+        local_scope: &LocalScope,
+        lambda_expr: &LambdaExpr,
+    ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
+        let (expected_params, expected_return_type) = match expected_type {
+            ResolvedType::Func { params, return_type } =>{
+                if params.len() != lambda_expr.params.len() {
+                    self.errors.push(Error {
+                        message: format!("Parameter count mismatch. Expected {} Actual {}", params.len(), lambda_expr.params.len()),
+                        line: expr.line,
+                        col: expr.col,
+                    });
+                }
+                (params, *return_type)
+            }
+            ResolvedType::Inferred => (Vec::new(), ResolvedType::Inferred),
+            _ => {
+                self.errors.push(Error {
+                    message: "Type mismatch".to_string(),
+                    line: expr.line,
+                    col: expr.col,
+                });
+                (Vec::new(), ResolvedType::Inferred)
+            }
+        };
+
+        let mut statements = Vec::new();
+        let mut param_types = Vec::new();
+        let mut scope = LocalScope::new(Some(local_scope));
+
+        let params = lambda_expr.params.iter()
+            .zip(expected_params.into_iter().chain(repeat(ResolvedType::Inferred)));
+        for (param, expected_param_type) in params {
+            let (names, param_type) = self.extract_names(param, type_scope);
+            let resolved_type = self.unify(expected_param_type, param_type, expr.line, expr.col); // TODO use pattern's line/col
+            if resolved_type.is_inferred() {
+                self.errors.push(Error {
+                    message: "Unable to infer parameter type, please specify explicitly".to_string(),
+                    line: expr.line,  // TODO use pattern's line/col
+                    col: expr.col,
+                });
+            }
+            let irt_expr = IrtExpr { resolved_type: resolved_type.clone(), expr_type: IrtExprType::LoadParam };
+            param_types.push(resolved_type);
+            let paths: Vec<_> = names.into_iter()
+                .map(|(name, declared_type, from)| {
+                    match from {
+                        BindingFrom::Direct => {
+                            let id = scope.insert(name.into(), declared_type);
+                            (Vec::new(), id)
+                        }
+                        BindingFrom::Destructured(_) => todo!("destructured param")
+                    }
+                })
+                .collect();
+            let statement = if paths.is_empty() {
+                Statement::Discard(irt_expr)
+            } else {
+                Statement::SaveLocal(Save { paths }, irt_expr)
+            };
+            statements.push(statement);
+        }
+
+        for binding in &lambda_expr.bindings {
+            let (names, expected_type) = self.extract_names(&binding.pattern, type_scope);
+            let dfg = self.resolve_expr(expected_type, &binding.expr, type_scope, global_scope, &scope);
+            // TODO can I accumulate these and return them all at once?
+            let irt_expr = match dfg {
+                DefineGlobalResult::NeedsType(_) => return Err(dfg),
+                DefineGlobalResult::Success(irt_expr) => irt_expr,
+            };
+            // TODO reduce duplication with above param code
+            let paths: Vec<_> = names.into_iter()
+                .map(|(name, declared_type, from)| {
+                    match from {
+                        BindingFrom::Direct => {
+                            let id = scope.insert(name.into(), declared_type);
+                            (Vec::new(), id)
+                        }
+                        BindingFrom::Destructured(_) => todo!("destructured param")
+                    }
+                })
+                .collect();
+            let statement = if paths.is_empty() {
+                Statement::Discard(irt_expr)
+            } else {
+                Statement::SaveLocal(Save { paths }, irt_expr)
+            };
+            statements.push(statement);
+        }
+
+        let dfg = self.resolve_expr(expected_return_type, &lambda_expr.expr, type_scope, global_scope, &scope);
+        let irt_expr = match dfg {
+            DefineGlobalResult::NeedsType(_) => return Err(dfg),
+            DefineGlobalResult::Success(irt_expr) => irt_expr,
+        };
+        let return_type = Box::new(irt_expr.resolved_type.clone());
+
+        statements.push(Statement::Return(irt_expr));
+
+        let rt = ResolvedType::Func { params: param_types, return_type };
+        let irt_expr_type = IrtExprType::Func { statements };
+        Ok((rt, irt_expr_type))
     }
 
     fn unify(&mut self, expected: ResolvedType, actual: ResolvedType, line: u32, col: u32) -> ResolvedType {
@@ -996,13 +1114,39 @@ impl Resolver<'_> {
 
 struct LocalScope<'a> {
     parent: Option<&'a LocalScope<'a>>,
+    declarations: Vec<ScopeItem>,
+    local_id_seq: u32,
+}
+
+struct ScopeItem {
+    pub name: String,
+    pub id: LocalId,
+    pub typ: ResolvedType,
 }
 
 impl<'a> LocalScope<'a> {
     fn new(parent: Option<&'a LocalScope<'a>>) -> LocalScope<'a> {
         LocalScope {
             parent,
+            declarations: Vec::new(),
+            local_id_seq: parent.map(|p| p.local_id_seq).unwrap_or(0),
         }
+    }
+
+    fn insert(&mut self, name: String, typ: ResolvedType) -> LocalId {
+        let id = LocalId(self.local_id_seq);
+        self.local_id_seq += 1; // TODO I don't think this is right, parent scopes also need their seqs incremented
+        self.declarations.push(ScopeItem { name, id, typ });
+        id
+    }
+
+    fn get(&self, name: &str) -> Option<&ScopeItem> {
+        self.declarations.iter().find(|d| &d.name == name).or_else(|| self.parent.and_then(|p| p.get(name)))
+    }
+
+    fn get_from_qname(&self, qn: &QName) -> Option<&ScopeItem> {
+        if qn.parts.len() != 1 { return None }
+        self.get(qn.parts.last().unwrap())
     }
 }
 

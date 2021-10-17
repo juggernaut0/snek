@@ -3,7 +3,7 @@
 1. Parsing: Tokens -> Parser -> Ast
 1. Resolve imports: Ast -> Importer -> ModuleDag
     * Build dag from imports: Error on recursive import
-1. Resolve declarations & Usages, and types: Ast + Deps' decls -> Resolver -> TypedAst + decls
+1. Resolve declarations & Usages, and types: Ast + Deps' ModuleDecls -> Resolver -> Irt + ModuleDecls
     * Resolver tracks all declarations, private and public, and their types
     * Need to resolve an Ast's dependencies' declarations before itself
 1. CodeGen: TypedAst -> CodeGenerator -> Code blocks
@@ -21,6 +21,9 @@
     * Faster implementation of locals and captured bindings
 
 ## Gc impls
+
+GC ON HOLD
+
 * Wrap environments & values in a `Mark<T>` struct that can be marked.
   * Pros: easy to implement mark logic, no additional dynamic allocations
   * Cons: an additional RefCell<bool> for every value, an additional
@@ -181,10 +184,10 @@ let unfoo: { <T> Foo<T> -> T } = { { t } -> t }
 2. Resolve record field types
     - :Foo { t: ttp.0 }
 3. Binding decls and declared types
-    - println: { * -> () } -> global.0
-    - unfoo: { :Foo<tp.0> -> tp.0 } -> global.1
+    - builtin:println: { * -> () }
+    - :unfoo: { <tp.0> :Foo<tp.0> -> tp.0 }
 4. Resolve exprs
-    1. Line 2: Function expr: expected type is "{ :Foo<tp.0> -> tp.0 }"
+    1. Line 2: Function expr: expected type is "{ <tp.0> :Foo<tp.0> -> tp.0 }"
         - create new scope
         - add params to scope
             - decon pattern, expected type is ":Foo<tp.0>"
@@ -195,33 +198,35 @@ let unfoo: { <T> Foo<T> -> T } = { { t } -> t }
                 - Unify tp.0 & tp.0 -> tp.0
                 - expr type is tp.0
             - function body return type is tp.0
-        - unify { :Foo<tp.0> -> tp.0 } & { :Foo<tp.0> -> tp.0 } -> { :Foo<tp.0> -> tp.0 }
-    1. Line 3: call expr: expected type "Any"
+        - unify { <tp.0> :Foo<tp.0> -> tp.0 } & { <tp.0> :Foo<tp.0> -> tp.0 } -> { <tp.0> :Foo<tp.0> -> tp.0 }
+    1. Line 3: call expr: expected type "_"
         - resolve callee
-            - qname expr: Expected type is { ? -> Any }
-                - resolve println to global.0
-                - Unify { ? -> Any } & { Any -> builtin:Unit } -> { Any -> Any }
-                - expr type is { Any -> Any }
+            - qname expr: Expected type is { ? -> _ }
+                - resolve println to builtin:println
+                - Unify { ? -> _ } & { Any -> builtin:Unit } -> { Any -> builtin:Unit }
+                - expr type is { Any -> builtin:Unit }
         - verify param count: 1 == 1
         - resolve params
             - call expr: expected type is "Any"
                 - resolve callee
                     - qname expr: Expected type is { ? -> Any }
-                        - resolve unfoo to global.1
-                        - Unify { ? -> Any } & { :Foo<tp.0> -> tp.0 } -> { :Foo<tp.0> -> Any }
-                        - expr type is { :Foo<tp.0> -> Any }
+                        - resolve unfoo to :unfoo
+                        - Unify { ? -> Any } & { <tp.0> :Foo<tp.0> -> tp.0 } -> { <tp.0> :Foo<tp.0> -> Any }
+                        - expr type is { <tp.0> :Foo<tp.0> -> Any }
                 - verify param count: 1 == 1
                 - resolve params
-                    - new expr: expected type is :Foo<_>
+                    - new expr: expected type is :Foo<tp.0>
                         - infer type as :Foo
                         - field init:
-                            - t: string literal: expected type is ttp.0 of :Foo = _
-                                - unify _ & String
+                            - t: string literal: expected type is tp.0
+                                - unify tp.0 & String -> String
+                                    - resolve tp.0 to String
                                 - expr type is String
-                        - Unify :Foo<_> & :Foo<String> -> :Foo<String>
+                        - Unify :Foo<tp.0> & :Foo<String> -> :Foo<String>
                         - expr type is :Foo<String>
-                - Instantiate { :Foo<tp.0> -> Any } as { :Foo<String> -> Any }
+                - Verify all type params resolved
+                - Instantiate callee { <tp.0> :Foo<tp.0> -> Any } as { :Foo<String> -> Any }
                 - unify Any & Any -> Any
                 - expr type is Any
-        - unify Any & Any -> Any
-        - expr type is Any
+        - unify _ & builtin:Unit -> builtin:Unit
+        - expr type is builtin:Unit

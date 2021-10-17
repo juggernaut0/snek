@@ -1,4 +1,4 @@
-let addOne = { x -> (x + 1) }
+let addOne = { x: Number -> (x + 1) }
 let main = { ->
     (println (addOne 5))
     (println (addOne 1336))

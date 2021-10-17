@@ -690,6 +690,16 @@ impl<'a> Parser<'a> {
         self.advance(); // advance past "->"
         let mut bindings = Vec::new();
         loop {
+            {
+                let (line, col) = self.pos();
+                if self.advance_if_matches_value(SYMBOL, "public") {
+                    self.error(ParseError {
+                        message: "A local binding may not be public".to_string(),
+                        line,
+                        col,
+                    })
+                }
+            }
             let binding = if self.current.matches_value(KEYWORD, "let") {
                 self.binding(false)?
             } else {

@@ -381,6 +381,11 @@ fn generic_union() {
     assert_no_errs(resolve_from_src(include_str!("generic_union.snek")));
 }
 
+#[test]
+fn basic_functions() {
+    assert_no_errs(resolve_from_src(include_str!("../../../tests/func.snek")));
+}
+
 fn define_types(src: &str) -> Resolver {
     let (ast, errs) = crate::parser::parse(src);
     assert!(errs.is_empty());
