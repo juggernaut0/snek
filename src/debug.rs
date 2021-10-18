@@ -131,20 +131,20 @@ impl AstPrinter {
     }
 
     fn print_pattern(&mut self, pattern: &Pattern) {
-        match pattern {
-            Pattern::Wildcard(tn) => self.print(&format!("pattern wildcard type = {}", opt_display(tn))),
-            Pattern::Name(n) => self.print(&format!("pattern name = {} type = {}", n.name, opt_display(&n.type_name))),
-            Pattern::Constant(l) => {
+        match &pattern.pattern {
+            PatternType::Wildcard(tn) => self.print(&format!("pattern wildcard type = {}", opt_display(tn))),
+            PatternType::Name(n) => self.print(&format!("pattern name = {} type = {}", n.name, opt_display(&n.type_name))),
+            PatternType::Constant(l) => {
                 self.print_open("pattern constant");
                 self.print_literal(l);
                 self.print_close();
             },
-            Pattern::List(nested) => {
+            PatternType::List(nested) => {
                 self.print_open("pattern list");
                 self.print_all(nested);
                 self.print_close();
             }
-            Pattern::Destruct(nested, tn) => {
+            PatternType::Destruct(nested, tn) => {
                 self.print_open(&format!("pattern destructure type = {}", opt_display(tn)));
                 self.print_all(nested);
                 self.print_close();
@@ -281,12 +281,6 @@ impl AstNode for Binding {
 impl AstNode for FieldPattern {
     fn print(&self, printer: &mut AstPrinter) {
         printer.print_field_pattern(self);
-    }
-}
-
-impl Display for QName {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-        write!(f, "{}", self.parts.join("."))
     }
 }
 
@@ -452,7 +446,7 @@ impl IrtVisitor for IrPrinter {
                 self.print("Pop param")
             }
             irt::ExprType::Func { statements } => {
-                self.print_open("Lambda");
+                self.print_open(&format!("Lambda: {}", expr.resolved_type));
                 self.print_all(statements);
                 self.print_close();
             }

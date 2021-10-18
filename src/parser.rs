@@ -60,10 +60,11 @@ impl<'a> Parser<'a> {
         let imports = self.imports();
         let mut decls = self.decls(true);
         if !self.current.is_eof() {
+            let (line, col) = self.pos();
             if let Some(expr) = self.call_expr() {
                 decls.push(Decl::Binding(Binding {
                     public: false,
-                    pattern: Pattern::Wildcard(None),
+                    pattern: Pattern { line, col, pattern: PatternType::Wildcard(None) },
                     expr
                 }));
             }
@@ -380,13 +381,14 @@ impl<'a> Parser<'a> {
     }
 
     fn pattern(&mut self) -> Option<Pattern> {
-        if self.advance_if_matches_value(IDENT, "_") {
+        let (line, col) = self.pos();
+        let pattern = if self.advance_if_matches_value(IDENT, "_") {
             let type_name = self.opt_type_annotation()?;
-            Some(Pattern::Wildcard(type_name))
+            Some(PatternType::Wildcard(type_name))
         } else if let Some(name) = self.current.matches(IDENT) {
-            Some(Pattern::Name(self.name_pattern(name)?))
+            Some(PatternType::Name(self.name_pattern(name)?))
         } else if let Some(l) = self.literal() {
-            Some(Pattern::Constant(l))
+            Some(PatternType::Constant(l))
         } else if self.advance_if_matches_value(SYMBOL, "[") {
             let mut patterns = Vec::new();
             while !self.current.matches_value(SYMBOL, "]") {
@@ -394,7 +396,7 @@ impl<'a> Parser<'a> {
                 patterns.push(pattern);
             }
             self.advance(); // advance past "]"
-            Some(Pattern::List(patterns))
+            Some(PatternType::List(patterns))
         } else if self.advance_if_matches_value(SYMBOL, "{") {
             let mut fields = Vec::new();
             fields.push(self.field_pattern()?);
@@ -411,11 +413,12 @@ impl<'a> Parser<'a> {
             }
             self.require_value(SYMBOL, "}")?;
             let type_name = self.opt_type_annotation()?;
-            Some(Pattern::Destruct(fields, type_name))
+            Some(PatternType::Destruct(fields, type_name))
         } else {
             self.error_at_current("pattern");
             None
-        }
+        };
+        pattern.map(|pattern| { Pattern { line, col, pattern} })
     }
 
     fn name_pattern(&mut self, name: &str) -> Option<Rc<NamePattern>> {
@@ -708,7 +711,8 @@ impl<'a> Parser<'a> {
                     let expr_type = ExprType::Lambda(LambdaExpr { params, bindings, expr: Box:: new(expr) });
                     return Some(Expr { line, col, expr_type })
                 }
-                Binding { public: false, pattern: Pattern::Wildcard(None), expr }
+                let pattern = Pattern { line: expr.line, col: expr.col, pattern: PatternType::Wildcard(None) };
+                Binding { public: false, pattern, expr }
             };
             bindings.push(binding);
         }

@@ -1,3 +1,4 @@
+use std::fmt::{self, Display, Formatter};
 use std::rc::Rc;
 
 pub struct Ast {
@@ -80,7 +81,13 @@ pub struct Binding {
     pub expr: Expr
 }
 
-pub enum Pattern {
+pub struct Pattern {
+    pub line: u32,
+    pub col: u32,
+    pub pattern: PatternType,
+}
+
+pub enum PatternType {
     Wildcard(Option<TypeName>),
     Name(Rc<NamePattern>),
     Constant(Literal),
@@ -152,6 +159,12 @@ pub enum ExprType {
 #[derive(Clone, Eq, PartialEq, Hash)]
 pub struct QName {
     pub parts: Vec<String>
+}
+
+impl Display for QName {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}", self.parts.join("."))
+    }
 }
 
 pub struct Literal {

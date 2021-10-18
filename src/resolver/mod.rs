@@ -497,13 +497,13 @@ impl Resolver<'_> {
     // returns a pair of (list of tuples of (name, type for that name, BindingFrom for that name), type for whole pattern)
     fn extract_names<'ast>(&mut self, pattern: &'ast Pattern, scope: &LookupScope<TypeDeclLookup>) -> (Vec<(&'ast str, ResolvedType, BindingFrom<'ast>)>, ResolvedType) {
         let mut names = Vec::new();
-        let expected_type = match pattern {
-            Pattern::Wildcard(otn) => {
+        let expected_type = match &pattern.pattern {
+            PatternType::Wildcard(otn) => {
                 otn.as_ref()
                     .map(|tn| self.resolve_binding_type(tn, &[], scope))
                     .unwrap_or(ResolvedType::Inferred)
             },
-            Pattern::Constant(lit) => {
+            PatternType::Constant(lit) => {
                 match lit.lit_type {
                     LiteralType::NUMBER => BuiltinTypeNames::number(),
                     LiteralType::STRING => BuiltinTypeNames::string(),
@@ -511,14 +511,14 @@ impl Resolver<'_> {
                     LiteralType::UNIT => ResolvedType::Unit,
                 }
             },
-            Pattern::Name(np) => {
+            PatternType::Name(np) => {
                 let rt = np.type_name.as_ref()
                     .map(|it| self.resolve_binding_type(it, &[], scope))
                     .unwrap_or(ResolvedType::Inferred);
                 names.push((np.name.as_str(), rt.clone(), BindingFrom::Direct));
                 rt
             },
-            Pattern::Destruct(fields, tn) => {
+            PatternType::Destruct(fields, tn) => {
                 let declared_type = tn.as_ref()
                     .map(|it| (self.resolve_binding_type(it, &[], scope), it));
                 let declared_type_fields = declared_type
@@ -585,7 +585,7 @@ impl Resolver<'_> {
                 }
                 declared_type.map(|(rt, _)| rt).unwrap_or(ResolvedType::Inferred)
             },
-            Pattern::List(_) => { todo!("list pattern") },
+            PatternType::List(_) => { todo!("list pattern") },
         };
         (names, expected_type)
     }
@@ -834,10 +834,12 @@ impl Resolver<'_> {
                 }
             }
             ExprType::List(_) => todo!(),
-            ExprType::New(_, _) => todo!(),
+            ExprType::New(_, _) => todo!("resolve_expr new"),
             ExprType::Dot => todo!(),
         };
+        print!("expr {}:{} expected {} actual {} ", expr.line, expr.col, expected_type, actual_type);
         let resolved_type = self.unify(expected_type, actual_type, expr.line, expr.col);
+        println!("resolved {}", resolved_type);
         DefineGlobalResult::Success(irt::Expr {
             resolved_type,
             expr_type: irt_expr_type,
@@ -862,7 +864,7 @@ impl Resolver<'_> {
             ResolvedType::Func { params, return_type } => (params, return_type),
             ResolvedType::Callable(et) => {
                 self.errors.push(Error {
-                    message: "Unable to infer callable type".into(),
+                    message: "Unable to infer callee type".into(),
                     line: expr.line,
                     col: expr.col,
                 });
@@ -953,12 +955,12 @@ impl Resolver<'_> {
             .zip(expected_params.into_iter().chain(repeat(ResolvedType::Inferred)));
         for (param, expected_param_type) in params {
             let (names, param_type) = self.extract_names(param, type_scope);
-            let resolved_type = self.unify(expected_param_type, param_type, expr.line, expr.col); // TODO use pattern's line/col
+            let resolved_type = self.unify(expected_param_type, param_type, param.line, param.col);
             if resolved_type.is_inferred() {
                 self.errors.push(Error {
-                    message: "Unable to infer parameter type, please specify explicitly".to_string(),
-                    line: expr.line,  // TODO use pattern's line/col
-                    col: expr.col,
+                    message: "Unable to infer parameter type, specify the type explicitly".to_string(),
+                    line: param.line,  // TODO use pattern's line/col
+                    col: param.col,
                 });
             }
             let irt_expr = IrtExpr { resolved_type: resolved_type.clone(), expr_type: IrtExprType::LoadParam };
@@ -981,6 +983,8 @@ impl Resolver<'_> {
             };
             statements.push(statement);
         }
+        
+        // TODO need to go through all bindings before hand and add their names to scope so binding exprs can reference names declared later
 
         for binding in &lambda_expr.bindings {
             let (names, expected_type) = self.extract_names(&binding.pattern, type_scope);
@@ -995,7 +999,7 @@ impl Resolver<'_> {
                 .map(|(name, declared_type, from)| {
                     match from {
                         BindingFrom::Direct => {
-                            let id = scope.insert(name.into(), declared_type);
+                            let id = scope.insert(name.into(), irt_expr.resolved_type.clone());
                             (Vec::new(), id)
                         }
                         BindingFrom::Destructured(_) => todo!("destructured param")

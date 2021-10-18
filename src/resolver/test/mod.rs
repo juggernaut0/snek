@@ -350,7 +350,7 @@ fn wildcard_discard() {
 }
 
 #[test]
-#[ignore] // TODO needs resolve_expr lambda
+#[ignore] // TODO needs resolve_expr new
 fn inferred_return_type() {
     let src = include_str!("inferred_return_type.snek");
     assert_no_errs(resolve_from_src(src));
@@ -384,6 +384,11 @@ fn generic_union() {
 #[test]
 fn basic_functions() {
     assert_no_errs(resolve_from_src(include_str!("../../../tests/func.snek")));
+}
+
+#[test]
+fn nested_functions() {
+    assert_no_errs(resolve_from_src(include_str!("nested_functions.snek")));
 }
 
 fn define_types(src: &str) -> Resolver {

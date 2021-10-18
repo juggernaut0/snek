@@ -6,8 +6,6 @@ use crate::parser::ParseError;
 use std::path::Path;
 use crate::importer::BaseError;
 use std::rc::Rc;
-use crate::debug::IrPrinter;
-use crate::resolver::irt::IrtNode;
 
 mod ast;
 //mod codegen;
@@ -70,7 +68,8 @@ fn run_from_file(path: &Path) {
         }
     };
     #[cfg(debug_assertions)] {
-        irt.accept(&mut IrPrinter::new())
+        use resolver::irt::IrtNode;
+        irt.accept(&mut debug::IrPrinter::new())
     }
 
     /*let code = match codegen::compile(&ast) {
