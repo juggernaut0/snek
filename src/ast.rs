@@ -100,6 +100,15 @@ pub enum FieldPattern {
     Binding(Pattern, String)
 }
 
+impl FieldPattern {
+    pub fn field_name(&self) -> &String {
+        match self {
+            FieldPattern::Name(np) => &np.name,
+            FieldPattern::Binding(_, name) => name,
+        }
+    }
+}
+
 #[derive(Eq, PartialEq, Hash)]
 pub struct NamePattern {
     pub line: u32,

@@ -10,12 +10,13 @@ use qname_list::*;
 use types::*;
 
 use crate::ast::*;
-use irt::{BinaryOp as IrtBinaryOp, Expr as IrtExpr, ExprType as IrtExprType, IrTree, Save, Statement};
+use irt::{BinaryOp as IrtBinaryOp, Expr as IrtExpr, ExprType as IrtExprType, IrTree, Save, Statement, ResolvedPattern, PatternType as IrtPatternType};
 #[cfg(debug_assertions)]
 pub use locals::LocalId;
 #[cfg(not(debug_assertions))]
 use locals::LocalId;
 use unifier::Unifier;
+use crate::resolver::irt::Constant;
 
 mod types;
 mod globals;
@@ -467,6 +468,7 @@ impl Resolver<'_> {
                     self.find_globals(undefined_globals, ns, namespace.append(&ns.name), vis, can_export && ns.public, scope.enter_scope(&ns.name.parts));
                 },
                 Decl::Binding(b) => {
+                    let resolved_pattern = self.resolve_pattern(&b.pattern, &scope, None);
                     let (names, expected_type) = self.extract_names(&b.pattern, &scope);
                     let decls = names
                         .into_iter()
@@ -506,6 +508,7 @@ impl Resolver<'_> {
     }
 
     // returns a pair of (list of tuples of (name, type for that name, BindingFrom for that name), type for whole pattern)
+    #[deprecated]
     fn extract_names<'ast>(&mut self, pattern: &'ast Pattern, scope: &LookupScope<TypeDeclLookup>) -> (Vec<(&'ast str, ResolvedType, BindingFrom<'ast>)>, ResolvedType) {
         let mut names = Vec::new();
         let expected_type = match &pattern.pattern {
@@ -599,6 +602,135 @@ impl Resolver<'_> {
             PatternType::List(_) => { todo!("list pattern") },
         };
         (names, expected_type)
+    }
+
+    fn resolve_pattern(
+        &mut self,
+        pattern: &Pattern,
+        scope: &LookupScope<TypeDeclLookup>,
+        expr_type: Option<ResolvedType>,
+    ) -> ResolvedPattern {
+        match &pattern.pattern {
+            PatternType::Wildcard(otn) => {
+                let resolved_type = otn.as_ref()
+                    .map(|tn| self.resolve_binding_type(tn, &[], scope))
+                    .or(expr_type)
+                    .unwrap_or(ResolvedType::Inferred);
+                ResolvedPattern { resolved_type, pattern_type: IrtPatternType::Discard }
+            }
+            PatternType::Name(np) => {
+                let resolved_type = np.type_name.as_ref()
+                    .map(|it| self.resolve_binding_type(it, &[], scope))
+                    .or(expr_type)
+                    .unwrap_or(ResolvedType::Inferred);
+                ResolvedPattern { resolved_type, pattern_type: IrtPatternType::Name(np.name.as_str().into()) }
+            }
+            PatternType::Constant(lit) => {
+                let resolved_type = match lit.lit_type {
+                    LiteralType::NUMBER => BuiltinTypeNames::number(),
+                    LiteralType::STRING => BuiltinTypeNames::string(),
+                    LiteralType::BOOL => BuiltinTypeNames::boolean(),
+                    LiteralType::UNIT => ResolvedType::Unit,
+                };
+                let constant = self.literal_to_constant(lit, pattern.line, pattern.col);
+                ResolvedPattern { resolved_type, pattern_type: IrtPatternType::Constant(constant) }
+            }
+            PatternType::Destruct(fps, otn) => {
+                let declared_type = otn.as_ref()
+                    .map(|tn| self.resolve_binding_type(tn, &[], scope))
+                    .or(expr_type);
+
+                let declared_type_fields = declared_type
+                    .as_ref()
+                    .and_then(|rt| {
+                        match rt {
+                            ResolvedType::Id(id, args) => {
+                                let type_decl = self.types.get(id).expect("Missing type def");
+                                if let TypeDefinition::Record(fs) = type_decl.definition.clone().instantiate_into(&args) {
+                                    Some(fs)
+                                } else {
+                                    self.errors.push(Error {
+                                        message: "Destructuring pattern must be for a record type".to_string(),
+                                        line: pattern.line,
+                                        col: pattern.col,
+                                    });
+                                    None
+                                }
+                            },
+                            ResolvedType::Inferred => { None },
+                            _ => {
+                                self.errors.push(Error {
+                                    message: "Destructuring pattern must be for a record type".to_string(),
+                                    line: pattern.line,
+                                    col: pattern.col,
+                                });
+                                None
+                            }
+                        }
+                    });
+
+                let mut subpatterns = Vec::new();
+                if let Some(declared_type_fields) = declared_type_fields {
+                    // Emit errors for any extraneous subpatterns
+                    for fp in fps {
+                        let field_name = fp.field_name();
+                        if !declared_type_fields.iter().any(|type_field| &type_field.name == field_name) {
+                            self.errors.push(Error {
+                                message: format!("Unknown field {}", field_name),
+                                line: pattern.line,
+                                col: pattern.col,
+                            });
+                        }
+                    }
+                    // Insert into subpatterns in the same order as the fields
+                    for type_field in declared_type_fields {
+                        // find a field pattern that matches this type field and generate its subpattern
+                        let subpattern = fps.iter()
+                            .find(|fp| &type_field.name == fp.field_name())
+                            .map(|fp| {
+                                let resolved_type = type_field.resolved_type.clone();
+                                match fp {
+                                    FieldPattern::Name(_) => {
+                                        ResolvedPattern { resolved_type, pattern_type: IrtPatternType::Name(type_field.name.as_str().into()) }
+                                    }
+                                    FieldPattern::Binding(subpat, _) => {
+                                        self.resolve_pattern(subpat, scope, Some(resolved_type))
+                                    }
+                                }
+                            })
+                            .unwrap_or_else(|| {
+                                let resolved_type = type_field.resolved_type.clone();
+                                ResolvedPattern { resolved_type, pattern_type: IrtPatternType::Discard }
+                            });
+                        subpatterns.push(subpattern)
+                    }
+                } else {
+                    // We don't know what the fields are so lets just pull out what we can.
+                    for field in fps {
+                        let resolved_pattern = match field {
+                            FieldPattern::Name(np) => {
+                                let declared_field_type = np.type_name.as_ref()
+                                    .map(|it| self.resolve_binding_type(it, &[], scope))
+                                    .unwrap_or(ResolvedType::Inferred);
+
+                                ResolvedPattern {
+                                    resolved_type: declared_field_type,
+                                    pattern_type: IrtPatternType::Name(np.name.as_str().into())
+                                }
+                            },
+                            FieldPattern::Binding(subpat, _) => {
+                                self.resolve_pattern(subpat, scope, None)
+                            },
+                        };
+                        subpatterns.push(resolved_pattern);
+                    }
+                }
+
+                let resolved_type = declared_type.unwrap_or(ResolvedType::Inferred);
+                ResolvedPattern { resolved_type, pattern_type: IrtPatternType::Destructuring(subpatterns) }
+            }
+            PatternType::List(_) => { todo!("list pattern") }
+        }
     }
 
     fn resolve_binding_type(&mut self, type_name: &TypeName, type_params: &[String], scope: &LookupScope<TypeDeclLookup>) -> ResolvedType {
@@ -779,25 +911,7 @@ impl Resolver<'_> {
                     LiteralType::BOOL => BuiltinTypeNames::boolean(),
                     LiteralType::UNIT => ResolvedType::Unit,
                 };
-                let cons = match lit.lit_type {
-                    LiteralType::NUMBER => irt::Constant::Number(lit.value.parse().unwrap()), // TODO handle out of range numbers?
-                    LiteralType::STRING => {
-                        let raw = match unescape(&lit.value) {
-                            Ok(raw) => raw,
-                            Err(msg) => {
-                                self.errors.push(Error {
-                                    message: msg,
-                                    line: expr.line,
-                                    col: expr.col,
-                                });
-                                String::new()
-                            }
-                        };
-                        irt::Constant::String(raw)
-                    },
-                    LiteralType::BOOL => irt::Constant::Boolean(lit.value.parse().unwrap()), // lit.value is guaranteed to be "true" or "false" by parser
-                    LiteralType::UNIT => irt::Constant::Unit,
-                };
+                let cons = self.literal_to_constant(lit, expr.line, expr.col);
                 (actual_type, IrtExprType::LoadConstant(cons))
             },
             ExprType::Unary(_, _) => todo!(),
@@ -1078,12 +1192,23 @@ impl Resolver<'_> {
 
         match typ.clone() {
             ResolvedType::Id(id, args) => {
-                // TODO destructuring
                 let type_def = self.types.get(&id).expect("missing type").definition.clone().instantiate_into(&args);
                 if let TypeDefinition::Union(cases) = type_def {
                     cases.into_iter().all(|case| {
                         self.is_exhaustive(patterns, case, scope)
                     })
+                } else if let TypeDefinition::Record(fields) = type_def {
+                    todo!("is_exhaustive destructure")
+                    /*
+                    def is_exh_for_fields(fields, patterns):
+                        if fields is empty:
+                            return True
+                        field = fields[0]
+                        relevant_patterns = patterns.filter { it is destructure of typ }.map { it.fields[field.name] }
+                        if not is_exhaustive(relevant_patterns, field.type)
+                            return False
+                        return relevant_patterns.all { pattern -> is_exh_for_fields(fields[1:], relevant_patterns.filter { it.fields[field.name] == (pattern || is_catchall) }) }
+                    */
                 } else if id == BUILTIN_TYPE_NAMES.with(|btn| btn.boolean.clone()) {
                     let mut has_true = false;
                     let mut has_false = false;
@@ -1114,6 +1239,28 @@ impl Resolver<'_> {
             ResolvedType::Nothing => true,
             ResolvedType::Inferred => false,
             ResolvedType::Error => false,
+        }
+    }
+
+    fn literal_to_constant(&mut self, lit: &Literal, line: u32, col: u32) -> Constant {
+        match lit.lit_type {
+            LiteralType::NUMBER => irt::Constant::Number(lit.value.parse().unwrap()), // TODO handle out of range numbers?
+            LiteralType::STRING => {
+                let raw = match unescape(&lit.value) {
+                    Ok(raw) => raw,
+                    Err(msg) => {
+                        self.errors.push(Error {
+                            message: msg,
+                            line,
+                            col,
+                        });
+                        String::new()
+                    }
+                };
+                irt::Constant::String(raw)
+            },
+            LiteralType::BOOL => irt::Constant::Boolean(lit.value.parse().unwrap()), // lit.value is guaranteed to be "true" or "false" by parser
+            LiteralType::UNIT => irt::Constant::Unit,
         }
     }
 }

@@ -21,6 +21,18 @@ pub struct Save<Target> {
     pub paths: Vec<(Vec<String>, Target)>, // Field path to save target
 }
 
+pub struct ResolvedPattern {
+    pub resolved_type: ResolvedType,
+    pub pattern_type: PatternType,
+}
+
+pub enum PatternType {
+    Discard,
+    Name(String),
+    Constant(Constant),
+    Destructuring(Vec<ResolvedPattern>), // corresponds 1:1 with resolved_type's fields
+}
+
 pub struct Expr {
     pub resolved_type: ResolvedType,
     pub expr_type: ExprType,
