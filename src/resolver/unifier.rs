@@ -19,6 +19,12 @@ impl Unifier<'_, '_> {
         res
     }
 
+    pub fn unifies(&self, expected: ResolvedType, actual: ResolvedType) -> bool {
+        let mut errors = Vec::new();
+        let _ = self.unify_impl(&mut errors, expected, actual);
+        errors.is_empty()
+    }
+
     fn unify_impl(&self, errors: &mut Vec<Error>, expected: ResolvedType, actual: ResolvedType) -> ResolvedType {
         match (expected, actual) {
             (ResolvedType::Inferred, actual) => actual,
@@ -69,9 +75,7 @@ impl Unifier<'_, '_> {
             TypeDefinition::Union(cases) => {
                 for mut case in cases {
                     case.instantiate(&e_type_args);
-                    let mut errors = Vec::new();
-                    let _ = self.unify_impl(&mut errors, case, actual.clone());
-                    if errors.is_empty() {
+                    if self.unifies(case, actual.clone()) {
                         return ResolvedType::Id(e_id, e_type_args)
                     }
                 }

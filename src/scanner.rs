@@ -204,8 +204,7 @@ impl<'a> Scanner<'a> {
             | "type"
             | "new"
             | "let"
-            | "method"
-            | "impl"
+            | "match"
             | "true"
             | "false" => self.token(KEYWORD),
             _ => self.token(IDENT)

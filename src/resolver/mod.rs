@@ -57,6 +57,10 @@ impl BuiltinTypeNames {
         }
     }
 
+    fn mod_name() -> Rc<String> {
+        BUILTIN_TYPE_NAMES.with(|btn| Rc::clone(&btn.mod_name))
+    }
+
     fn number() -> ResolvedType {
         ResolvedType::Id(BUILTIN_TYPE_NAMES.with(|btn| btn.number.clone()), Vec::new())
     }
@@ -100,8 +104,16 @@ fn make_primitive_type(id: TypeId) -> Rc<TypeDeclaration> {
     })
 }
 
+fn make_builtin_global(name: &str, resolved_type: ResolvedType) -> Rc<GlobalDeclaration> {
+    Rc::new(GlobalDeclaration {
+        id: GlobalId::new(BuiltinTypeNames::mod_name(), Fqn::new(Vec::new(), name.to_string())),
+        resolved_type,
+        visibility: Vec::new(),
+        export: true,
+    })
+}
+
 fn make_builtins() -> ModuleDecls {
-    let builtin_mod_name = BUILTIN_TYPE_NAMES.with(|btn| Rc::clone(&btn.mod_name));
     ModuleDecls {
         types: vec![
             make_primitive_type(BUILTIN_TYPE_NAMES.with(|btn| btn.number.clone())),
@@ -109,17 +121,16 @@ fn make_builtins() -> ModuleDecls {
             make_primitive_type(BUILTIN_TYPE_NAMES.with(|btn| btn.boolean.clone())),
         ],
         globals: vec![
-            Rc::new(GlobalDeclaration {
-                id: GlobalId::new(Rc::clone(&builtin_mod_name), Fqn::new(Vec::new(), "println".to_string())),
-                resolved_type: ResolvedType::Func {
-                    params: vec![ResolvedType::Any],
-                    return_type: Box::new(ResolvedType::Unit)
-                },
-                visibility: Vec::new(),
-                export: true,
-            })
+            make_builtin_global("println", ResolvedType::Func {
+                params: vec![ResolvedType::Any],
+                return_type: Box::new(ResolvedType::Unit)
+            }),
+            make_builtin_global("TODO", ResolvedType::Func {
+                params: Vec::new(),
+                return_type: Box::new(ResolvedType::Nothing)
+            }),
         ],
-        name: builtin_mod_name,
+        name: BuiltinTypeNames::mod_name(),
     }
 }
 
@@ -682,12 +693,20 @@ impl Resolver<'_> {
                     continue
                 },
                 DefineGlobalResult::Success(irt_expr) => {
-                    if ugb.decls.len() > 0 && irt_expr.resolved_type.is_inferred() {
+                    let pattern = &ugb.ast_node.pattern;
+                    if irt_expr.resolved_type.is_inferred() {
                         self.errors.push(Error {
                             message: "Unable to infer type of global binding".into(),
-                            line: ugb.ast_node.expr.line,
-                            col: ugb.ast_node.expr.col,
-                        })
+                            line: pattern.line,
+                            col: pattern.col,
+                        });
+                    }
+                    if !self.is_exhaustive(std::slice::from_ref(pattern), irt_expr.resolved_type.clone(), &type_scope) {
+                        self.errors.push(Error {
+                            message: "Binding pattern must be exhaustive".into(),
+                            line: pattern.line,
+                            col: pattern.col,
+                        });
                     }
                     let mut save: Option<Save<GlobalId>> = None;
                     for ug in &ugb.decls {
@@ -836,10 +855,9 @@ impl Resolver<'_> {
             ExprType::List(_) => todo!(),
             ExprType::New(_, _) => todo!("resolve_expr new"),
             ExprType::Dot => todo!(),
+            ExprType::Match => unreachable!("match handled in resolve_call_expr")
         };
-        print!("expr {}:{} expected {} actual {} ", expr.line, expr.col, expected_type, actual_type);
         let resolved_type = self.unify(expected_type, actual_type, expr.line, expr.col);
-        println!("resolved {}", resolved_type);
         DefineGlobalResult::Success(irt::Expr {
             resolved_type,
             expr_type: irt_expr_type,
@@ -855,6 +873,10 @@ impl Resolver<'_> {
         local_scope: &LocalScope,
         call_expr: &CallExpr,
     ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
+        if let ExprType::Match = &call_expr.callee.expr_type {
+            todo!("match expression")
+        }
+
         let callee_result = self.resolve_expr(ResolvedType::Callable(Box::new(expected_type)), &call_expr.callee, type_scope, global_scope, local_scope);
         let callee = match callee_result {
             DefineGlobalResult::NeedsType(_) => return Err(callee_result),
@@ -959,7 +981,7 @@ impl Resolver<'_> {
             if resolved_type.is_inferred() {
                 self.errors.push(Error {
                     message: "Unable to infer parameter type, specify the type explicitly".to_string(),
-                    line: param.line,  // TODO use pattern's line/col
+                    line: param.line,
                     col: param.col,
                 });
             }
@@ -983,8 +1005,6 @@ impl Resolver<'_> {
             };
             statements.push(statement);
         }
-        
-        // TODO need to go through all bindings before hand and add their names to scope so binding exprs can reference names declared later
 
         for binding in &lambda_expr.bindings {
             let (names, expected_type) = self.extract_names(&binding.pattern, type_scope);
@@ -1032,88 +1052,70 @@ impl Resolver<'_> {
         Unifier::new(self, line, col).unify(expected, actual)
     }
 
-    /*fn resolve_usages_decl(&mut self, decl: &Decl, scope: &Scope) {
-        match decl {
-            Decl::Binding(b) => self.resolve_usages_expr(&b.expr, scope),
-            Decl::Namespace(ns) => self.resolve_usages_namespace(ns, scope),
-            Decl::Type(t) => {
-                if let Some(ns) = &t.namespace {
-                    self.resolve_usages_namespace(ns, scope)
-                }
-            }
-        }
+    fn unifies(&mut self, expected: ResolvedType, actual: ResolvedType, line: u32, col: u32) -> bool {
+        Unifier::new(self, line, col).unifies(expected, actual)
     }
 
-    fn resolve_usages_namespace(&mut self, ns: &Namespace, parent: &Scope) {
-        let declarations = ns.decls.iter().flat_map(|d| self.find_declarations(d)).collect();
-        self.add_declarations(&declarations);
-        let scope = Scope::new(&declarations, Some(parent));
-        for decl in &ns.decls {
-            self.resolve_usages_decl(decl, &scope);
-        }
-    }
+    //noinspection RsSelfConvention
+    // Do the set of given patterns cover all possible values of typ?
+    fn is_exhaustive(&mut self, patterns: &[Pattern], typ: ResolvedType, scope: &LookupScope<TypeDeclLookup>) -> bool {
+        let is_catch_all = |pattern: &Pattern| -> bool {
+            let type_name = match &pattern.pattern {
+                PatternType::Wildcard(type_name) => type_name,
+                PatternType::Name(np) => &np.type_name,
+                _ => return false,
+            };
+            let expected = type_name.as_ref()
+                .map(|tn| self.resolve_binding_type(tn, &[], scope))
+                .unwrap_or(ResolvedType::Inferred);
 
-    fn resolve_usages_expr(&mut self, expr: &Expr, scope: &Scope) {
-        match &expr.expr_type {
-            ExprType::QName(qn) => {
-                if qn.parts.len() == 1 {
-                    if let Some(d) = scope.get(&qn.parts[0]) {
-                        self.add_usage(expr, d);
+            self.unifies(expected, typ.clone(), pattern.line, pattern.col)
+        };
+
+        if patterns.iter().any(is_catch_all) {
+            return true;
+        }
+
+        match typ.clone() {
+            ResolvedType::Id(id, args) => {
+                // TODO destructuring
+                let type_def = self.types.get(&id).expect("missing type").definition.clone().instantiate_into(&args);
+                if let TypeDefinition::Union(cases) = type_def {
+                    cases.into_iter().all(|case| {
+                        self.is_exhaustive(patterns, case, scope)
+                    })
+                } else if id == BUILTIN_TYPE_NAMES.with(|btn| btn.boolean.clone()) {
+                    let mut has_true = false;
+                    let mut has_false = false;
+                    for pattern in patterns {
+                        if let PatternType::Constant(Literal { lit_type: LiteralType::BOOL, value }) = &pattern.pattern {
+                            if value == "true" {
+                                has_true = true;
+                            } else if value == "false" {
+                                has_false = true;
+                            }
+                        }
                     }
+                    has_true && has_false
+                } else {
+                    false
                 }
-            },
-            ExprType::Unary(_, e) => self.resolve_usages_expr(e, scope),
-            ExprType::Binary(_, e1, e2) => {
-                self.resolve_usages_expr(e1, scope);
-                self.resolve_usages_expr(e2, scope);
-            },
-            ExprType::Call(ce) => {
-                self.resolve_usages_expr(&ce.callee, scope);
-                ce.args.iter().for_each(|e| self.resolve_usages_expr(e, scope));
-            },
-            ExprType::List(es) => es.iter().for_each(|e| self.resolve_usages_expr(e, scope)),
-            ExprType::Lambda(le) => {
-                let mut declarations: Vec<_> = le.params.iter()
-                    .flat_map(|p| self.extract_names(p))
-                    .collect();
-                declarations.extend(le.bindings.iter().flat_map(|b| self.extract_names(&b.pattern)));
-                self.add_declarations(&declarations);
-                let lambda_scope = Scope::new(&declarations, Some(scope));
-                for b in &le.bindings {
-                    self.resolve_usages_expr(&b.expr, &lambda_scope);
-                }
-                self.resolve_usages_expr(&le.expr, &lambda_scope);
             }
-            ExprType::Constant(_) | ExprType::Dot => {} // No action
+            ResolvedType::Unit => {
+                patterns.iter().any(|pattern| {
+                    if let PatternType::Constant(lit) = &pattern.pattern {
+                        lit.lit_type == LiteralType::UNIT
+                    } else {
+                        false
+                    }
+                })
+            }
+            ResolvedType::TypeParam(_) | ResolvedType::Func { .. } | ResolvedType::Callable(_) | ResolvedType::Any => false,
+            ResolvedType::Nothing => true,
+            ResolvedType::Inferred => false,
+            ResolvedType::Error => false,
         }
     }
-
-    fn find_declarations(&mut self, decl: &Decl) -> Vec<Declaration> {
-        match decl {
-            Decl::Binding(b) => self.extract_names(&b.pattern),
-            _ => Vec::new()
-        }
-    }
-
-    fn make_declaration(&mut self, name: Rc<NamePattern>) -> Declaration {
-        let id = self.declaration_id_seq;
-        self.declaration_id_seq += 1;
-        Declaration {
-            name,
-            id
-        }
-    }*/
-
-    /*fn add_declarations(&mut self, declarations: &Vec<Declaration>) {
-        for d in declarations {
-            self.declarations.insert(Rc::clone(&d.name), d.id);
-        }
-    }
-
-    fn add_usage(&mut self, qname: &Expr, declaration: &Declaration) {
-       let qne = QNameExpr::from(qname).unwrap(); // only called with a QName Expr
-        self.usages.insert(qne, (declaration.id, declaration.name().clone()));
-    }*/
 }
 
 struct LocalScope<'a> {

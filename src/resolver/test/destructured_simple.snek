@@ -1,13 +1,14 @@
 type A { x: () }
+let a: A = (TODO)
 namespace One {
-    let { x } = ()
+    let { x } = a
 }
 namespace Two {
-    let { x }: A = ()
+    let { x }: A = a
 }
 namespace Three {
-    let { x: () } = ()
+    let { x: () } = a
 }
 namespace Four {
-    let { x: () }: A = ()
+    let { x: () }: A = a
 }

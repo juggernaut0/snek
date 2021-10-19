@@ -60,7 +60,30 @@ pub struct ResolvedField {
     pub resolved_type: ResolvedType
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl TypeDefinition {
+    pub fn instantiate_into(mut self, args: &[ResolvedType]) -> TypeDefinition {
+        self.instantiate(args);
+        self
+    }
+
+    pub fn instantiate(&mut self, args: &[ResolvedType]) {
+        match self {
+            TypeDefinition::Record(fields) => {
+                for field in fields {
+                    field.resolved_type.instantiate(args);
+                }
+            }
+            TypeDefinition::Union(cases) => {
+                for case in cases {
+                    case.instantiate(args);
+                }
+            }
+            TypeDefinition::Primitive => {}
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum ResolvedType {
     Id(TypeId, Vec<ResolvedType>),
     TypeParam(usize),

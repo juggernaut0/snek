@@ -35,7 +35,7 @@ func_type = '{' type_params? type_name* '->' type_name '}'
 
 block = (binding | call_expr | binary_expr)* expr
 expr = call_expr | new_expr | binary_expr | qualified_name | lambda | list_expr | const_literal
-call_expr = '(' ('.' | expr) expr* ')'
+call_expr = '(' ('.' | 'match' | expr) expr* ')'
 new_expr = 'new' named_type? '{' field_init_list? '}'
 field_init_list = field_init (',' field_init)* ','?
 field_init = IDENT ':' expr
@@ -62,8 +62,7 @@ KEYWORDS:
 	type
 	new
 	let
-	method
-	impl
+	match
 	true
 	false
 

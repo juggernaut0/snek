@@ -1,0 +1,3 @@
+type T = Number | String
+let t: T = 0
+let n: Number = t

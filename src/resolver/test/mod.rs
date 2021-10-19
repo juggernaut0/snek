@@ -148,13 +148,9 @@ fn union() {
 #[test]
 fn func_field() {
     let src = "type BiConsumer<T> { consume: { T T -> () } }";
-    let resolver = define_types(&src);
-    assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
+    let (decls, _) = assert_no_errs(resolve_from_src(src));
 
-    let t = resolver.types
-        .iter()
-        .find_map(|(id, d)| if id.fqn().as_slice() == &["BiConsumer"] { Some(d) } else { None })
-        .unwrap();
+    let t = get_type_decl(&decls, "BiConsumer");
     let fields = if let TypeDefinition::Record(fields) = &t.definition { fields } else { panic!() };
     let consume = fields.first().unwrap();
     assert_eq!("consume", consume.name);
@@ -180,29 +176,16 @@ fn named_globals() {
 }
 
 #[test]
+#[ignore] // needs destructured globals
 fn destructured_simple() {
-    let src = include_str!("destructured_simple.snek");
-    let (ast, errs) = crate::parser::parse(src);
-    assert!(errs.is_empty());
-    let mod_name = Rc::new(String::new());
-    let mut resolver = Resolver::new(Rc::clone(&mod_name), &[]);
-    let (undefined_globals, _) = resolver.resolve_3(&ast);
-    assert!(resolver.errors.is_empty(), "{:?}", resolver.errors);
+    let (decls, _) = assert_no_errs(resolve_from_src(include_str!("destructured_simple.snek")));
 
-    assert_eq!(4, undefined_globals.len());
+    assert_eq!(5, decls.globals.len());
 
-    // Does this need to be order-independent?
-    assert_eq!(["One", "x"], undefined_globals[0].decls[0].fqn.as_slice());
-    assert_eq!(ResolvedType::Inferred, undefined_globals[0].decls[0].declared_type);
-
-    assert_eq!(["Two", "x"], undefined_globals[1].decls[0].fqn.as_slice());
-    assert_eq!(ResolvedType::Unit, undefined_globals[1].decls[0].declared_type);
-
-    assert_eq!(["Three", "x"], undefined_globals[2].decls[0].fqn.as_slice());
-    assert_eq!(ResolvedType::Unit, undefined_globals[2].decls[0].declared_type);
-
-    assert_eq!(["Four", "x"], undefined_globals[3].decls[0].fqn.as_slice());
-    assert_eq!(ResolvedType::Unit, undefined_globals[3].decls[0].declared_type);
+    for ns in ["One", "Two", "Three", "Four"] {
+        let decl = decls.get_global(&QName { parts: vec![ns.to_string(), "x".to_string()] }).unwrap();
+        assert_eq!(ResolvedType::Unit, decl.resolved_type);
+    }
 }
 
 #[test]
@@ -328,6 +311,27 @@ fn type_conflict() {
 }
 
 #[test]
+fn const_pattern_let() {
+    let src = "let 0 = 5";
+
+    let result = resolve_from_src(src);
+    assert!(result.is_err());
+}
+
+#[test]
+fn const_pattern_let_unit() {
+    let src = "let () = ()";
+
+    assert_no_errs(resolve_from_src(src));
+}
+
+#[test]
+fn const_pattern_let_union() {
+    let result = resolve_from_src(include_str!("const_pattern_let_union.snek"));
+    assert!(result.is_err());
+}
+
+#[test]
 fn explicit_types() {
     let src = "\
 let n: Number = 5
@@ -352,8 +356,13 @@ fn wildcard_discard() {
 #[test]
 #[ignore] // TODO needs resolve_expr new
 fn inferred_return_type() {
-    let src = include_str!("inferred_return_type.snek");
-    assert_no_errs(resolve_from_src(src));
+    assert_no_errs(resolve_from_src(include_str!("inferred_return_type.snek")));
+}
+
+#[test]
+#[ignore] // TODO needs resolve_expr new
+fn inferred_generic_arg() {
+    assert_no_errs(resolve_from_src(include_str!("inferred_generic_arg.snek")));
 }
 
 #[test]
@@ -389,6 +398,12 @@ fn basic_functions() {
 #[test]
 fn nested_functions() {
     assert_no_errs(resolve_from_src(include_str!("nested_functions.snek")));
+}
+
+#[test]
+#[ignore] // requires match expr
+fn basic_match() {
+    assert_no_errs(resolve_from_src(include_str!("basic_match.snek")));
 }
 
 fn define_types(src: &str) -> Resolver {
@@ -427,6 +442,10 @@ fn resolve_from_src(src: &str) -> ResolveResult {
 
 fn get_type<'a>(resolver: &'a Resolver, name: &str) -> &'a TypeDeclaration {
     resolver.types.values().find(|it| it.id.fqn().as_slice().last().unwrap() == name).unwrap()
+}
+
+fn get_type_decl<'a>(module_decls: &'a ModuleDecls, name: &str) -> &'a TypeDeclaration {
+    module_decls.get_type(&QName { parts: vec![name.to_string()] }).unwrap()
 }
 
 fn get_global<'a>(decls: &'a ModuleDecls, name: &str) -> &'a GlobalDeclaration {

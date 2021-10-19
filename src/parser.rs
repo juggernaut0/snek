@@ -389,6 +389,9 @@ impl<'a> Parser<'a> {
             Some(PatternType::Name(self.name_pattern(name)?))
         } else if let Some(l) = self.literal() {
             Some(PatternType::Constant(l))
+        } else if self.advance_if_matches_value(SYMBOL, "(") {
+            self.require_value(SYMBOL, ")")?;
+            Some(PatternType::Constant(Literal { lit_type: LiteralType::UNIT, value: String::new() }))
         } else if self.advance_if_matches_value(SYMBOL, "[") {
             let mut patterns = Vec::new();
             while !self.current.matches_value(SYMBOL, "]") {
@@ -554,11 +557,15 @@ impl<'a> Parser<'a> {
         let (line, col) = self.pos();
         self.advance(); // advance past "("
         if self.advance_if_matches_value(SYMBOL, ")") {
-            let expr_type = ExprType::Constant(Literal { lit_type: LiteralType::UNIT, value: "".to_string() });
+            let expr_type = ExprType::Constant(Literal { lit_type: LiteralType::UNIT, value: String::new() });
             return Some(Expr { line, col, expr_type })
         }
         let first = if self.advance_if_matches_value(SYMBOL, ".") {
             let expr_type = ExprType::Dot;
+            let (line, col) = self.pos();
+            Expr { line, col, expr_type }
+        } else if self.advance_if_matches_value(KEYWORD, "match") {
+            let expr_type = ExprType::Match;
             let (line, col) = self.pos();
             Expr { line, col, expr_type }
         } else {

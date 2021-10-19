@@ -208,6 +208,9 @@ impl AstPrinter {
             ExprType::Dot => {
                 self.print("dot")
             }
+            ExprType::Match => {
+                self.print("match")
+            }
         }
     }
 

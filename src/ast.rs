@@ -153,7 +153,8 @@ pub enum ExprType {
     Lambda(LambdaExpr),
     List(Vec<Expr>),
     New(Option<NamedType>, Vec<FieldInit>),
-    Dot
+    Dot,
+    Match,
 }
 
 #[derive(Clone, Eq, PartialEq, Hash)]
@@ -172,7 +173,7 @@ pub struct Literal {
     pub value: String
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum LiteralType {
     NUMBER,
     STRING,

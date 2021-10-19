@@ -1,0 +1,3 @@
+type Box<T> { t: T }
+let b: Box<_> = new { "hello" }
+let bs: Box<String> = b
