@@ -1,3 +1,4 @@
+use crate::resolver::FieldPath;
 use crate::resolver::globals::GlobalId;
 use crate::resolver::locals::LocalId;
 use crate::resolver::types::ResolvedType;
@@ -13,12 +14,8 @@ pub enum Statement {
     Return(Expr),
 }
 
-/*pub enum Save<Target> {
-    Normal(Target), // Save the whole expr result to T
-    Destructure(Vec<(String, Target)>), // Save fields of expr to Ts
-}*/
 pub struct Save<Target> {
-    pub paths: Vec<(Vec<String>, Target)>, // Field path to save target
+    pub paths: Vec<(FieldPath, Target)>,
 }
 
 pub struct ResolvedPattern {
@@ -30,7 +27,7 @@ pub enum PatternType {
     Discard,
     Name(String),
     Constant(Constant),
-    Destructuring(Vec<ResolvedPattern>), // corresponds 1:1 with resolved_type's fields
+    Destructuring(Vec<(String, ResolvedPattern)>),
 }
 
 pub struct Expr {

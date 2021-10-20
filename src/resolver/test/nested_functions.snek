@@ -1,4 +1,5 @@
 let main = { ->
   let f = { -> (println "") }
+  diag
   (f)
 }

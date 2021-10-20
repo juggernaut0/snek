@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display, Formatter};
 use std::iter::repeat;
 use std::rc::Rc;
 
@@ -469,11 +469,12 @@ impl Resolver<'_> {
                 },
                 Decl::Binding(b) => {
                     let resolved_pattern = self.resolve_pattern(&b.pattern, &scope, None);
-                    let (names, expected_type) = self.extract_names(&b.pattern, &scope);
+                    let expected_type = resolved_pattern.resolved_type.clone();
+                    let names = self.extract_names(resolved_pattern);
                     let decls = names
                         .into_iter()
                         .map(|(name, declared_type, from)| {
-                            let fqn = Fqn::new_from_qname_list(namespace, name.to_string());
+                            let fqn = Fqn::new_from_qname_list(namespace, name);
                             let id = GlobalId::new(Rc::clone(&self.exports.name), fqn.clone());
                             if !declared_type.is_inferred() {
                                 self.import_global(Rc::new(GlobalDeclaration {
@@ -507,101 +508,28 @@ impl Resolver<'_> {
         }
     }
 
-    // returns a pair of (list of tuples of (name, type for that name, BindingFrom for that name), type for whole pattern)
-    #[deprecated]
-    fn extract_names<'ast>(&mut self, pattern: &'ast Pattern, scope: &LookupScope<TypeDeclLookup>) -> (Vec<(&'ast str, ResolvedType, BindingFrom<'ast>)>, ResolvedType) {
+    // returns a list of tuples of (name, type for that name, field navigation path for that name)
+    fn extract_names(&mut self, pattern: ResolvedPattern) -> Vec<(String, ResolvedType, FieldPath)> {
         let mut names = Vec::new();
-        let expected_type = match &pattern.pattern {
-            PatternType::Wildcard(otn) => {
-                otn.as_ref()
-                    .map(|tn| self.resolve_binding_type(tn, &[], scope))
-                    .unwrap_or(ResolvedType::Inferred)
-            },
-            PatternType::Constant(lit) => {
-                match lit.lit_type {
-                    LiteralType::NUMBER => BuiltinTypeNames::number(),
-                    LiteralType::STRING => BuiltinTypeNames::string(),
-                    LiteralType::BOOL => BuiltinTypeNames::boolean(),
-                    LiteralType::UNIT => ResolvedType::Unit,
+        self.extract_names_impl(&mut names, pattern, Vec::new());
+        names
+    }
+
+    fn extract_names_impl<'a>(&mut self, names: &mut Vec<(String, ResolvedType, FieldPath)>, pattern: ResolvedPattern, nav: Vec<String>) {
+        match pattern.pattern_type {
+            IrtPatternType::Discard => {}
+            IrtPatternType::Constant(_) => {}
+            IrtPatternType::Name(name) => {
+                names.push((name, pattern.resolved_type.clone(), FieldPath(nav)))
+            }
+            IrtPatternType::Destructuring(fields) => {
+                for (name, field) in fields {
+                    let mut nav = nav.clone(); // TODO avoid this clone by being smarter about sharing nav parents (tree structure)?
+                    nav.push(name);
+                    self.extract_names_impl(names, field, nav);
                 }
-            },
-            PatternType::Name(np) => {
-                let rt = np.type_name.as_ref()
-                    .map(|it| self.resolve_binding_type(it, &[], scope))
-                    .unwrap_or(ResolvedType::Inferred);
-                names.push((np.name.as_str(), rt.clone(), BindingFrom::Direct));
-                rt
-            },
-            PatternType::Destruct(fields, tn) => {
-                let declared_type = tn.as_ref()
-                    .map(|it| (self.resolve_binding_type(it, &[], scope), it));
-                let declared_type_fields = declared_type
-                    .clone()
-                    .and_then(|(rt, tn)| {
-                        match rt {
-                            ResolvedType::Id(id, args) => {
-                                let type_decl = self.types.get(&id).expect("Missing type def");
-                                if let TypeDefinition::Record(fs) = &type_decl.definition {
-                                    // instantiate type params
-                                    let mut subs: Vec<_> = fs.clone();
-                                    for rf in &mut subs {
-                                        rf.resolved_type.instantiate(&args);
-                                    }
-                                    Some(subs)
-                                } else {
-                                    self.errors.push(Error {
-                                        message: "Destructuring pattern must be for a record type".to_string(),
-                                        line: tn.line,
-                                        col: tn.col,
-                                    });
-                                    None
-                                }
-                            },
-                            ResolvedType::Inferred => { None },
-                            _ => {
-                                self.errors.push(Error {
-                                    message: "Destructuring pattern must be for a record type".to_string(),
-                                    line: tn.line,
-                                    col: tn.col,
-                                });
-                                None
-                            }
-                        }
-                    });
-
-                for field in fields {
-                    match field {
-                        FieldPattern::Name(np) => {
-                            let inferred_field_type = declared_type_fields
-                                .as_ref()
-                                .and_then(|fs| {
-                                    let declared_field = fs.iter()
-                                        .find(|rf| &np.name == &rf.name);
-                                    if declared_field.is_none() {
-                                        self.errors.push(Error {
-                                            message: format!("Unknown field {}", np.name),
-                                            line: np.line,
-                                            col: np.col,
-                                        })
-                                    }
-                                    declared_field.map(|rf| rf.resolved_type.clone())
-                                })
-                                .unwrap_or(ResolvedType::Inferred);
-
-                            let declared_type = np.type_name.as_ref()
-                                .map(|it| self.resolve_binding_type(it, &[], scope))
-                                .unwrap_or(ResolvedType::Inferred);
-
-                            names.push((&np.name, self.unify(inferred_field_type, declared_type, np.line, np.col), BindingFrom::Destructured(&np.name)))
-                        },
-                        FieldPattern::Binding(_, _) => { todo!("destructure pattern binding case") },
-                    }
-                }
-                declared_type.map(|(rt, _)| rt).unwrap_or(ResolvedType::Inferred)
-            },
-            PatternType::List(_) => { todo!("list pattern") },
-        };
-        (names, expected_type)
+            }
+        }
     }
 
     fn resolve_pattern(
@@ -670,60 +598,51 @@ impl Resolver<'_> {
                     });
 
                 let mut subpatterns = Vec::new();
-                if let Some(declared_type_fields) = declared_type_fields {
-                    // Emit errors for any extraneous subpatterns
-                    for fp in fps {
-                        let field_name = fp.field_name();
-                        if !declared_type_fields.iter().any(|type_field| &type_field.name == field_name) {
-                            self.errors.push(Error {
-                                message: format!("Unknown field {}", field_name),
-                                line: pattern.line,
-                                col: pattern.col,
-                            });
-                        }
-                    }
-                    // Insert into subpatterns in the same order as the fields
-                    for type_field in declared_type_fields {
-                        // find a field pattern that matches this type field and generate its subpattern
-                        let subpattern = fps.iter()
-                            .find(|fp| &type_field.name == fp.field_name())
-                            .map(|fp| {
-                                let resolved_type = type_field.resolved_type.clone();
-                                match fp {
-                                    FieldPattern::Name(_) => {
-                                        ResolvedPattern { resolved_type, pattern_type: IrtPatternType::Name(type_field.name.as_str().into()) }
-                                    }
-                                    FieldPattern::Binding(subpat, _) => {
-                                        self.resolve_pattern(subpat, scope, Some(resolved_type))
-                                    }
-                                }
-                            })
-                            .unwrap_or_else(|| {
-                                let resolved_type = type_field.resolved_type.clone();
-                                ResolvedPattern { resolved_type, pattern_type: IrtPatternType::Discard }
-                            });
-                        subpatterns.push(subpattern)
-                    }
-                } else {
-                    // We don't know what the fields are so lets just pull out what we can.
-                    for field in fps {
-                        let resolved_pattern = match field {
-                            FieldPattern::Name(np) => {
-                                let declared_field_type = np.type_name.as_ref()
-                                    .map(|it| self.resolve_binding_type(it, &[], scope))
-                                    .unwrap_or(ResolvedType::Inferred);
+                for field in fps {
+                    let field_name = field.field_name();
 
-                                ResolvedPattern {
-                                    resolved_type: declared_field_type,
-                                    pattern_type: IrtPatternType::Name(np.name.as_str().into())
-                                }
-                            },
-                            FieldPattern::Binding(subpat, _) => {
-                                self.resolve_pattern(subpat, scope, None)
-                            },
-                        };
-                        subpatterns.push(resolved_pattern);
-                    }
+                    let inferred_field_type = declared_type_fields
+                        .as_ref()
+                        .and_then(|fs| {
+                            let declared_field = fs.iter()
+                                .find(|rf| field_name == &rf.name);
+                            if declared_field.is_none() {
+                                self.errors.push(Error {
+                                    message: format!("Unknown field {}", field_name),
+                                    line: pattern.line, // TODO get more accurate location for field_name
+                                    col: pattern.col,
+                                })
+                            }
+                            declared_field.map(|rf| rf.resolved_type.clone())
+                        })
+                        .unwrap_or(ResolvedType::Inferred);
+
+                    let resolved_pattern = match field {
+                        FieldPattern::Name(np) => {
+                            let declared_field_type = np.type_name.as_ref()
+                                .map(|it| self.resolve_binding_type(it, &[], scope))
+                                .unwrap_or(ResolvedType::Inferred);
+
+                            let resolved_type = self.unify(declared_field_type, inferred_field_type, np.line, np.col);
+
+                            ResolvedPattern {
+                                resolved_type,
+                                pattern_type: IrtPatternType::Name(np.name.as_str().into())
+                            }
+                        },
+                        FieldPattern::Binding(subpat, _) => {
+                            let rp = self.resolve_pattern(subpat, scope, None);
+
+                            let resolved_type = self.unify(rp.resolved_type, inferred_field_type, subpat.line, subpat.col);
+
+                            ResolvedPattern {
+                                resolved_type,
+                                pattern_type: rp.pattern_type,
+                            }
+                        },
+                    };
+
+                    subpatterns.push((field_name.as_str().into(), resolved_pattern));
                 }
 
                 let resolved_type = declared_type.unwrap_or(ResolvedType::Inferred);
@@ -840,22 +759,26 @@ impl Resolver<'_> {
                             col: pattern.col,
                         });
                     }
-                    let mut save: Option<Save<GlobalId>> = None;
+                    let mut paths = Vec::new();
+                    // TODO I would really love to own ugb here to clean up these clones
                     for ug in &ugb.decls {
-                        let resolved_type = match ug.from {
-                            BindingFrom::Direct => {
-                                save = Some(Save { paths: vec![(Vec::new(), ug.id.clone())] });
-                                irt_expr.resolved_type.clone()
-                            },
-                            BindingFrom::Destructured(_) => todo!("destructured globals") // get type of field
+                        let path = ug.from.clone();
+                        let resolved_type = if path.is_empty() {
+                            irt_expr.resolved_type.clone()
+                        } else {
+                            let expected_type = ug.declared_type.clone();
+                            let actual_type = self.navigate_type_fields(&path, irt_expr.resolved_type.clone(), pattern.line, pattern.col);
+                            self.unify(expected_type, actual_type, pattern.line, pattern.col)
                         };
+                        paths.push((path, ug.id.clone()));
                         let decl = Rc::new(ug.define(resolved_type));
                         self.globals.insert(ug.id.clone(), Rc::clone(&decl));
                         self.exports.globals.push(decl);
                     }
-                    let stmt = match save {
-                        None => Statement::Discard(irt_expr),
-                        Some(save) => Statement::SaveGlobal(save, irt_expr),
+                    let stmt = if paths.is_empty() {
+                        Statement::Discard(irt_expr)
+                    } else {
+                        Statement::SaveGlobal(Save { paths }, irt_expr)
                     };
                     result[i] = Some(stmt);
                 }
@@ -1090,8 +1013,9 @@ impl Resolver<'_> {
         let params = lambda_expr.params.iter()
             .zip(expected_params.into_iter().chain(repeat(ResolvedType::Inferred)));
         for (param, expected_param_type) in params {
-            let (names, param_type) = self.extract_names(param, type_scope);
-            let resolved_type = self.unify(expected_param_type, param_type, param.line, param.col);
+            let resolved_pattern = self.resolve_pattern(param, type_scope, Some(expected_param_type));
+            let resolved_type = resolved_pattern.resolved_type.clone();
+            let names = self.extract_names(resolved_pattern);
             if resolved_type.is_inferred() {
                 self.errors.push(Error {
                     message: "Unable to infer parameter type, specify the type explicitly".to_string(),
@@ -1102,14 +1026,14 @@ impl Resolver<'_> {
             let irt_expr = IrtExpr { resolved_type: resolved_type.clone(), expr_type: IrtExprType::LoadParam };
             param_types.push(resolved_type);
             let paths: Vec<_> = names.into_iter()
-                .map(|(name, declared_type, from)| {
-                    match from {
-                        BindingFrom::Direct => {
-                            let id = scope.insert(name.into(), declared_type);
-                            (Vec::new(), id)
-                        }
-                        BindingFrom::Destructured(_) => todo!("destructured param")
-                    }
+                .map(|(name, declared_type, path)| {
+                    let resolved_type = if path.is_empty() {
+                        declared_type
+                    } else {
+                        let actual_type = self.navigate_type_fields(&path, irt_expr.resolved_type.clone(), param.line, param.col);
+                        self.unify(declared_type, actual_type, param.line, param.col)
+                    };
+                    (path, scope.insert(name.into(), resolved_type))
                 })
                 .collect();
             let statement = if paths.is_empty() {
@@ -1121,23 +1045,32 @@ impl Resolver<'_> {
         }
 
         for binding in &lambda_expr.bindings {
-            let (names, expected_type) = self.extract_names(&binding.pattern, type_scope);
+            #[cfg(debug_assertions)] {
+                if let Expr { expr_type: ExprType::QName(qn), .. } = &binding.expr {
+                    if qn.parts.len() == 1 && &qn.parts[0] == "diag" {
+                        for item in &scope.declarations {
+                            println!("local {} is {}: {}", item.id.0, item.name, item.typ)
+                        }
+                        continue
+                    }
+                }
+            }
+
+            let pattern = &binding.pattern;
+            let resolved_pattern = self.resolve_pattern(pattern, type_scope, None);
+            let expected_type = resolved_pattern.resolved_type.clone();
+            let names = self.extract_names(resolved_pattern);
             let dfg = self.resolve_expr(expected_type, &binding.expr, type_scope, global_scope, &scope);
-            // TODO can I accumulate these and return them all at once?
+            // TODO can I accumulate these across all bindings and return them all at once?
             let irt_expr = match dfg {
                 DefineGlobalResult::NeedsType(_) => return Err(dfg),
                 DefineGlobalResult::Success(irt_expr) => irt_expr,
             };
-            // TODO reduce duplication with above param code
             let paths: Vec<_> = names.into_iter()
-                .map(|(name, declared_type, from)| {
-                    match from {
-                        BindingFrom::Direct => {
-                            let id = scope.insert(name.into(), irt_expr.resolved_type.clone());
-                            (Vec::new(), id)
-                        }
-                        BindingFrom::Destructured(_) => todo!("destructured param")
-                    }
+                .map(|(name, declared_type, path)| {
+                    let actual_type = self.navigate_type_fields(&path, irt_expr.resolved_type.clone(), pattern.line, pattern.col);
+                    let resolved_type = self.unify(declared_type, actual_type, pattern.line, pattern.col);
+                    (path, scope.insert(name.into(), resolved_type))
                 })
                 .collect();
             let statement = if paths.is_empty() {
@@ -1263,6 +1196,44 @@ impl Resolver<'_> {
             LiteralType::UNIT => irt::Constant::Unit,
         }
     }
+
+    // Navigate fields on record types
+    fn navigate_type_fields(&mut self, path: &FieldPath, base_type: ResolvedType, line: u32, col: u32) -> ResolvedType {
+        let mut res = base_type;
+        for field_name in &path.0 {
+            res = if let ResolvedType::Id(id, args) = res {
+                let type_decl = self.types.get(&id).expect("Missing type def");
+                if let TypeDefinition::Record(fs) = type_decl.definition.clone().instantiate_into(&args) {
+                    let orf = fs.iter().find(|rf| &rf.name == field_name);
+                    if let Some(rf) = orf {
+                        rf.resolved_type.clone()
+                    } else {
+                        self.errors.push(Error {
+                            message: format!("Unknown field {}", field_name),
+                            line,
+                            col,
+                        });
+                        return ResolvedType::Error
+                    }
+                } else {
+                    self.errors.push(Error {
+                        message: "Destructuring pattern must be for a record type".to_string(),
+                        line,
+                        col,
+                    });
+                    return ResolvedType::Error
+                }
+            } else {
+                self.errors.push(Error {
+                    message: "Destructuring pattern must be for a record type".to_string(),
+                    line,
+                    col,
+                });
+                return ResolvedType::Error
+            }
+        }
+        res
+    }
 }
 
 struct LocalScope<'a> {
@@ -1321,6 +1292,22 @@ impl DefineGlobalResult {
             resolved_type: ResolvedType::Error,
             expr_type: irt::ExprType::Error
         })
+    }
+}
+
+// TODO make this cheaper to clone
+#[derive(Clone)]
+pub struct FieldPath(Vec<String>);
+
+impl FieldPath {
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl Display for FieldPath {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.join("::"))
     }
 }
 

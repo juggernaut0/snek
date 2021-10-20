@@ -399,13 +399,13 @@ impl IrtVisitor for IrPrinter {
 
     fn visit_save_global(&mut self, save: &Save<GlobalId>) {
         for (path, id) in &save.paths {
-            self.print(&format!("{} -> {}", path.join("::"), id.fqn()));
+            self.print(&format!("{} -> {}", path, id.fqn()));
         }
     }
 
     fn visit_save_local(&mut self, save: &Save<LocalId>) {
         for (path, id) in &save.paths {
-            self.print(&format!("{} -> {}", path.join("::"), id.0));
+            self.print(&format!("{} -> {}", path, id.0));
         }
     }
 

@@ -176,7 +176,7 @@ fn named_globals() {
 }
 
 #[test]
-#[ignore] // needs destructured globals
+#[ignore] // TODO needs is_exhaustive destructure
 fn destructured_simple() {
     let (decls, _) = assert_no_errs(resolve_from_src(include_str!("destructured_simple.snek")));
 
@@ -401,7 +401,7 @@ fn nested_functions() {
 }
 
 #[test]
-#[ignore] // requires match expr
+#[ignore] // TODO requires match expr
 fn basic_match() {
     assert_no_errs(resolve_from_src(include_str!("basic_match.snek")));
 }

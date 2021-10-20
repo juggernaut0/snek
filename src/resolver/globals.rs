@@ -1,5 +1,6 @@
 use std::rc::Rc;
 use crate::ast::Binding;
+use crate::resolver::FieldPath;
 use crate::resolver::lookup::Lookup;
 use crate::resolver::qname_list::{Fqn, QNameList};
 use crate::resolver::types::ResolvedType;
@@ -42,21 +43,21 @@ impl GlobalDeclaration {
 
 pub struct UndefinedGlobalBinding<'ast> {
     pub namespace: Vec<String>,
-    pub decls: Vec<UndefinedGlobal<'ast>>, // may be empty
+    pub decls: Vec<UndefinedGlobal>, // may be empty
     pub expected_type: ResolvedType,
     pub ast_node: &'ast Binding,
 }
 
-pub struct UndefinedGlobal<'ast> {
+pub struct UndefinedGlobal {
     pub id: GlobalId,
     pub fqn: Fqn,
     pub visibility: Vec<String>,
     pub export: bool,
     pub declared_type: ResolvedType,
-    pub from: BindingFrom<'ast>,
+    pub from: FieldPath,
 }
 
-impl UndefinedGlobal<'_> {
+impl UndefinedGlobal {
     // TODO why can't I own self
     pub fn define(&self, resolved_type: ResolvedType) -> GlobalDeclaration {
         GlobalDeclaration {
@@ -66,11 +67,6 @@ impl UndefinedGlobal<'_> {
             export: self.export,
         }
     }
-}
-
-pub enum BindingFrom<'ast> {
-    Direct,                  // let x = ...
-    Destructured(&'ast str), // let { x } = ...
 }
 
 pub struct GlobalLookup {
