@@ -176,7 +176,6 @@ fn named_globals() {
 }
 
 #[test]
-#[ignore] // TODO needs is_exhaustive destructure
 fn destructured_simple() {
     let (decls, _) = assert_no_errs(resolve_from_src(include_str!("destructured_simple.snek")));
 

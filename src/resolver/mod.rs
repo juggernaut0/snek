@@ -753,7 +753,7 @@ impl Resolver<'_> {
                         });
                     }
                     let resolved_pattern = self.resolve_pattern(pattern, &type_scope, Some(irt_expr.resolved_type.clone()));
-                    if !self.is_exhaustive(std::slice::from_ref(&resolved_pattern), irt_expr.resolved_type.clone()) {
+                    if !self.exhaustive(std::slice::from_ref(&&resolved_pattern), irt_expr.resolved_type.clone()) {
                         self.errors.push(Error {
                             message: "Binding pattern must be exhaustive".into(),
                             line: pattern.line,
@@ -1104,20 +1104,13 @@ impl Resolver<'_> {
         Unifier::new(self, 0, 0).unifies(expected, actual)
     }
 
-    //noinspection RsSelfConvention
     // Do the set of given patterns cover all possible values of typ?
-    fn is_exhaustive(&mut self, patterns: &[ResolvedPattern], typ: ResolvedType) -> bool {
+    fn exhaustive<'a>(&mut self, patterns: &[&'a ResolvedPattern], typ: ResolvedType) -> bool {
         let is_catch_all = |pattern: &ResolvedPattern| -> bool {
-            match &pattern.pattern_type {
-                IrtPatternType::Discard => {}
-                IrtPatternType::Name(_) => {}
-                _ => return false
-            }
-
-            self.unifies(pattern.resolved_type.clone(), typ.clone())
+            self.pattern_is_catchall(pattern, &typ)
         };
 
-        if patterns.iter().any(is_catch_all) {
+        if patterns.iter().copied().any(is_catch_all) {
             return true;
         }
 
@@ -1126,20 +1119,10 @@ impl Resolver<'_> {
                 let type_def = self.types.get(&id).expect("missing type").definition.clone().instantiate_into(&args);
                 if let TypeDefinition::Union(cases) = type_def {
                     cases.into_iter().all(|case| {
-                        self.is_exhaustive(patterns, case)
+                        self.exhaustive(patterns, case)
                     })
                 } else if let TypeDefinition::Record(fields) = type_def {
-                    todo!("is_exhaustive destructure")
-                    /*
-                    def is_exh_for_fields(fields, patterns):
-                        if fields is empty:
-                            return True
-                        field = fields[0]
-                        relevant_patterns = patterns.filter { it is destructure of typ }.map { it.fields[field.name] }
-                        if not is_exhaustive(relevant_patterns, field.type)
-                            return False
-                        return relevant_patterns.all { pattern -> is_exh_for_fields(fields[1:], relevant_patterns.filter { it.fields[field.name] == (pattern || is_catchall) }) }
-                    */
+                    self.exh_for_fields(&fields, patterns)
                 } else if id == BUILTIN_TYPE_NAMES.with(|btn| btn.boolean.clone()) {
                     let mut has_true = false;
                     let mut has_false = false;
@@ -1167,6 +1150,47 @@ impl Resolver<'_> {
             ResolvedType::Inferred => false,
             ResolvedType::Error => false,
         }
+    }
+
+    fn exh_for_fields<'a>(&mut self, fields: &[ResolvedField], patterns: &[&'a ResolvedPattern]) -> bool {
+        // TODO needz testz
+        if fields.is_empty() {
+            return true
+        }
+        let field = &fields[0];
+        let relevant_patterns: Vec<_> = patterns.iter()
+            .copied()
+            .filter_map(|pattern| {
+                match &pattern.pattern_type {
+                    IrtPatternType::Destructuring(fields) => {
+                        fields.iter()
+                            .find(|(name, _)| name == &field.name)
+                            .map(|(_, p)| p)
+                            .or(Some(&ResolvedPattern { resolved_type: ResolvedType::Inferred, pattern_type: IrtPatternType::Discard }))
+                    }
+                    _ => None
+                }
+            })
+            .collect();
+        if !self.exhaustive(&relevant_patterns, field.resolved_type.clone()) {
+            return false
+        }
+        relevant_patterns.iter().copied().all(|pattern| {
+            let new_patterns: Vec<_> = relevant_patterns.iter().copied()
+                .filter(|it| *it == pattern || self.pattern_is_catchall(it, &field.resolved_type))
+                .collect();
+            self.exh_for_fields(&fields[1..], &new_patterns)
+        })
+    }
+
+    fn pattern_is_catchall(&mut self, pattern: &ResolvedPattern, typ: &ResolvedType) -> bool {
+        match &pattern.pattern_type {
+            IrtPatternType::Discard => {}
+            IrtPatternType::Name(_) => {}
+            _ => return false
+        }
+
+        self.unifies(pattern.resolved_type.clone(), typ.clone())
     }
 
     fn literal_to_constant(&mut self, lit: &Literal, line: u32, col: u32) -> Constant {

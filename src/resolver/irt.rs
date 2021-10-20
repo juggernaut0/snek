@@ -18,11 +18,13 @@ pub struct Save<Target> {
     pub paths: Vec<(FieldPath, Target)>,
 }
 
+#[derive(PartialEq)]
 pub struct ResolvedPattern {
     pub resolved_type: ResolvedType,
     pub pattern_type: PatternType,
 }
 
+#[derive(PartialEq)]
 pub enum PatternType {
     Discard,
     Name(String),
@@ -46,6 +48,7 @@ pub enum ExprType {
     Func { statements: Vec<Statement> },
 }
 
+#[derive(PartialEq)]
 pub enum Constant {
     Unit,
     Number(f64),
