@@ -752,7 +752,8 @@ impl Resolver<'_> {
                             col: pattern.col,
                         });
                     }
-                    if !self.is_exhaustive(std::slice::from_ref(pattern), irt_expr.resolved_type.clone(), &type_scope) {
+                    let resolved_pattern = self.resolve_pattern(pattern, &type_scope, Some(irt_expr.resolved_type.clone()));
+                    if !self.is_exhaustive(std::slice::from_ref(&resolved_pattern), irt_expr.resolved_type.clone()) {
                         self.errors.push(Error {
                             message: "Binding pattern must be exhaustive".into(),
                             line: pattern.line,
@@ -1099,24 +1100,21 @@ impl Resolver<'_> {
         Unifier::new(self, line, col).unify(expected, actual)
     }
 
-    fn unifies(&mut self, expected: ResolvedType, actual: ResolvedType, line: u32, col: u32) -> bool {
-        Unifier::new(self, line, col).unifies(expected, actual)
+    fn unifies(&mut self, expected: ResolvedType, actual: ResolvedType) -> bool {
+        Unifier::new(self, 0, 0).unifies(expected, actual)
     }
 
     //noinspection RsSelfConvention
     // Do the set of given patterns cover all possible values of typ?
-    fn is_exhaustive(&mut self, patterns: &[Pattern], typ: ResolvedType, scope: &LookupScope<TypeDeclLookup>) -> bool {
-        let is_catch_all = |pattern: &Pattern| -> bool {
-            let type_name = match &pattern.pattern {
-                PatternType::Wildcard(type_name) => type_name,
-                PatternType::Name(np) => &np.type_name,
-                _ => return false,
-            };
-            let expected = type_name.as_ref()
-                .map(|tn| self.resolve_binding_type(tn, &[], scope))
-                .unwrap_or(ResolvedType::Inferred);
+    fn is_exhaustive(&mut self, patterns: &[ResolvedPattern], typ: ResolvedType) -> bool {
+        let is_catch_all = |pattern: &ResolvedPattern| -> bool {
+            match &pattern.pattern_type {
+                IrtPatternType::Discard => {}
+                IrtPatternType::Name(_) => {}
+                _ => return false
+            }
 
-            self.unifies(expected, typ.clone(), pattern.line, pattern.col)
+            self.unifies(pattern.resolved_type.clone(), typ.clone())
         };
 
         if patterns.iter().any(is_catch_all) {
@@ -1128,7 +1126,7 @@ impl Resolver<'_> {
                 let type_def = self.types.get(&id).expect("missing type").definition.clone().instantiate_into(&args);
                 if let TypeDefinition::Union(cases) = type_def {
                     cases.into_iter().all(|case| {
-                        self.is_exhaustive(patterns, case, scope)
+                        self.is_exhaustive(patterns, case)
                     })
                 } else if let TypeDefinition::Record(fields) = type_def {
                     todo!("is_exhaustive destructure")
@@ -1146,10 +1144,10 @@ impl Resolver<'_> {
                     let mut has_true = false;
                     let mut has_false = false;
                     for pattern in patterns {
-                        if let PatternType::Constant(Literal { lit_type: LiteralType::BOOL, value }) = &pattern.pattern {
-                            if value == "true" {
+                        if let IrtPatternType::Constant(Constant::Boolean(value)) = &pattern.pattern_type {
+                            if *value {
                                 has_true = true;
-                            } else if value == "false" {
+                            } else {
                                 has_false = true;
                             }
                         }
@@ -1161,11 +1159,7 @@ impl Resolver<'_> {
             }
             ResolvedType::Unit => {
                 patterns.iter().any(|pattern| {
-                    if let PatternType::Constant(lit) = &pattern.pattern {
-                        lit.lit_type == LiteralType::UNIT
-                    } else {
-                        false
-                    }
+                    matches!(&pattern.pattern_type, IrtPatternType::Constant(Constant::Unit))
                 })
             }
             ResolvedType::TypeParam(_) | ResolvedType::Func { .. } | ResolvedType::Callable(_) | ResolvedType::Any => false,
