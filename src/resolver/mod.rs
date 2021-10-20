@@ -1122,7 +1122,7 @@ impl Resolver<'_> {
                         self.exhaustive(patterns, case)
                     })
                 } else if let TypeDefinition::Record(fields) = type_def {
-                    self.exh_for_fields(&fields, patterns)
+                    self.exh_for_fields(&fields, patterns, &typ)
                 } else if id == BUILTIN_TYPE_NAMES.with(|btn| btn.boolean.clone()) {
                     let mut has_true = false;
                     let mut has_false = false;
@@ -1152,34 +1152,56 @@ impl Resolver<'_> {
         }
     }
 
-    fn exh_for_fields<'a>(&mut self, fields: &[ResolvedField], patterns: &[&'a ResolvedPattern]) -> bool {
+    fn exh_for_fields<'a>(&mut self, fields: &[ResolvedField], patterns: &[&'a ResolvedPattern], typ: &ResolvedType) -> bool {
         // TODO needz testz
         if fields.is_empty() {
             return true
         }
         let field = &fields[0];
-        let relevant_patterns: Vec<_> = patterns.iter()
-            .copied()
+
+        // find destructuring patterns of the right type
+        let my_patterns: Vec<_> = patterns.iter().copied()
             .filter_map(|pattern| {
-                match &pattern.pattern_type {
-                    IrtPatternType::Destructuring(fields) => {
-                        fields.iter()
-                            .find(|(name, _)| name == &field.name)
-                            .map(|(_, p)| p)
-                            .or(Some(&ResolvedPattern { resolved_type: ResolvedType::Inferred, pattern_type: IrtPatternType::Discard }))
-                    }
-                    _ => None
+                if &pattern.resolved_type != typ {
+                    None
+                } else if let IrtPatternType::Destructuring(fields) = &pattern.pattern_type {
+                    Some((pattern, fields))
+                } else {
+                    None
                 }
             })
             .collect();
+        // collect all the patterns for the first field
+        let relevant_patterns: Vec<_> = my_patterns.iter()
+            .copied()
+            .map(|(_, fields)| {
+                fields.iter()
+                    .find(|(name, _)| name == &field.name)
+                    .map(|(_, p)| p)
+                    .unwrap_or(&ResolvedPattern { resolved_type: ResolvedType::Inferred, pattern_type: IrtPatternType::Discard })
+            })
+            .collect();
+
         if !self.exhaustive(&relevant_patterns, field.resolved_type.clone()) {
             return false
         }
-        relevant_patterns.iter().copied().all(|pattern| {
-            let new_patterns: Vec<_> = relevant_patterns.iter().copied()
-                .filter(|it| *it == pattern || self.pattern_is_catchall(it, &field.resolved_type))
+
+        // TODO this can be optimized to not check the same rel_pattern multiple times
+        relevant_patterns.iter().copied().all(|rel_pattern| {
+            let new_patterns: Vec<_> = my_patterns.iter().copied()
+                .filter_map(|(pattern, fields)| {
+                    let it = fields.iter()
+                        .find(|(name, _)| name == &field.name)
+                        .map(|(_, p)| p)
+                        .unwrap_or(&ResolvedPattern { resolved_type: ResolvedType::Inferred, pattern_type: IrtPatternType::Discard });
+                    if it == rel_pattern || self.pattern_is_catchall(it, &field.resolved_type) {
+                        Some(pattern)
+                    } else {
+                        None
+                    }
+                })
                 .collect();
-            self.exh_for_fields(&fields[1..], &new_patterns)
+            self.exh_for_fields(&fields[1..], &new_patterns, typ)
         })
     }
 
