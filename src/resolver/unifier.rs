@@ -1,22 +1,21 @@
-use crate::resolver::{Error, Resolver};
+use crate::resolver::{Error, Resolver, TypeStore};
 use crate::resolver::types::{ResolvedType, TypeDefinition, TypeId};
 
-pub struct Unifier<'r, 'ast> {
-    resolver: &'r mut Resolver<'ast>,
+pub struct Unifier<'r> {
+    type_store: &'r dyn TypeStore,
     line: u32,
     col: u32,
 }
 
-impl Unifier<'_, '_> {
-    pub fn new<'r, 'ast>(resolver: &'r mut Resolver<'ast>, line: u32, col: u32,) -> Unifier<'r, 'ast> {
-        Unifier { resolver, line, col }
+impl Unifier<'_> {
+    pub fn new(type_store: &dyn TypeStore, line: u32, col: u32,) -> Unifier {
+        Unifier { type_store, line, col }
     }
 
-    pub fn unify(&mut self, expected: ResolvedType, actual: ResolvedType) -> ResolvedType {
+    pub fn unify(&mut self, expected: ResolvedType, actual: ResolvedType) -> (ResolvedType, Vec<Error>) {
         let mut errors = Vec::new();
         let res = self.unify_impl(&mut errors, expected, actual);
-        self.resolver.errors.extend(errors);
-        res
+        (res, errors)
     }
 
     pub fn unifies(&self, expected: ResolvedType, actual: ResolvedType) -> bool {
@@ -53,7 +52,7 @@ impl Unifier<'_, '_> {
     }
 
     fn unify_id(&self, errors: &mut Vec<Error>, e_id: TypeId, e_type_args: Vec<ResolvedType>, actual: ResolvedType) -> ResolvedType {
-        let def = self.resolver.types.get(&e_id).expect("missing type").definition.clone();
+        let def = self.type_store.get_type(&e_id).definition.clone().instantiate_into(&e_type_args);
 
         match def {
             TypeDefinition::Record(_) | TypeDefinition::Primitive => {
@@ -73,8 +72,7 @@ impl Unifier<'_, '_> {
                 }
             }
             TypeDefinition::Union(cases) => {
-                for mut case in cases {
-                    case.instantiate(&e_type_args);
+                for case in cases {
                     if self.unifies(case, actual.clone()) {
                         return ResolvedType::Id(e_id, e_type_args)
                     }
