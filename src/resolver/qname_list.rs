@@ -35,6 +35,7 @@ impl<'parent, 'ast> QNameList<'parent, 'ast> {
         self.iter().zip(names.iter()).all(|(a, b)| a == b)
     }
 
+    // Is `prefix` a prefix of self?
     pub fn prefix_matches(&self, prefix: &[String]) -> bool {
         if self.len() < prefix.len() { return false }
         self.iter().zip(prefix).all(|(a, b)| a == b)

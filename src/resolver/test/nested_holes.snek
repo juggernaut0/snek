@@ -1,0 +1,5 @@
+type A<T> { t: T }
+type B<T U> { u: U, a: A<T> }
+
+let x: B<_ _> = new { u: true, a: new { t: 0 } }
+let y: B<Number Boolean> = x

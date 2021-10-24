@@ -98,6 +98,13 @@ pub enum ResolvedType {
     Nothing,   // !
     Inferred,  // _
     Error,
+    Hole(usize),
+}
+
+pub enum Hole {
+    Empty,
+    Fixed,
+    Filled(ResolvedType),
 }
 
 impl ResolvedType {
@@ -164,6 +171,7 @@ impl Display for ResolvedType {
             ResolvedType::Nothing => write!(f, "!"),
             ResolvedType::Inferred => write!(f, "_"),
             ResolvedType::Error => write!(f, "Error"),
+            ResolvedType::Hole(i) => write!(f, "hole {}", i),
         }
     }
 }

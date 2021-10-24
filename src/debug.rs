@@ -440,7 +440,7 @@ impl IrtVisitor for IrPrinter {
                     irt::BinaryOp::NumberDiv => "divide",
                     irt::BinaryOp::StringConcat => "concat",
                 };
-                self.print_open(&format!("Binary {} : {}", op_str, expr.resolved_type));
+                self.print_open(&format!("Binary {}: {}", op_str, expr.resolved_type));
                 self.print_one(left.as_ref());
                 self.print_one(right.as_ref());
                 self.print_close();
@@ -451,6 +451,15 @@ impl IrtVisitor for IrPrinter {
             irt::ExprType::Func { statements } => {
                 self.print_open(&format!("Lambda: {}", expr.resolved_type));
                 self.print_all(statements);
+                self.print_close();
+            }
+            irt::ExprType::New { field_inits } => {
+                self.print_open(&format!("New: {}", expr.resolved_type));
+                for (field_name, expr) in field_inits {
+                    self.print_open(&field_name);
+                    self.print_one(expr);
+                    self.print_close();
+                }
                 self.print_close();
             }
         }

@@ -353,15 +353,24 @@ fn wildcard_discard() {
 }
 
 #[test]
-#[ignore] // TODO needs resolve_expr new
+fn new_simple() {
+    assert_no_errs(resolve_from_src(include_str!("../../../tests/types.snek")));
+}
+
+#[test]
+#[ignore] // TODO needs function type parameters
 fn inferred_return_type() {
     assert_no_errs(resolve_from_src(include_str!("inferred_return_type.snek")));
 }
 
 #[test]
-#[ignore] // TODO needs resolve_expr new
 fn inferred_generic_arg() {
     assert_no_errs(resolve_from_src(include_str!("inferred_generic_arg.snek")));
+}
+
+#[test]
+fn nested_holes() {
+    assert_no_errs(resolve_from_src(include_str!("nested_holes.snek")));
 }
 
 #[test]

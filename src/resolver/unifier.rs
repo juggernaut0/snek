@@ -1,15 +1,16 @@
-use crate::resolver::{Error, Resolver, TypeStore};
-use crate::resolver::types::{ResolvedType, TypeDefinition, TypeId};
+use crate::resolver::{Error, TypeStore};
+use crate::resolver::types::{Hole, ResolvedType, TypeDefinition, TypeId};
 
-pub struct Unifier<'r> {
+pub struct Unifier<'r, 'h> {
     type_store: &'r dyn TypeStore,
+    holes: Option<&'h mut [Hole]>,
     line: u32,
     col: u32,
 }
 
-impl Unifier<'_> {
-    pub fn new(type_store: &dyn TypeStore, line: u32, col: u32,) -> Unifier {
-        Unifier { type_store, line, col }
+impl Unifier<'_, '_> {
+    pub fn new<'r, 'h>(type_store: &'r dyn TypeStore, holes: Option<&'h mut [Hole]>, line: u32, col: u32,) -> Unifier<'r, 'h> {
+        Unifier { type_store, holes, line, col }
     }
 
     pub fn unify(&mut self, expected: ResolvedType, actual: ResolvedType) -> (ResolvedType, Vec<Error>) {
@@ -18,15 +19,25 @@ impl Unifier<'_> {
         (res, errors)
     }
 
-    pub fn unifies(&self, expected: ResolvedType, actual: ResolvedType) -> bool {
+    pub fn unifies(&mut self, expected: ResolvedType, actual: ResolvedType) -> bool {
         let mut errors = Vec::new();
         let _ = self.unify_impl(&mut errors, expected, actual);
         errors.is_empty()
     }
 
-    fn unify_impl(&self, errors: &mut Vec<Error>, expected: ResolvedType, actual: ResolvedType) -> ResolvedType {
+    fn unify_impl(&mut self, errors: &mut Vec<Error>, expected: ResolvedType, actual: ResolvedType) -> ResolvedType {
         match (expected, actual) {
             (ResolvedType::Inferred, actual) => actual,
+            (ResolvedType::Hole(i), actual) => {
+                if let Some(holes) = &mut self.holes {
+                    match &mut holes[i] {
+                        hole @ Hole::Empty => *hole = Hole::Filled(actual.clone()),
+                        Hole::Filled(ex) => merge(ex, actual.clone()),
+                        Hole::Fixed => panic!("tried to fill a fixed hole"),
+                    }
+                }
+                actual
+            },
             (ResolvedType::Any, _) => ResolvedType::Any,
             (expected, ResolvedType::Nothing) => expected,
             (expected, ResolvedType::Inferred) => expected,
@@ -51,7 +62,7 @@ impl Unifier<'_> {
         }
     }
 
-    fn unify_id(&self, errors: &mut Vec<Error>, e_id: TypeId, e_type_args: Vec<ResolvedType>, actual: ResolvedType) -> ResolvedType {
+    fn unify_id(&mut self, errors: &mut Vec<Error>, e_id: TypeId, e_type_args: Vec<ResolvedType>, actual: ResolvedType) -> ResolvedType {
         let def = self.type_store.get_type(&e_id).definition.clone().instantiate_into(&e_type_args);
 
         match def {
@@ -91,3 +102,22 @@ impl Unifier<'_> {
         expected
     }
 }
+
+// Find most specific common supertype of a and b and store into a
+fn merge(a: &mut ResolvedType, b: ResolvedType) {
+    todo!("merge holes")
+}
+
+/*fn unify_holes(holey: ResolvedType, actual: ResolvedType, holes: &mut [ResolvedType]) {
+    match (holey, actual) {
+        (ResolvedType::Hole(i), any) => holes[i] = any,
+        (ResolvedType::Id(hid, h_args), ResolvedType::Id(aid, a_args)) if hid == aid => {
+            for (h_arg, a_arg) in h_args.into_iter().zip(a_args) {
+                unify_holes(h_arg, a_arg, holes);
+            }
+        }
+        (ResolvedType::Func { params: h_params, return_type: h_rt }, ResolvedType::Func { params: a_params, return_type: a_rt }) => {
+            for (hp, ap) in
+        }
+    }
+}*/

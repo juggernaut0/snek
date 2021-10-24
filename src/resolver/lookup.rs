@@ -32,7 +32,7 @@ impl<'ast, TLookup : Lookup> LookupScope<'_, 'ast, '_, TLookup> {
             let full_name = current_scope.append_slice(name);
             let found = self.lookup.find(full_name);
             if let Some((id, visibility)) = found {
-                let visible = is_visible(self.scope, &visibility);
+                let visible = self.is_visible(visibility);
                 return Some((id, visible))
             }
             if let QNameList::Empty = current_scope {
@@ -42,9 +42,9 @@ impl<'ast, TLookup : Lookup> LookupScope<'_, 'ast, '_, TLookup> {
         }
         None
     }
-}
 
-// Is an object with visibility visible from scope?
-fn is_visible(scope: QNameList, visibility: &[String]) -> bool {
-    scope.prefix_matches(visibility)
+    // Is an object with visibility visible from scope?
+    pub fn is_visible(&self, visibility: &[String]) -> bool {
+        self.scope.prefix_matches(visibility)
+    }
 }

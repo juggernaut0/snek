@@ -32,6 +32,7 @@ pub enum ExprType {
     Call { callee: Box<Expr>, args: Vec<Expr> },
     Binary { op: BinaryOp, left: Box<Expr>, right: Box<Expr> },
     Func { statements: Vec<Statement> },
+    New { field_inits: Vec<(String, Expr)> }
 }
 
 #[derive(PartialEq)]

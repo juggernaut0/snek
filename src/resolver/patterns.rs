@@ -1,8 +1,6 @@
-use std::collections::HashMap;
-use std::rc::Rc;
-use crate::resolver::{BUILTIN_TYPE_NAMES, Resolver, TypeStore};
+use crate::resolver::{BUILTIN_TYPE_NAMES, TypeStore};
 use crate::resolver::irt::Constant;
-use crate::resolver::types::{ResolvedField, ResolvedType, TypeDeclaration, TypeDefinition, TypeId};
+use crate::resolver::types::{ResolvedField, ResolvedType, TypeDefinition};
 use crate::resolver::unifier::Unifier;
 
 #[derive(PartialEq)]
@@ -68,6 +66,7 @@ impl ExhaustivenessChecker<'_> {
             ResolvedType::TypeParam(_) | ResolvedType::Func { .. } | ResolvedType::Callable(_) | ResolvedType::Any => false,
             ResolvedType::Nothing => true,
             ResolvedType::Inferred => false,
+            ResolvedType::Hole(_) => false,
             ResolvedType::Error => false,
         }
     }
@@ -135,7 +134,7 @@ impl ExhaustivenessChecker<'_> {
     }
 
     fn unifies(&self, expected: ResolvedType, actual: ResolvedType) -> bool {
-        Unifier::new(self.type_store, 0, 0).unifies(expected, actual)
+        Unifier::new(self.type_store, None, 0, 0).unifies(expected, actual)
     }
 }
 
@@ -143,6 +142,8 @@ impl ExhaustivenessChecker<'_> {
 mod test {
     use crate::resolver::{BuiltinTypeNames, make_primitive_type};
     use super::*;
+    use std::rc::Rc;
+    use crate::resolver::types::{TypeDeclaration, TypeId};
 
     #[test]
     fn exh_wildcard_inferred() {
