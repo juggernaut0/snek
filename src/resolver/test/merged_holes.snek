@@ -1,0 +1,4 @@
+type A<T> { a: T, b: T }
+let a1: A<_> = new { a: 0, b: 1 }
+let a2: A<Number> = a1
+let a3: A<_> = new { a: 0, b: true }

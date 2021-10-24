@@ -105,19 +105,13 @@ impl Unifier<'_, '_> {
 
 // Find most specific common supertype of a and b and store into a
 fn merge(a: &mut ResolvedType, b: ResolvedType) {
-    todo!("merge holes")
-}
-
-/*fn unify_holes(holey: ResolvedType, actual: ResolvedType, holes: &mut [ResolvedType]) {
-    match (holey, actual) {
-        (ResolvedType::Hole(i), any) => holes[i] = any,
-        (ResolvedType::Id(hid, h_args), ResolvedType::Id(aid, a_args)) if hid == aid => {
-            for (h_arg, a_arg) in h_args.into_iter().zip(a_args) {
-                unify_holes(h_arg, a_arg, holes);
-            }
-        }
-        (ResolvedType::Func { params: h_params, return_type: h_rt }, ResolvedType::Func { params: a_params, return_type: a_rt }) => {
-            for (hp, ap) in
-        }
+    if a == &b {
+        return
     }
-}*/
+    match (a, b) {
+        (ResolvedType::Id(a_id, a_args), ResolvedType::Id(b_id, b_args)) if a_id == &b_id => {
+            a_args.iter_mut().zip(b_args).for_each(|(aa, ba)| merge(aa, ba));
+        }
+        (a, _) => *a = ResolvedType::Any
+    }
+}

@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::convert::identity;
 use std::fmt::{Debug, Display, Formatter};
 use std::iter::repeat;
 use std::rc::Rc;

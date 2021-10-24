@@ -374,6 +374,11 @@ fn nested_holes() {
 }
 
 #[test]
+fn merged_holes() {
+    assert_no_errs(resolve_from_src(include_str!("merged_holes.snek")));
+}
+
+#[test]
 fn hello() {
     assert_no_errs(resolve_from_src(include_str!("../../../tests/hello.snek")));
 }
