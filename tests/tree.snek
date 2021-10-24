@@ -1,6 +1,10 @@
 type Option<T> = T | None {}
 type Node { data: Number, left: Option<Node>, right: Option<Node> }
 
+let Node = { data: Number left: Option<Node> right: Option<Node> ->
+    new Node { left: left, right: right, data: data }
+}
+
 let make_fun = { mul ->
 	let f = { { data, left, right }: Node ->
 		(match left
@@ -15,6 +19,6 @@ let make_fun = { mul ->
 	}
 	f
 }
-let tree = (Node 2 (Some (Node 1 None None)) (Some (Node 3 None None)))
+let tree = (Node 2 (Node 1 None None) (Node 3 None None))
 let fun = (make_fun 2)
 (fun tree)

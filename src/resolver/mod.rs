@@ -1027,6 +1027,7 @@ impl Resolver<'_> {
             .zip(expected_params.into_iter().chain(repeat(ResolvedType::Inferred)));
         for (param, expected_param_type) in params {
             let resolved_pattern = self.resolve_pattern(param, type_scope, Some(expected_param_type));
+            // TODO check pattern exhaustiveness when NOT an arm of a match expr
             let resolved_type = resolved_pattern.resolved_type.clone();
             let names = self.extract_names(resolved_pattern);
             if resolved_type.is_inferred() {
@@ -1073,12 +1074,29 @@ impl Resolver<'_> {
             let resolved_pattern = self.resolve_pattern(pattern, type_scope, None);
             let expected_type = resolved_pattern.resolved_type.clone();
             let names = self.extract_names(resolved_pattern);
-            let dfg = self.resolve_expr(expected_type, None, &binding.expr, type_scope, global_scope, &scope);
+            let dgr = self.resolve_expr(expected_type, None, &binding.expr, type_scope, global_scope, &scope);
             // TODO can I accumulate these across all bindings and return them all at once?
-            let irt_expr = match dfg {
-                DefineGlobalResult::NeedsType(_) => return Err(dfg),
+            let irt_expr = match dgr {
+                DefineGlobalResult::NeedsType(_) => return Err(dgr),
                 DefineGlobalResult::Success(irt_expr) => irt_expr,
             };
+
+            if irt_expr.resolved_type.is_inferred() {
+                self.errors.push(Error {
+                    message: "Unable to infer type of local binding".into(),
+                    line: pattern.line,
+                    col: pattern.col,
+                });
+            }
+            let resolved_pattern = self.resolve_pattern(pattern, &type_scope, Some(irt_expr.resolved_type.clone()));
+            if !self.exhaustive(std::slice::from_ref(&&resolved_pattern), irt_expr.resolved_type.clone()) {
+                self.errors.push(Error {
+                    message: "Binding pattern must be exhaustive".into(),
+                    line: pattern.line,
+                    col: pattern.col,
+                });
+            }
+
             let paths: Vec<_> = names.into_iter()
                 .map(|(name, declared_type, path)| {
                     let actual_type = self.navigate_type_fields(&path, irt_expr.resolved_type.clone(), pattern.line, pattern.col);
@@ -1125,7 +1143,6 @@ impl Resolver<'_> {
         let mut holes = Vec::new();
         let fields = match actual_type.clone() {
             ResolvedType::Id(id, args) => {
-                println!("{:?}", args);
                 holes = args.iter()
                     .map(|arg| {
                         match arg {
