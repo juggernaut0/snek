@@ -1,5 +1,3 @@
-# EXPECT 4 Unresolved namespace ns2
-
 namespace ns1 {
     public let a = ns2.a
 }

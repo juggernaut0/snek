@@ -1,0 +1,5 @@
+let x = 5
+(match x
+    { 0 -> (println "zero") }
+    { n -> (println n) }
+)

@@ -17,6 +17,7 @@ pub use locals::LocalId;
 use locals::LocalId;
 use unifier::Unifier;
 use patterns::{ExhaustivenessChecker, ResolvedPattern, PatternType as IrtPatternType};
+use crate::resolver::unifier::merge_types;
 
 mod types;
 mod globals;
@@ -736,12 +737,18 @@ impl Resolver<'_> {
             match dgr {
                 DefineGlobalResult::NeedsType(id) => {
                     let dep = ugbs_by_gid.get(&id).copied().unwrap();
-                    if std::ptr::eq(ugb, dep.1) {
+                    if i == dep.0 {
                         self.errors.push(Error {
                             message: "Recursive error while resolving expression".to_string(),
                             line: ugb.ast_node.expr.line,
                             col: ugb.ast_node.expr.col,
-                        })
+                        });
+                        result[i] = Some(Statement::Discard(error_expr()));
+                        for ug in &ugb.decls {
+                            let decl = Rc::new(ug.define(ResolvedType::Error));
+                            self.globals.insert(ug.id.clone(), Rc::clone(&decl));
+                            self.exports.globals.push(decl);
+                        }
                     } else {
                         stack.push((i, ugb));
                         stack.push(dep);
@@ -903,7 +910,7 @@ impl Resolver<'_> {
                     Err(dfg) => return dfg
                 }
             },
-            ExprType::Dot => todo!(),
+            ExprType::Dot => unreachable!("dot handled in resolve_call_expr"),
             ExprType::Match => unreachable!("match handled in resolve_call_expr")
         };
         let resolved_type = self.unify(expected_type, actual_type, holes, expr.line, expr.col);
@@ -923,7 +930,9 @@ impl Resolver<'_> {
         call_expr: &CallExpr,
     ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
         if let ExprType::Match = &call_expr.callee.expr_type {
-            todo!("match expression")
+            return self.resolve_match_expr(expected_type, expr, type_scope, global_scope, local_scope, &call_expr.args);
+        } else if let ExprType::Dot = &call_expr.callee.expr_type {
+            todo!("tail recursion calls")
         }
 
         let callee_result = self.resolve_expr(ResolvedType::Callable(Box::new(expected_type)), None, &call_expr.callee, type_scope, global_scope, local_scope);
@@ -953,7 +962,7 @@ impl Resolver<'_> {
                 line: expr.line,
                 col: expr.col,
             })
-        } else if params.len() < call_expr.args.len() {
+        } else if params.len() > call_expr.args.len() {
             // TODO currying
             self.errors.push(Error {
                 message: "Partial application not yet supported".to_string(),
@@ -985,6 +994,84 @@ impl Resolver<'_> {
                 args,
             }
         ))
+    }
+
+    fn resolve_match_expr(
+        &mut self,
+        expected_type: ResolvedType,
+        expr: &Expr,
+        type_scope: &LookupScope<TypeDeclLookup>,
+        global_scope: &LookupScope<GlobalLookup>,
+        local_scope: &LocalScope,
+        args: &[Expr],
+    ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
+        if args.is_empty() {
+            self.errors.push(Error {
+                message: "Expression to match missing".to_string(),
+                line: expr.line,
+                col: expr.col,
+            });
+        }
+
+        let dgr = self.resolve_expr(ResolvedType::Inferred, None, &args[0], type_scope, global_scope, local_scope);
+        let matched_expr = match dgr {
+            DefineGlobalResult::Success(e) => e,
+            DefineGlobalResult::NeedsType(_) => return Err(dgr),
+        };
+
+        let mut patterns: Vec<_> = Vec::new();
+        let mut arm_exprs: Vec<_> = Vec::new();
+        let mut actual_type = ResolvedType::Inferred;
+        let expected_arm_type = ResolvedType::Func { params: vec![matched_expr.resolved_type.clone()], return_type: Box::new(expected_type) };
+        for arg in &args[1..] {
+            let lambda = if let ExprType::Lambda(lambda) = &arg.expr_type {
+                lambda
+            } else {
+                self.errors.push(Error {
+                    message: "Every arm in a match expression must be a lambda".to_string(),
+                    line: arg.line,
+                    col: arg.col,
+                });
+                continue
+            };
+
+            if lambda.params.len() != 1 {
+                self.errors.push(Error {
+                    message: "Every arm in a match expression must have exactly one pattern".to_string(),
+                    line: arg.line,
+                    col: arg.col,
+                });
+                continue
+            }
+
+            let pattern = self.resolve_pattern(&lambda.params[0], type_scope, Some(matched_expr.resolved_type.clone()));
+            patterns.push(pattern);
+
+            let dgr = self.resolve_expr(expected_arm_type.clone(), None, &arg, type_scope, global_scope, local_scope);
+            let arm_expr = match dgr {
+                DefineGlobalResult::Success(e) => e,
+                DefineGlobalResult::NeedsType(_) => return Err(dgr),
+            };
+            let rrt = if let ResolvedType::Func { return_type, .. } = &arm_expr.resolved_type {
+                return_type.as_ref().clone()
+            } else {
+                unreachable!("arm resolved type wasn't a function")
+            };
+            actual_type = merge_types(actual_type, rrt);
+            arm_exprs.push(arm_expr);
+        }
+
+        let patterns_ref: Vec<_> = patterns.iter().collect();
+        if !self.exhaustive(&patterns_ref, matched_expr.resolved_type.clone()) {
+            self.errors.push(Error {
+                message: "Match expression arms must be exhaustive".to_string(),
+                line: expr.line,
+                col: expr.col,
+            });
+        }
+
+        let arms = patterns.into_iter().zip(arm_exprs).collect();
+        Ok((actual_type, IrtExprType::Match { expr: Box::new(matched_expr), arms }))
     }
 
     fn resolve_lambda_expr(
@@ -1409,10 +1496,14 @@ enum DefineGlobalResult {
 
 impl DefineGlobalResult {
     fn error_expr() -> DefineGlobalResult {
-        DefineGlobalResult::Success(irt::Expr {
-            resolved_type: ResolvedType::Error,
-            expr_type: irt::ExprType::Error
-        })
+        DefineGlobalResult::Success(error_expr())
+    }
+}
+
+fn error_expr() -> IrtExpr {
+    irt::Expr {
+        resolved_type: ResolvedType::Error,
+        expr_type: irt::ExprType::Error
     }
 }
 

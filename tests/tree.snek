@@ -1,21 +1,26 @@
 type Option<T> = T | None {}
+let None: None = new {}
 type Node { data: Number, left: Option<Node>, right: Option<Node> }
 
 let Node = { data: Number left: Option<Node> right: Option<Node> ->
     new Node { left: left, right: right, data: data }
 }
 
-let make_fun = { mul ->
-	let f = { { data, left, right }: Node ->
-		(match left
-			{ node: Node -> (f node) }
-			{ _ -> () }
-		)
-		(println (mul * data))
-		(match right
-			{ node: Node -> (f node) }
-			{ _ -> () }
-		)
+let traverse: { { Number -> () } Node -> () } = { f { data, left, right }: Node ->
+    (match left
+        { node: Node -> (traverse f node) }
+        { _ -> () }
+    )
+    (f data)
+    (match right
+        { node: Node -> (traverse f node) }
+        { _ -> () }
+    )
+    ()
+}
+let make_fun: { Number -> { Node -> () } }  = { mul ->
+	let f = { node: Node ->
+		(traverse { data -> (println (mul * data)) } node)
 	}
 	f
 }

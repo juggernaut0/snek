@@ -28,6 +28,10 @@ impl ExhaustivenessChecker<'_> {
 
     // Do the set of given patterns cover all possible values of typ?
     pub fn exhaustive<'a>(&self, patterns: &[&'a ResolvedPattern], typ: ResolvedType) -> bool {
+        if patterns.is_empty() {
+            return false;
+        }
+
         if patterns.iter().copied().any(|pattern| self.pattern_is_catchall(pattern, &typ)) {
             return true;
         }

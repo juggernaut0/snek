@@ -419,7 +419,7 @@ impl IrtVisitor for IrPrinter {
             irt::ExprType::LoadGlobal(g) => self.print(&format!("global {}: {}", g.fqn(), expr.resolved_type)),
             irt::ExprType::LoadLocal(l) => self.print(&format!("local {}: {}", l.0, expr.resolved_type)),
             irt::ExprType::Call { callee, args } => {
-                self.print_open("Call");
+                self.print_open(&format!("Call: {}", expr.resolved_type));
                 self.print_one(callee.as_ref());
                 self.print_all(args);
                 self.print_close();
@@ -460,6 +460,17 @@ impl IrtVisitor for IrPrinter {
                     self.print_one(expr);
                     self.print_close();
                 }
+                self.print_close();
+            }
+            irt::ExprType::Match { expr: matched_expr, arms } => {
+                self.print_open(&format!("Match: {}", expr.resolved_type));
+                self.print_one(matched_expr.as_ref());
+                self.print_open("Arms");
+                for (pattern, arm) in arms {
+                    // TODO printable pattern
+                    self.print_one(arm);
+                }
+                self.print_close();
                 self.print_close();
             }
         }

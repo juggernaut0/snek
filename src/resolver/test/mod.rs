@@ -414,9 +414,13 @@ fn nested_functions() {
 }
 
 #[test]
-#[ignore] // TODO requires match expr
-fn basic_match() {
-    assert_no_errs(resolve_from_src(include_str!("basic_match.snek")));
+fn match_basic() {
+    assert_no_errs(resolve_from_src(include_str!("match_basic.snek")));
+}
+
+#[test]
+fn match_names() {
+    assert_no_errs(resolve_from_src(include_str!("match_names.snek")));
 }
 
 fn define_types(src: &str) -> Resolver {

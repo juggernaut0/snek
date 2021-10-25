@@ -1,6 +1,7 @@
 use crate::resolver::FieldPath;
 use crate::resolver::globals::GlobalId;
 use crate::resolver::locals::LocalId;
+use crate::resolver::patterns::ResolvedPattern;
 use crate::resolver::types::ResolvedType;
 
 pub struct IrTree {
@@ -32,7 +33,8 @@ pub enum ExprType {
     Call { callee: Box<Expr>, args: Vec<Expr> },
     Binary { op: BinaryOp, left: Box<Expr>, right: Box<Expr> },
     Func { statements: Vec<Statement> },
-    New { field_inits: Vec<(String, Expr)> }
+    New { field_inits: Vec<(String, Expr)> },
+    Match { expr: Box<Expr>, arms: Vec<(ResolvedPattern, Expr)> },
 }
 
 #[derive(PartialEq)]
