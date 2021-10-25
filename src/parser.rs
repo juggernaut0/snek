@@ -210,8 +210,7 @@ impl<'a> Parser<'a> {
     }
 
     fn qualified_name_with_init(&mut self, init: &str) -> Option<QName> {
-        let mut parts = Vec::new();
-        parts.push(init.to_string());
+        let mut parts = vec![init.to_string()];
         while self.current.matches_value(SYMBOL, ".") {
             self.advance(); // advance past "."
             let ident = self.require("identifier", IDENT)?;
@@ -246,11 +245,11 @@ impl<'a> Parser<'a> {
     fn decl(&mut self) -> Option<Decl> {
         let public = self.advance_if_matches_value(KEYWORD, "public");
         if self.current.matches_value(KEYWORD, "namespace") {
-            self.namespace(public).map(|ns| Decl::Namespace(ns))
+            self.namespace(public).map(Decl::Namespace)
         } else if self.current.matches_value(KEYWORD, "type") {
-            self.type_decl(public).map(|t| Decl::Type(t))
+            self.type_decl(public).map(Decl::Type)
         } else if self.current.matches_value(KEYWORD, "let") {
-            self.binding(public).map(|b| Decl::Binding(b))
+            self.binding(public).map(Decl::Binding)
         } else {
             self.error_at_current("namespace, type, or binding");
             None
@@ -302,8 +301,7 @@ impl<'a> Parser<'a> {
     }
 
     fn type_cases(&mut self) -> Option<Vec<TypeCase>> {
-        let mut cases = Vec::new();
-        cases.push(self.type_case()?);
+        let mut cases = vec![self.type_case()?];
         while self.advance_if_matches_value(SYMBOL, "|") {
             cases.push(self.type_case()?);
         }
@@ -401,8 +399,7 @@ impl<'a> Parser<'a> {
             self.advance(); // advance past "]"
             Some(PatternType::List(patterns))
         } else if self.advance_if_matches_value(SYMBOL, "{") {
-            let mut fields = Vec::new();
-            fields.push(self.field_pattern()?);
+            let mut fields = vec![self.field_pattern()?];
             if !self.current.matches_value(SYMBOL, "}") {
                 self.require_value(SYMBOL, ",");
             }
@@ -446,13 +443,11 @@ impl<'a> Parser<'a> {
             self.require_value(SYMBOL, "=")?;
             let field = self.require("identified", IDENT)?.to_string();
             Some(FieldPattern::Binding(pattern, field))
+        } else if let Some(name) = self.current.matches(IDENT) {
+            Some(FieldPattern::Name(self.name_pattern(name)?))
         } else {
-            if let Some(name) = self.current.matches(IDENT) {
-                Some(FieldPattern::Name(self.name_pattern(name)?))
-            } else {
-                self.error_at_current("identifier");
-                None
-            }
+            self.error_at_current("identifier");
+            None
         }
     }
 

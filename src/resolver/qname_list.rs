@@ -55,7 +55,7 @@ impl<'parent, 'ast> QNameList<'parent, 'ast> {
         }
     }
 
-    pub fn to_vec(&self) -> Vec<String> {
+    pub fn to_vec(self) -> Vec<String> {
         self.iter().cloned().collect()
     }
 }

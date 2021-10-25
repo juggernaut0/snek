@@ -87,9 +87,9 @@ impl<'a> Scanner<'a> {
     fn consume_if(&mut self, f: impl FnOnce(char) -> bool) -> bool {
         if self.peek().filter(|it| f(*it)).is_some() {
             self.advance();
-            return true
+            true
         } else {
-            return false
+            false
         }
     }
 

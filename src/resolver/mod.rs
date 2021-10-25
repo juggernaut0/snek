@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::iter::repeat;
@@ -257,7 +258,7 @@ impl Resolver<'_> {
                 found = true;
             }
             if let Some(gd) = module.get_global(&name.name) {
-                self.import_global(Rc::clone(&gd));
+                self.import_global(Rc::clone(gd));
                 found = true;
             }
             if !found {
@@ -338,7 +339,7 @@ impl Resolver<'_> {
                                             let name = std::slice::from_ref(&tcr.name.name);
                                             // An inline record type is always visible to the union
                                             let (id, _) = scope.get(name).unwrap();
-                                            let rts = (0..num_type_params).map(|i| ResolvedType::TypeParam(i)).collect();
+                                            let rts = (0..num_type_params).map(ResolvedType::TypeParam).collect();
                                             ResolvedType::Id(id, rts)
                                         },
                                     }
@@ -517,7 +518,7 @@ impl Resolver<'_> {
         names
     }
 
-    fn extract_names_impl<'a>(&mut self, names: &mut Vec<(String, ResolvedType, FieldPath)>, pattern: ResolvedPattern, nav: Vec<String>) {
+    fn extract_names_impl(&mut self, names: &mut Vec<(String, ResolvedType, FieldPath)>, pattern: ResolvedPattern, nav: Vec<String>) {
         match pattern.pattern_type {
             IrtPatternType::Discard => {}
             IrtPatternType::Constant(_) => {}
@@ -576,7 +577,7 @@ impl Resolver<'_> {
                         match rt {
                             ResolvedType::Id(id, args) => {
                                 let type_decl = self.types.get(id).expect("Missing type def");
-                                if let TypeDefinition::Record(fs) = type_decl.definition.clone().instantiate_into(&args) {
+                                if let TypeDefinition::Record(fs) = type_decl.definition.clone().instantiate_into(args) {
                                     Some(fs)
                                 } else {
                                     self.errors.push(Error {
@@ -853,11 +854,11 @@ impl Resolver<'_> {
             },
             ExprType::Unary(_, _) => todo!(),
             ExprType::Binary(op, left, right) => {
-                let res_left = match self.resolve_expr(ResolvedType::Inferred, None, &left, type_scope, global_scope, local_scope) {
+                let res_left = match self.resolve_expr(ResolvedType::Inferred, None, left, type_scope, global_scope, local_scope) {
                     DefineGlobalResult::Success(it) => it,
                     DefineGlobalResult::NeedsType(id) => return DefineGlobalResult::NeedsType(id),
                 };
-                let res_right = match self.resolve_expr(ResolvedType::Inferred, None, &right, type_scope, global_scope, local_scope) {
+                let res_right = match self.resolve_expr(ResolvedType::Inferred, None, right, type_scope, global_scope, local_scope) {
                     DefineGlobalResult::Success(it) => it,
                     DefineGlobalResult::NeedsType(id) => return DefineGlobalResult::NeedsType(id),
                 };
@@ -875,9 +876,9 @@ impl Resolver<'_> {
                     (BinaryOp::PLUS, l, r) if l == &BuiltinTypeNames::string() && r == &BuiltinTypeNames::string() => (BuiltinTypeNames::string(), IrtBinaryOp::StringConcat),
                     (op, left, right) => {
                         let message = if left.is_inferred() {
-                            format!("Unable to infer type of left-hand operand")
+                            "Unable to infer type of left-hand operand".to_string()
                         } else if right.is_inferred() {
-                            format!("Unable to infer type of right-hand operand")
+                            "Unable to infer type of right-hand operand".to_string()
                         } else {
                             format!("Incompatible operand types for binary operator {:?}: {} & {}", op, left, right)
                         };
@@ -956,19 +957,23 @@ impl Resolver<'_> {
             _ => unreachable!() // Callable does not unify with anything except Func or Callable
         };
 
-        if params.len() < call_expr.args.len() {
-            self.errors.push(Error {
-                message: "Too many arguments provided for function".to_string(),
-                line: expr.line,
-                col: expr.col,
-            })
-        } else if params.len() > call_expr.args.len() {
-            // TODO currying
-            self.errors.push(Error {
-                message: "Partial application not yet supported".to_string(),
-                line: expr.line,
-                col: expr.col,
-            })
+        match params.len().cmp(&call_expr.args.len()) {
+            Ordering::Less => {
+                self.errors.push(Error {
+                    message: "Too many arguments provided for function".to_string(),
+                    line: expr.line,
+                    col: expr.col,
+                })
+            }
+            Ordering::Greater => {
+                // TODO currying
+                self.errors.push(Error {
+                    message: "Partial application not yet supported".to_string(),
+                    line: expr.line,
+                    col: expr.col,
+                })
+            }
+            Ordering::Equal => {}
         }
 
         let arg_results = params
@@ -1047,7 +1052,7 @@ impl Resolver<'_> {
             let pattern = self.resolve_pattern(&lambda.params[0], type_scope, Some(matched_expr.resolved_type.clone()));
             patterns.push(pattern);
 
-            let dgr = self.resolve_expr(expected_arm_type.clone(), None, &arg, type_scope, global_scope, local_scope);
+            let dgr = self.resolve_expr(expected_arm_type.clone(), None, arg, type_scope, global_scope, local_scope);
             let arm_expr = match dgr {
                 DefineGlobalResult::Success(e) => e,
                 DefineGlobalResult::NeedsType(_) => return Err(dgr),
@@ -1133,7 +1138,7 @@ impl Resolver<'_> {
                         let actual_type = self.navigate_type_fields(&path, irt_expr.resolved_type.clone(), param.line, param.col);
                         self.unify(declared_type, actual_type, None, param.line, param.col)
                     };
-                    (path, scope.insert(name.into(), resolved_type))
+                    (path, scope.insert(name, resolved_type))
                 })
                 .collect();
             let statement = if paths.is_empty() {
@@ -1174,7 +1179,7 @@ impl Resolver<'_> {
                     col: pattern.col,
                 });
             }
-            let resolved_pattern = self.resolve_pattern(pattern, &type_scope, Some(irt_expr.resolved_type.clone()));
+            let resolved_pattern = self.resolve_pattern(pattern, type_scope, Some(irt_expr.resolved_type.clone()));
             if !self.exhaustive(std::slice::from_ref(&&resolved_pattern), irt_expr.resolved_type.clone()) {
                 self.errors.push(Error {
                     message: "Binding pattern must be exhaustive".into(),
@@ -1187,7 +1192,7 @@ impl Resolver<'_> {
                 .map(|(name, declared_type, path)| {
                     let actual_type = self.navigate_type_fields(&path, irt_expr.resolved_type.clone(), pattern.line, pattern.col);
                     let resolved_type = self.unify(declared_type, actual_type, None, pattern.line, pattern.col);
-                    (path, scope.insert(name.into(), resolved_type))
+                    (path, scope.insert(name, resolved_type))
                 })
                 .collect();
             let statement = if paths.is_empty() {
@@ -1220,7 +1225,7 @@ impl Resolver<'_> {
         global_scope: &LookupScope<GlobalLookup>,
         local_scope: &LocalScope,
         named_type: Option<&NamedType>,
-        inits: &Vec<FieldInit>,
+        inits: &[FieldInit],
     ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
         let actual_type = named_type
             .map(|nt| self.resolve_named_type(nt, &[], type_scope, expr.line, expr.col))
@@ -1473,7 +1478,7 @@ impl<'a> LocalScope<'a> {
     }
 
     fn get(&self, name: &str) -> Option<&ScopeItem> {
-        self.declarations.iter().find(|d| &d.name == name).or_else(|| self.parent.and_then(|p| p.get(name)))
+        self.declarations.iter().find(|d| d.name == name).or_else(|| self.parent.and_then(|p| p.get(name)))
     }
 
     fn get_from_qname(&self, qn: &QName) -> Option<&ScopeItem> {

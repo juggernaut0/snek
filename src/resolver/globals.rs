@@ -33,7 +33,7 @@ pub struct GlobalDeclaration {
 
 impl GlobalDeclaration {
     pub fn fqn(&self) -> &Fqn {
-        &self.id.fqn()
+        self.id.fqn()
     }
     pub fn is_exported(&self) -> bool {
         self.visibility.is_empty() && self.export

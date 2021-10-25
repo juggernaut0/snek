@@ -19,7 +19,7 @@ impl ModuleGraph {
         &self.root
     }
 
-    pub fn get_ast(&self, name: &String) -> (&Ast, &[Rc<String>]) {
+    pub fn get_ast(&self, #[allow(clippy::ptr_arg)] name: &String) -> (&Ast, &[Rc<String>]) {
         let (ast, deps) = self.asts.get(name).expect("ast not found");
         (ast, deps.as_slice())
     }

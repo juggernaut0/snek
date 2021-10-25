@@ -22,8 +22,7 @@ mod scanner;
 mod debug;
 
 fn main() {
-    let args = env::args_os();
-    let path = args.skip(1).next();
+    let path = env::args_os().nth(1);
     if let Some(p) = path {
         run_from_file(Path::new(&p));
     } else {
@@ -56,9 +55,9 @@ fn run_from_file(path: &Path) {
         }
     }
     let root_name = asts.root();
-    let (root, _deps) = asts.get_ast(&root_name);
+    let (root, _deps) = asts.get_ast(root_name);
     // TODO deps
-    let (decls, irt) = match resolver::resolve(Rc::clone(&root_name), &[], root) {
+    let (decls, irt) = match resolver::resolve(Rc::clone(root_name), &[], root) {
         Ok(stuff) => stuff,
         Err(errors) => {
             errors.iter().for_each(|e| {

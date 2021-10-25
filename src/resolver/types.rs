@@ -149,9 +149,9 @@ impl Display for ResolvedType {
         match self {
             ResolvedType::Id(id, args) => {
                 write!(f, "{}", id)?;
-                if args.len() > 0 {
+                if !args.is_empty() {
                     write!(f, "<")?;
-                    join(f, &args, " ")?;
+                    join(f, args, " ")?;
                     write!(f, ">")?;
                 }
                 Ok(())
@@ -162,7 +162,7 @@ impl Display for ResolvedType {
             }
             ResolvedType::Func { params, return_type } => {
                 write!(f, "{{ ")?;
-                join(f, &params, " ")?;
+                join(f, params, " ")?;
                 write!(f, " -> {} }}", return_type)
             },
             ResolvedType::Callable(ret) => write!(f, "{{ ? -> {} }}", ret),
@@ -177,7 +177,7 @@ impl Display for ResolvedType {
 }
 
 fn join<T: Display>(f: &mut Formatter<'_>, ts: &[T], sep: &str) -> std::fmt::Result {
-    if ts.len() == 0 {
+    if ts.is_empty() {
         return Ok(());
     }
     let mut it = ts.iter();

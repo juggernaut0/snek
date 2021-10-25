@@ -28,7 +28,7 @@ trait DebugPrinter {
         item.print(self);
     }
 
-    fn print_all<T: DebugPrinterNode<Self>>(&mut self, items: &Vec<T>) {
+    fn print_all<T: DebugPrinterNode<Self>>(&mut self, items: &[T]) {
         for item in items {
             item.print(self)
         }
@@ -456,7 +456,7 @@ impl IrtVisitor for IrPrinter {
             irt::ExprType::New { field_inits } => {
                 self.print_open(&format!("New: {}", expr.resolved_type));
                 for (field_name, expr) in field_inits {
-                    self.print_open(&field_name);
+                    self.print_open(field_name);
                     self.print_one(expr);
                     self.print_close();
                 }
