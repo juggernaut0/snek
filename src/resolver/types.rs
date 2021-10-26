@@ -12,6 +12,7 @@ impl TypeId {
         TypeId(mod_name, fqn)
     }
 
+    #[cfg(test)]
     pub fn module(&self) -> &str {
         &self.0
     }
@@ -116,7 +117,7 @@ impl ResolvedType {
             _ => false
         }
     }
-
+/*
     pub fn is_error(&self) -> bool {
         match self {
             ResolvedType::Error => true,
@@ -125,7 +126,7 @@ impl ResolvedType {
             _ => false
         }
     }
-
+*/
     pub fn instantiate(&mut self, args: &[ResolvedType]) {
         match self {
             ResolvedType::Id(_, my_args) => {

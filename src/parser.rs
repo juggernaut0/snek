@@ -105,11 +105,11 @@ impl<'a> Parser<'a> {
     fn synchronize(&mut self) {
         loop {
             let current = &self.current;
-            if current.matches_value(KEYWORD, "import")
-                || current.matches_value(KEYWORD, "public")
-                || current.matches_value(KEYWORD, "namespace")
-                || current.matches_value(KEYWORD, "type")
-                || current.matches_value(KEYWORD, "let")
+            if current.matches_value(Keyword, "import")
+                || current.matches_value(Keyword, "public")
+                || current.matches_value(Keyword, "namespace")
+                || current.matches_value(Keyword, "type")
+                || current.matches_value(Keyword, "let")
                 || current.is_eof() {
                 break;
             }
@@ -179,10 +179,10 @@ impl<'a> Parser<'a> {
 
     fn imports(&mut self) -> Vec<Import> {
         let mut imports = Vec::new();
-        while self.current.matches_value(KEYWORD, "import") {
+        while self.current.matches_value(Keyword, "import") {
             self.advance(); // advance past "import"
             let mut names = Vec::new();
-            while !self.current.matches_value(KEYWORD, "from") {
+            while !self.current.matches_value(Keyword, "from") {
                 let (line, col) = self.pos();
                 match self.qualified_name() {
                     Some(name) => {
@@ -197,7 +197,7 @@ impl<'a> Parser<'a> {
                 }
             }
             self.advance(); // advance past "from"
-            if let Some(filename) = self.require("string literal", STRING) {
+            if let Some(filename) = self.require("string literal", Str) {
                 imports.push(Import { filename: trim_quotes(filename).to_string(), names });
             }
         }
@@ -205,15 +205,15 @@ impl<'a> Parser<'a> {
     }
 
     fn qualified_name(&mut self) -> Option<QName> {
-        let init = self.require("identifier", IDENT)?;
+        let init = self.require("identifier", Ident)?;
         self.qualified_name_with_init(init)
     }
 
     fn qualified_name_with_init(&mut self, init: &str) -> Option<QName> {
         let mut parts = vec![init.to_string()];
-        while self.current.matches_value(SYMBOL, ".") {
+        while self.current.matches_value(Symbol, ".") {
             self.advance(); // advance past "."
-            let ident = self.require("identifier", IDENT)?;
+            let ident = self.require("identifier", Ident)?;
             parts.push(ident.to_string())
         }
         Some(QName { parts })
@@ -221,20 +221,20 @@ impl<'a> Parser<'a> {
 
     fn decls(&mut self, top_level: bool) -> Vec<Decl> {
         let mut decls = Vec::new();
-        while self.current.matches_value(KEYWORD, "public")
-            || self.current.matches_value(KEYWORD, "namespace")
-            || self.current.matches_value(KEYWORD, "type")
-            || self.current.matches_value(KEYWORD, "let") {
+        while self.current.matches_value(Keyword, "public")
+            || self.current.matches_value(Keyword, "namespace")
+            || self.current.matches_value(Keyword, "type")
+            || self.current.matches_value(Keyword, "let") {
             match self.decl() {
                 Some(decl) => decls.push(decl),
                 None => continue
             }
             if top_level
-                && !(self.current.matches_value(KEYWORD, "public")
-                || self.current.matches_value(KEYWORD, "namespace")
-                || self.current.matches_value(KEYWORD, "type")
-                || self.current.matches_value(KEYWORD, "let")
-                || self.current.matches_value(SYMBOL, "(")
+                && !(self.current.matches_value(Keyword, "public")
+                || self.current.matches_value(Keyword, "namespace")
+                || self.current.matches_value(Keyword, "type")
+                || self.current.matches_value(Keyword, "let")
+                || self.current.matches_value(Symbol, "(")
                 || self.current.is_eof()) {
                 self.error_at_current("declaration or call");
             }
@@ -243,12 +243,12 @@ impl<'a> Parser<'a> {
     }
 
     fn decl(&mut self) -> Option<Decl> {
-        let public = self.advance_if_matches_value(KEYWORD, "public");
-        if self.current.matches_value(KEYWORD, "namespace") {
+        let public = self.advance_if_matches_value(Keyword, "public");
+        if self.current.matches_value(Keyword, "namespace") {
             self.namespace(public).map(Decl::Namespace)
-        } else if self.current.matches_value(KEYWORD, "type") {
+        } else if self.current.matches_value(Keyword, "type") {
             self.type_decl(public).map(Decl::Type)
-        } else if self.current.matches_value(KEYWORD, "let") {
+        } else if self.current.matches_value(Keyword, "let") {
             self.binding(public).map(Decl::Binding)
         } else {
             self.error_at_current("namespace, type, or binding");
@@ -259,18 +259,18 @@ impl<'a> Parser<'a> {
     fn namespace(&mut self, public: bool) -> Option<Namespace> {
         self.advance(); // advance past "namespace"
         let name = self.qualified_name()?;
-        self.require_value(SYMBOL, "{")?;
+        self.require_value(Symbol, "{")?;
         let decls = self.decls(false);
-        self.require_value(SYMBOL, "}")?;
+        self.require_value(Symbol, "}")?;
         Some(Namespace { name, public, decls })
     }
 
     fn type_decl(&mut self, public: bool) -> Option<Type> {
         self.advance(); // advance past "type"
         let name = self.type_name_decl()?;
-        let contents = if self.advance_if_matches_value(SYMBOL, "=") {
+        let contents = if self.advance_if_matches_value(Symbol, "=") {
             TypeContents::Union(self.type_cases()?)
-        } else if self.current.matches_value(SYMBOL, "{") {
+        } else if self.current.matches_value(Symbol, "{") {
             TypeContents::Record(self.type_fields()?)
         } else {
             TypeContents::Record(Vec::new())
@@ -281,8 +281,8 @@ impl<'a> Parser<'a> {
 
     fn type_name_decl(&mut self) -> Option<TypeNameDecl> {
         let (line, col) = self.pos();
-        let name = self.require("identifier", IDENT)?;
-        let type_params = if self.current.matches_value(SYMBOL, "<") {
+        let name = self.require("identifier", Ident)?;
+        let type_params = if self.current.matches_value(Symbol, "<") {
             self.type_params()?
         } else {
             Vec::new()
@@ -291,37 +291,37 @@ impl<'a> Parser<'a> {
     }
 
     fn type_params(&mut self) -> Option<Vec<String>> {
-        self.require_value(SYMBOL, "<")?;
+        self.require_value(Symbol, "<")?;
         let mut params = Vec::new();
-        while let Some(param) = self.advance_if_matches(IDENT) {
+        while let Some(param) = self.advance_if_matches(Ident) {
             params.push(param.to_string())
         }
-        self.require_value(SYMBOL, ">")?;
+        self.require_value(Symbol, ">")?;
         Some(params)
     }
 
     fn type_cases(&mut self) -> Option<Vec<TypeCase>> {
         let mut cases = vec![self.type_case()?];
-        while self.advance_if_matches_value(SYMBOL, "|") {
+        while self.advance_if_matches_value(Symbol, "|") {
             cases.push(self.type_case()?);
         }
         Some(cases)
     }
 
     fn type_case(&mut self) -> Option<TypeCase> {
-        let public = self.advance_if_matches_value(KEYWORD, "public");
+        let public = self.advance_if_matches_value(Keyword, "public");
 
         if public {
             // For sure a record
             Some(TypeCase::Record(self.type_case_record(public)?))
-        } else if self.current.matches_value(SYMBOL, "{") || self.current.matches_value(SYMBOL, "(") {
+        } else if self.current.matches_value(Symbol, "{") || self.current.matches_value(Symbol, "(") {
             // Either func_type or unit, let type_name sort it out
             Some(TypeCase::Case(self.type_name()?))
-        } else if let Some(first_ident) = self.current.matches(IDENT) {
+        } else if let Some(first_ident) = self.current.matches(Ident) {
             let (line, col) = self.pos();
             self.advance();
             // Check if record or case based on next token
-            if self.current.matches_value(SYMBOL, "{") {
+            if self.current.matches_value(Symbol, "{") {
                 // For sure a record
                 Some(TypeCase::Record(self.type_case_record_with_init(public, first_ident, line, col)?))
             } else {
@@ -339,7 +339,7 @@ impl<'a> Parser<'a> {
 
     fn type_case_record(&mut self, public: bool) -> Option<TypeCaseRecord> {
         let (line, col) = self.pos();
-        let init = self.require("identifier", IDENT)?;
+        let init = self.require("identifier", Ident)?;
         self.type_case_record_with_init(public, init, line, col)
     }
 
@@ -351,21 +351,21 @@ impl<'a> Parser<'a> {
 
     fn type_fields(&mut self) -> Option<Vec<TypeField>> {
         let mut fields = Vec::new();
-        self.require_value(SYMBOL, "{")?;
-        while !self.current.matches_value(SYMBOL, "}") {
-            let public = self.advance_if_matches_value(KEYWORD, "public");
-            let name = self.require("identifier", IDENT)?.to_string();
-            self.require_value(SYMBOL, ":")?;
+        self.require_value(Symbol, "{")?;
+        while !self.current.matches_value(Symbol, "}") {
+            let public = self.advance_if_matches_value(Keyword, "public");
+            let name = self.require("identifier", Ident)?.to_string();
+            self.require_value(Symbol, ":")?;
             let type_name = self.type_name()?;
             fields.push(TypeField { public, name, type_name });
 
-            if self.current.matches_value(SYMBOL, "}") {
+            if self.current.matches_value(Symbol, "}") {
                 break;
             } else {
-                self.require_value(SYMBOL, ",");
+                self.require_value(Symbol, ",");
             }
         }
-        self.require_value(SYMBOL, "}")?;
+        self.require_value(Symbol, "}")?;
 
         Some(fields)
     }
@@ -373,45 +373,45 @@ impl<'a> Parser<'a> {
     fn binding(&mut self, public: bool) -> Option<Binding> {
         self.advance(); // advance past "let"
         let pattern = self.pattern()?;
-        self.require_value(SYMBOL, "=")?;
+        self.require_value(Symbol, "=")?;
         let expr = self.expr()?;
         Some(Binding { public, pattern, expr })
     }
 
     fn pattern(&mut self) -> Option<Pattern> {
         let (line, col) = self.pos();
-        let pattern = if self.advance_if_matches_value(IDENT, "_") {
+        let pattern = if self.advance_if_matches_value(Ident, "_") {
             let type_name = self.opt_type_annotation()?;
             Some(PatternType::Wildcard(type_name))
-        } else if let Some(name) = self.current.matches(IDENT) {
+        } else if let Some(name) = self.current.matches(Ident) {
             Some(PatternType::Name(self.name_pattern(name)?))
         } else if let Some(l) = self.literal() {
             Some(PatternType::Constant(l))
-        } else if self.advance_if_matches_value(SYMBOL, "(") {
-            self.require_value(SYMBOL, ")")?;
-            Some(PatternType::Constant(Literal { lit_type: LiteralType::UNIT, value: String::new() }))
-        } else if self.advance_if_matches_value(SYMBOL, "[") {
+        } else if self.advance_if_matches_value(Symbol, "(") {
+            self.require_value(Symbol, ")")?;
+            Some(PatternType::Constant(Literal { lit_type: LiteralType::Unit, value: String::new() }))
+        } else if self.advance_if_matches_value(Symbol, "[") {
             let mut patterns = Vec::new();
-            while !self.current.matches_value(SYMBOL, "]") {
+            while !self.current.matches_value(Symbol, "]") {
                 let pattern = self.pattern()?;
                 patterns.push(pattern);
             }
             self.advance(); // advance past "]"
             Some(PatternType::List(patterns))
-        } else if self.advance_if_matches_value(SYMBOL, "{") {
+        } else if self.advance_if_matches_value(Symbol, "{") {
             let mut fields = vec![self.field_pattern()?];
-            if !self.current.matches_value(SYMBOL, "}") {
-                self.require_value(SYMBOL, ",");
+            if !self.current.matches_value(Symbol, "}") {
+                self.require_value(Symbol, ",");
             }
-            while !self.current.matches_value(SYMBOL, "}") {
+            while !self.current.matches_value(Symbol, "}") {
                 fields.push(self.field_pattern()?);
-                if self.current.matches_value(SYMBOL, "}") {
+                if self.current.matches_value(Symbol, "}") {
                     break;
                 } else {
-                    self.require_value(SYMBOL, ",");
+                    self.require_value(Symbol, ",");
                 }
             }
-            self.require_value(SYMBOL, "}")?;
+            self.require_value(Symbol, "}")?;
             let type_name = self.opt_type_annotation()?;
             Some(PatternType::Destruct(fields, type_name))
         } else {
@@ -429,7 +429,7 @@ impl<'a> Parser<'a> {
     }
 
     fn opt_type_annotation(&mut self) -> Option<Option<TypeName>> {
-        let ta = if self.advance_if_matches_value(SYMBOL, ":") {
+        let ta = if self.advance_if_matches_value(Symbol, ":") {
             Some(self.type_name()?)
         } else {
             None
@@ -438,12 +438,12 @@ impl<'a> Parser<'a> {
     }
 
     fn field_pattern(&mut self) -> Option<FieldPattern> {
-        if self.advance_if_matches_value(KEYWORD, "let") {
+        if self.advance_if_matches_value(Keyword, "let") {
             let pattern = self.pattern()?;
-            self.require_value(SYMBOL, "=")?;
-            let field = self.require("identified", IDENT)?.to_string();
+            self.require_value(Symbol, "=")?;
+            let field = self.require("identified", Ident)?.to_string();
             Some(FieldPattern::Binding(pattern, field))
-        } else if let Some(name) = self.current.matches(IDENT) {
+        } else if let Some(name) = self.current.matches(Ident) {
             Some(FieldPattern::Name(self.name_pattern(name)?))
         } else {
             self.error_at_current("identifier");
@@ -453,33 +453,33 @@ impl<'a> Parser<'a> {
 
     fn type_name(&mut self) -> Option<TypeName> {
         let (line, col) = self.pos();
-        let type_name_type = if let Some(init) = self.advance_if_matches(IDENT) {
+        let type_name_type = if let Some(init) = self.advance_if_matches(Ident) {
             if init == "_" {
                 TypeNameType::Inferred
             } else {
                 let named = self.named_type_with_init(init)?;
                 TypeNameType::Named(named)
             }
-        } else if self.advance_if_matches_value(SYMBOL, "{") {
-            let type_params = if self.current.matches_value(SYMBOL, "<") {
+        } else if self.advance_if_matches_value(Symbol, "{") {
+            let type_params = if self.current.matches_value(Symbol, "<") {
                 self.type_params()?
             } else {
                 Vec::new()
             };
             let mut params = Vec::new();
-            while !self.current.matches_value(SYMBOL, "->") {
+            while !self.current.matches_value(Symbol, "->") {
                 params.push(self.type_name()?);
             }
             self.advance(); // advance past ->
             let ret = self.type_name()?;
-            self.require_value(SYMBOL, "}")?;
+            self.require_value(Symbol, "}")?;
             TypeNameType::Func(FuncType { type_params, params, return_type: Box::new(ret) })
-        } else if self.advance_if_matches_value(SYMBOL, "*") {
+        } else if self.advance_if_matches_value(Symbol, "*") {
             TypeNameType::Any
-        } else if self.advance_if_matches_value(SYMBOL, "(") {
-            self.require_value(SYMBOL, ")")?;
+        } else if self.advance_if_matches_value(Symbol, "(") {
+            self.require_value(Symbol, ")")?;
             TypeNameType::Unit
-        } else if self.advance_if_matches_value(SYMBOL, "!") {
+        } else if self.advance_if_matches_value(Symbol, "!") {
             TypeNameType::Nothing
         } else {
             self.error_at_current("type identifier");
@@ -489,16 +489,16 @@ impl<'a> Parser<'a> {
     }
 
     fn named_type(&mut self) -> Option<NamedType> {
-        let init = self.require("identifier", IDENT)?;
+        let init = self.require("identifier", Ident)?;
         self.named_type_with_init(init)
     }
 
     fn named_type_with_init(&mut self, init: &str) -> Option<NamedType> {
         let name = self.qualified_name_with_init(init)?;
         let mut params = Vec::new();
-        if self.advance_if_matches_value(SYMBOL, "<") {
+        if self.advance_if_matches_value(Symbol, "<") {
             params.push(self.type_name()?);
-            while !self.current.matches_value(SYMBOL, ">") {
+            while !self.current.matches_value(Symbol, ">") {
                 params.push(self.type_name()?);
             }
             self.advance(); // advance past >
@@ -508,39 +508,39 @@ impl<'a> Parser<'a> {
 
     fn expr(&mut self) -> Option<Expr> {
         let (line, col) = self.pos();
-        if self.current.matches(IDENT).is_some() {
+        if self.current.matches(Ident).is_some() {
             self.qualified_name().map(|qn| Expr { line, col, expr_type: ExprType::QName(qn) })
         } else if let Some(l) = self.literal() {
             Some(Expr { line, col, expr_type: ExprType::Constant(l) })
-        } else if self.current.matches_value(SYMBOL, "(") {
+        } else if self.current.matches_value(Symbol, "(") {
             self.call_expr()
-        } else if self.current.matches_value(SYMBOL, "{") {
+        } else if self.current.matches_value(Symbol, "{") {
             self.lambda_expr()
-        } else if self.advance_if_matches_value(SYMBOL, "[") {
+        } else if self.advance_if_matches_value(Symbol, "[") {
             let mut exprs = Vec::new();
-            while !self.current.matches_value(SYMBOL, "]") {
+            while !self.current.matches_value(Symbol, "]") {
                 let expr = self.expr()?;
                 exprs.push(expr);
             }
             self.advance(); // advance past "]"
             Some(Expr { line, col, expr_type: ExprType::List(exprs) })
-        } else if self.advance_if_matches_value(KEYWORD, "new") {
-            let type_name = if !self.current.matches_value(SYMBOL, "{") {
+        } else if self.advance_if_matches_value(Keyword, "new") {
+            let type_name = if !self.current.matches_value(Symbol, "{") {
                 Some(self.named_type()?)
             } else {
                 None
             };
-            self.require_value(SYMBOL, "{")?;
+            self.require_value(Symbol, "{")?;
             let mut inits = Vec::new();
-            while !self.current.matches_value(SYMBOL, "}") {
+            while !self.current.matches_value(Symbol, "}") {
                 inits.push(self.field_init()?);
-                if self.current.matches_value(SYMBOL, "}") {
+                if self.current.matches_value(Symbol, "}") {
                     break;
                 } else {
-                    self.require_value(SYMBOL, ",");
+                    self.require_value(Symbol, ",");
                 }
             }
-            self.require_value(SYMBOL, "}")?;
+            self.require_value(Symbol, "}")?;
             Some(Expr { line, col, expr_type: ExprType::New(type_name, inits) })
         } else {
             self.error_at_current("expression");
@@ -551,15 +551,15 @@ impl<'a> Parser<'a> {
     fn call_expr(&mut self) -> Option<Expr> {
         let (line, col) = self.pos();
         self.advance(); // advance past "("
-        if self.advance_if_matches_value(SYMBOL, ")") {
-            let expr_type = ExprType::Constant(Literal { lit_type: LiteralType::UNIT, value: String::new() });
+        if self.advance_if_matches_value(Symbol, ")") {
+            let expr_type = ExprType::Constant(Literal { lit_type: LiteralType::Unit, value: String::new() });
             return Some(Expr { line, col, expr_type })
         }
-        let first = if self.advance_if_matches_value(SYMBOL, ".") {
+        let first = if self.advance_if_matches_value(Symbol, ".") {
             let expr_type = ExprType::Dot;
             let (line, col) = self.pos();
             Expr { line, col, expr_type }
-        } else if self.advance_if_matches_value(KEYWORD, "match") {
+        } else if self.advance_if_matches_value(Keyword, "match") {
             let expr_type = ExprType::Match;
             let (line, col) = self.pos();
             Expr { line, col, expr_type }
@@ -571,11 +571,11 @@ impl<'a> Parser<'a> {
             _ if self.peek_binary_op().is_some() => self.finish_binary(first),
             _ => {
                 let mut args = Vec::new();
-                while !self.current.matches_value(SYMBOL, ")") {
+                while !self.current.matches_value(Symbol, ")") {
                     let expr = self.expr()?;
                     args.push(expr);
                 }
-                self.require_value(SYMBOL, ")")?;
+                self.require_value(Symbol, ")")?;
                 let expr_type = ExprType::Call(CallExpr { callee: Box::new(first), args });
                 Some(Expr { line, col, expr_type })
             }
@@ -585,7 +585,7 @@ impl<'a> Parser<'a> {
     fn finish_binary(&mut self, first: Expr) -> Option<Expr> {
         let (line, col) = (first.line, first.col);
         let mut res = first;
-        while !self.advance_if_matches_value(SYMBOL, ")") {
+        while !self.advance_if_matches_value(Symbol, ")") {
             let op = self.binary_op()?;
             let second = self.binary(op.precedence())?;
             let expr_type = ExprType::Binary(op, Box::new(res), Box::new(second));
@@ -619,42 +619,42 @@ impl<'a> Parser<'a> {
     }
 
     fn unary_op(&mut self) -> Option<UnaryOp> {
-        if self.advance_if_matches_value(SYMBOL, "+") {
-            Some(UnaryOp::PLUS)
-        } else if self.advance_if_matches_value(SYMBOL, "-") {
-            Some(UnaryOp::MINUS)
-        } else if self.advance_if_matches_value(SYMBOL, "!") {
-            Some(UnaryOp::BANG)
+        if self.advance_if_matches_value(Symbol, "+") {
+            Some(UnaryOp::Plus)
+        } else if self.advance_if_matches_value(Symbol, "-") {
+            Some(UnaryOp::Minus)
+        } else if self.advance_if_matches_value(Symbol, "!") {
+            Some(UnaryOp::Bang)
         } else {
             None
         }
     }
 
     fn peek_binary_op(&self) -> Option<BinaryOp> {
-        if self.current.matches_value(SYMBOL, "+") {
-            Some(BinaryOp::PLUS)
-        } else if self.current.matches_value(SYMBOL, "-") {
-            Some(BinaryOp::MINUS)
-        } else if self.current.matches_value(SYMBOL, "*") {
-            Some(BinaryOp::TIMES)
-        } else if self.current.matches_value(SYMBOL, "/") {
-            Some(BinaryOp::DIV)
-        } else if self.current.matches_value(SYMBOL, "&&") {
-            Some(BinaryOp::AND)
-        } else if self.current.matches_value(SYMBOL, "||") {
-            Some(BinaryOp::OR)
-        } else if self.current.matches_value(SYMBOL, "<") {
-            Some(BinaryOp::LT)
-        } else if self.current.matches_value(SYMBOL, ">") {
-            Some(BinaryOp::GT)
-        } else if self.current.matches_value(SYMBOL, "<=") {
-            Some(BinaryOp::LEQ)
-        } else if self.current.matches_value(SYMBOL, ">=") {
-            Some(BinaryOp::GEQ)
-        } else if self.current.matches_value(SYMBOL, "==") {
-            Some(BinaryOp::EQ)
-        } else if self.current.matches_value(SYMBOL, "!=") {
-            Some(BinaryOp::NEQ)
+        if self.current.matches_value(Symbol, "+") {
+            Some(BinaryOp::Plus)
+        } else if self.current.matches_value(Symbol, "-") {
+            Some(BinaryOp::Minus)
+        } else if self.current.matches_value(Symbol, "*") {
+            Some(BinaryOp::Times)
+        } else if self.current.matches_value(Symbol, "/") {
+            Some(BinaryOp::Div)
+        } else if self.current.matches_value(Symbol, "&&") {
+            Some(BinaryOp::And)
+        } else if self.current.matches_value(Symbol, "||") {
+            Some(BinaryOp::Or)
+        } else if self.current.matches_value(Symbol, "<") {
+            Some(BinaryOp::LessThan)
+        } else if self.current.matches_value(Symbol, ">") {
+            Some(BinaryOp::GreaterThan)
+        } else if self.current.matches_value(Symbol, "<=") {
+            Some(BinaryOp::LessEqual)
+        } else if self.current.matches_value(Symbol, ">=") {
+            Some(BinaryOp::GreaterEqual)
+        } else if self.current.matches_value(Symbol, "==") {
+            Some(BinaryOp::Equal)
+        } else if self.current.matches_value(Symbol, "!=") {
+            Some(BinaryOp::NotEqual)
         } else {
             None
         }
@@ -671,14 +671,14 @@ impl<'a> Parser<'a> {
     }
 
     fn literal(&mut self) -> Option<Literal> {
-        if let Some(v) = self.advance_if_matches(STRING) {
-            Some(Literal { lit_type: LiteralType::STRING, value: v.to_string() })
-        } else if let Some(v) = self.advance_if_matches(NUMBER) {
-            Some(Literal { lit_type: LiteralType::NUMBER, value: v.to_string() })
-        } else if self.advance_if_matches_value(KEYWORD, "true") {
-            Some(Literal { lit_type: LiteralType::BOOL, value: "true".to_string() })
-        } else if self.advance_if_matches_value(KEYWORD, "false") {
-            Some(Literal { lit_type: LiteralType::BOOL, value: "false".to_string() })
+        if let Some(v) = self.advance_if_matches(Str) {
+            Some(Literal { lit_type: LiteralType::String, value: v.to_string() })
+        } else if let Some(v) = self.advance_if_matches(Number) {
+            Some(Literal { lit_type: LiteralType::Number, value: v.to_string() })
+        } else if self.advance_if_matches_value(Keyword, "true") {
+            Some(Literal { lit_type: LiteralType::Bool, value: "true".to_string() })
+        } else if self.advance_if_matches_value(Keyword, "false") {
+            Some(Literal { lit_type: LiteralType::Bool, value: "false".to_string() })
         } else {
             None
         }
@@ -688,7 +688,7 @@ impl<'a> Parser<'a> {
         let (line, col) = self.pos();
         self.advance(); // advance past "{"
         let mut params = Vec::new();
-        while !self.current.matches_value(SYMBOL, "->") {
+        while !self.current.matches_value(Symbol, "->") {
             let param = self.pattern()?;
             params.push(param);
         }
@@ -697,7 +697,7 @@ impl<'a> Parser<'a> {
         loop {
             {
                 let (line, col) = self.pos();
-                if self.advance_if_matches_value(SYMBOL, "public") {
+                if self.advance_if_matches_value(Symbol, "public") {
                     self.error(ParseError {
                         message: "A local binding may not be public".to_string(),
                         line,
@@ -705,11 +705,11 @@ impl<'a> Parser<'a> {
                     })
                 }
             }
-            let binding = if self.current.matches_value(KEYWORD, "let") {
+            let binding = if self.current.matches_value(Keyword, "let") {
                 self.binding(false)?
             } else {
                 let expr = self.expr()?;
-                if self.advance_if_matches_value(SYMBOL, "}") {
+                if self.advance_if_matches_value(Symbol, "}") {
                     let expr_type = ExprType::Lambda(LambdaExpr { params, bindings, expr: Box:: new(expr) });
                     return Some(Expr { line, col, expr_type })
                 }
@@ -721,8 +721,8 @@ impl<'a> Parser<'a> {
     }
 
     fn field_init(&mut self) -> Option<FieldInit> {
-        let field_name = self.require("field name", IDENT)?.to_string();
-        self.require_value(SYMBOL, ":")?;
+        let field_name = self.require("field name", Ident)?.to_string();
+        self.require_value(Symbol, ":")?;
         let expr = self.expr()?;
         Some(FieldInit { field_name, expr })
     }

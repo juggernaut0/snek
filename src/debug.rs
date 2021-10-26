@@ -466,7 +466,7 @@ impl IrtVisitor for IrPrinter {
                 self.print_open(&format!("Match: {}", expr.resolved_type));
                 self.print_one(matched_expr.as_ref());
                 self.print_open("Arms");
-                for (pattern, arm) in arms {
+                for (_pattern, arm) in arms {
                     // TODO printable pattern
                     self.print_one(arm);
                 }

@@ -558,10 +558,10 @@ impl Resolver<'_> {
             }
             PatternType::Constant(lit) => {
                 let resolved_type = match lit.lit_type {
-                    LiteralType::NUMBER => BuiltinTypeNames::number(),
-                    LiteralType::STRING => BuiltinTypeNames::string(),
-                    LiteralType::BOOL => BuiltinTypeNames::boolean(),
-                    LiteralType::UNIT => ResolvedType::Unit,
+                    LiteralType::Number => BuiltinTypeNames::number(),
+                    LiteralType::String => BuiltinTypeNames::string(),
+                    LiteralType::Bool => BuiltinTypeNames::boolean(),
+                    LiteralType::Unit => ResolvedType::Unit,
                 };
                 let constant = self.literal_to_constant(lit, pattern.line, pattern.col);
                 ResolvedPattern { resolved_type, pattern_type: IrtPatternType::Constant(constant) }
@@ -844,10 +844,10 @@ impl Resolver<'_> {
             },
             ExprType::Constant(lit) => {
                 let actual_type = match lit.lit_type {
-                    LiteralType::NUMBER => BuiltinTypeNames::number(),
-                    LiteralType::STRING => BuiltinTypeNames::string(),
-                    LiteralType::BOOL => BuiltinTypeNames::boolean(),
-                    LiteralType::UNIT => ResolvedType::Unit,
+                    LiteralType::Number => BuiltinTypeNames::number(),
+                    LiteralType::String => BuiltinTypeNames::string(),
+                    LiteralType::Bool => BuiltinTypeNames::boolean(),
+                    LiteralType::Unit => ResolvedType::Unit,
                 };
                 let cons = self.literal_to_constant(lit, expr.line, expr.col);
                 (actual_type, IrtExprType::LoadConstant(cons))
@@ -863,17 +863,17 @@ impl Resolver<'_> {
                     DefineGlobalResult::NeedsType(id) => return DefineGlobalResult::NeedsType(id),
                 };
                 let (rt, op) = match (op, &res_left.resolved_type, &res_right.resolved_type) {
-                    (BinaryOp::EQ, _, _) => (BuiltinTypeNames::boolean(), IrtBinaryOp::Eq),
-                    (BinaryOp::NEQ, _, _) => (BuiltinTypeNames::boolean(), IrtBinaryOp::Neq),
-                    (BinaryOp::LT, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::boolean(), IrtBinaryOp::LessThan),
-                    (BinaryOp::GT, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::boolean(), IrtBinaryOp::GreaterThan),
-                    (BinaryOp::LEQ, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::boolean(), IrtBinaryOp::LessEq),
-                    (BinaryOp::GEQ, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::boolean(), IrtBinaryOp::GreaterEq),
-                    (BinaryOp::PLUS, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::number(), IrtBinaryOp::NumberAdd),
-                    (BinaryOp::MINUS, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::number(), IrtBinaryOp::NumberSub),
-                    (BinaryOp::TIMES, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::number(), IrtBinaryOp::NumberMul),
-                    (BinaryOp::DIV, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::number(), IrtBinaryOp::NumberDiv),
-                    (BinaryOp::PLUS, l, r) if l == &BuiltinTypeNames::string() && r == &BuiltinTypeNames::string() => (BuiltinTypeNames::string(), IrtBinaryOp::StringConcat),
+                    (BinaryOp::Equal, _, _) => (BuiltinTypeNames::boolean(), IrtBinaryOp::Eq),
+                    (BinaryOp::NotEqual, _, _) => (BuiltinTypeNames::boolean(), IrtBinaryOp::Neq),
+                    (BinaryOp::LessThan, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::boolean(), IrtBinaryOp::LessThan),
+                    (BinaryOp::GreaterThan, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::boolean(), IrtBinaryOp::GreaterThan),
+                    (BinaryOp::LessEqual, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::boolean(), IrtBinaryOp::LessEq),
+                    (BinaryOp::GreaterEqual, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::boolean(), IrtBinaryOp::GreaterEq),
+                    (BinaryOp::Plus, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::number(), IrtBinaryOp::NumberAdd),
+                    (BinaryOp::Minus, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::number(), IrtBinaryOp::NumberSub),
+                    (BinaryOp::Times, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::number(), IrtBinaryOp::NumberMul),
+                    (BinaryOp::Div, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::number(), IrtBinaryOp::NumberDiv),
+                    (BinaryOp::Plus, l, r) if l == &BuiltinTypeNames::string() && r == &BuiltinTypeNames::string() => (BuiltinTypeNames::string(), IrtBinaryOp::StringConcat),
                     (op, left, right) => {
                         let message = if left.is_inferred() {
                             "Unable to infer type of left-hand operand".to_string()
@@ -1380,8 +1380,8 @@ impl Resolver<'_> {
 
     fn literal_to_constant(&mut self, lit: &Literal, line: u32, col: u32) -> Constant {
         match lit.lit_type {
-            LiteralType::NUMBER => irt::Constant::Number(lit.value.parse().unwrap()), // TODO handle out of range numbers?
-            LiteralType::STRING => {
+            LiteralType::Number => irt::Constant::Number(lit.value.parse().unwrap()), // TODO handle out of range numbers?
+            LiteralType::String => {
                 let raw = match unescape(&lit.value) {
                     Ok(raw) => raw,
                     Err(msg) => {
@@ -1395,8 +1395,8 @@ impl Resolver<'_> {
                 };
                 irt::Constant::String(raw)
             },
-            LiteralType::BOOL => irt::Constant::Boolean(lit.value.parse().unwrap()), // lit.value is guaranteed to be "true" or "false" by parser
-            LiteralType::UNIT => irt::Constant::Unit,
+            LiteralType::Bool => irt::Constant::Boolean(lit.value.parse().unwrap()), // lit.value is guaranteed to be "true" or "false" by parser
+            LiteralType::Unit => irt::Constant::Unit,
         }
     }
 

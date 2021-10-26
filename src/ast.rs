@@ -184,50 +184,50 @@ pub struct Literal {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LiteralType {
-    NUMBER,
-    STRING,
-    BOOL,
-    UNIT
+    Number,
+    String,
+    Bool,
+    Unit,
 }
 
 #[derive(Debug)]
 pub enum UnaryOp {
-    PLUS,
-    MINUS,
-    BANG
+    Plus,
+    Minus,
+    Bang,
 }
 
 #[derive(Debug)]
 pub enum BinaryOp {
-    PLUS,
-    MINUS,
-    TIMES,
-    DIV,
-    LT,
-    GT,
-    LEQ,
-    GEQ,
-    EQ,
-    NEQ,
-    AND,
-    OR
+    Plus,
+    Minus,
+    Times,
+    Div,
+    LessThan,
+    GreaterThan,
+    LessEqual,
+    GreaterEqual,
+    Equal,
+    NotEqual,
+    And,
+    Or,
 }
 
 impl BinaryOp {
     pub fn precedence(&self) -> u32 {
         match self {
-            BinaryOp::AND => 1,
-            BinaryOp::OR => 1,
-            BinaryOp::EQ => 2,
-            BinaryOp::NEQ => 2,
-            BinaryOp::LT => 2,
-            BinaryOp::GT => 2,
-            BinaryOp::LEQ => 2,
-            BinaryOp::GEQ => 2,
-            BinaryOp::PLUS => 3,
-            BinaryOp::MINUS => 3,
-            BinaryOp::TIMES => 4,
-            BinaryOp::DIV => 4,
+            BinaryOp::And => 1,
+            BinaryOp::Or => 1,
+            BinaryOp::Equal => 2,
+            BinaryOp::NotEqual => 2,
+            BinaryOp::LessThan => 2,
+            BinaryOp::GreaterThan => 2,
+            BinaryOp::LessEqual => 2,
+            BinaryOp::GreaterEqual => 2,
+            BinaryOp::Plus => 3,
+            BinaryOp::Minus => 3,
+            BinaryOp::Times => 4,
+            BinaryOp::Div => 4,
         }
     }
 }

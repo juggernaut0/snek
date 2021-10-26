@@ -57,7 +57,7 @@ fn run_from_file(path: &Path) {
     let root_name = asts.root();
     let (root, _deps) = asts.get_ast(root_name);
     // TODO deps
-    let (decls, irt) = match resolver::resolve(Rc::clone(root_name), &[], root) {
+    let (_decls, irt) = match resolver::resolve(Rc::clone(root_name), &[], root) {
         Ok(stuff) => stuff,
         Err(errors) => {
             errors.iter().for_each(|e| {

@@ -32,9 +32,9 @@ impl<'a> Scanner<'a> {
     pub fn get_token(&mut self) -> ScanResult<'a> {
         loop {
             let t = self.match_token()?;
-            if t.name == IGNORE {
+            if t.name == Ignore {
                 continue
-            } else if t.name == NEWLINE {
+            } else if t.name == Newline {
                 self.current_line += 1;
                 self.current_col = 1;
                 continue
@@ -128,14 +128,14 @@ impl<'a> Scanner<'a> {
                     _ => self.match_ident()
                 }
             },
-            None => self.token(EOF)
+            None => self.token(Eof)
         }
     }
 
     fn match_comment(&mut self) -> ScanResult<'a> {
         self.consume()?;
         self.consume_while(|c| c != '\n');
-        self.token(IGNORE)
+        self.token(Ignore)
     }
 
     fn match_number(&mut self) -> ScanResult<'a> {
@@ -144,7 +144,7 @@ impl<'a> Scanner<'a> {
         if self.consume_if(|it| it == '.') {
             self.consume_while(|it| it.is_ascii_digit());
         }
-        self.token(NUMBER)
+        self.token(Number)
     }
 
     fn match_string(&mut self) -> ScanResult<'a> {
@@ -157,7 +157,7 @@ impl<'a> Scanner<'a> {
             }
         }
         self.require(|c| c == start, &format!("Expected {}", start))?;
-        self.token(STRING)
+        self.token(Str)
     }
 
     fn match_symbol(&mut self) -> ScanResult<'a> {
@@ -171,18 +171,18 @@ impl<'a> Scanner<'a> {
             '|' => { self.consume_if(|c| c == '|'); }
             _ => {}
         }
-        self.token(SYMBOL)
+        self.token(Symbol)
     }
 
     fn match_whitespace(&mut self) -> ScanResult<'a> {
         self.consume()?;
         self.consume_while(is_whitespace);
-        self.token(IGNORE)
+        self.token(Ignore)
     }
 
     fn match_newline(&mut self) -> ScanResult<'a> {
         self.consume()?;
-        self.token(NEWLINE)
+        self.token(Newline)
     }
 
     fn match_ident(&mut self) -> ScanResult<'a> {
@@ -206,22 +206,22 @@ impl<'a> Scanner<'a> {
             | "let"
             | "match"
             | "true"
-            | "false" => self.token(KEYWORD),
-            _ => self.token(IDENT)
+            | "false" => self.token(Keyword),
+            _ => self.token(Ident)
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TokenName {
-    IGNORE,
-    NEWLINE,
-    IDENT,
-    NUMBER,
-    STRING,
-    KEYWORD,
-    SYMBOL,
-    EOF
+    Ignore,
+    Newline,
+    Ident,
+    Number,
+    Str,
+    Keyword,
+    Symbol,
+    Eof,
 }
 
 #[derive(Debug)]
@@ -258,7 +258,7 @@ impl<'a> Token<'a> {
     }
 
     pub fn is_eof(&self) -> bool {
-        self.name == EOF
+        self.name == Eof
     }
 }
 
