@@ -1,7 +1,7 @@
-use crate::ast::*;
+use snek::ast::*;
 use std::fmt::{Display, Error, Formatter};
-use crate::resolver::{GlobalId, LocalId};
-use crate::resolver::irt::{self, IrtNode, IrTree, IrtVisitor, Save, Statement};
+use snek::resolver::{GlobalId, LocalId};
+use snek::resolver::irt::{self, IrtNode, IrTree, IrtVisitor, Save, Statement};
 //use crate::opcode::{OpCode, Code};
 
 trait DebugPrinter {
@@ -100,7 +100,7 @@ impl AstPrinter {
     }
 
     fn print_type(&mut self, type_decl: &Type) {
-        self.print_open(&format!("type {} public = {}", type_decl.name, type_decl.public));
+        self.print_open(&format!("type {} public = {}", TypeNameDeclW(&type_decl.name), type_decl.public));
         match &type_decl.contents {
             TypeContents::Record(fields) => self.print_all(fields),
             TypeContents::Union(cases) => self.print_all(cases),
@@ -111,16 +111,16 @@ impl AstPrinter {
     fn print_case(&mut self, type_case: &TypeCase) {
         match type_case {
             TypeCase::Record(record) => {
-                self.print_open(&format!("case type {} public = {}", record.name, record.public));
+                self.print_open(&format!("case type {} public = {}", TypeNameDeclW(&record.name), record.public));
                 self.print_all(&record.fields);
                 self.print_close();
             },
-            TypeCase::Case(name) => self.print(&format!("case {}", name)),
+            TypeCase::Case(name) => self.print(&format!("case {}", TypeNameW(name))),
         }
     }
 
     fn print_field(&mut self, field: &TypeField) {
-        self.print(&format!("field {} : {} public = {}", field.name, field.type_name, field.public))
+        self.print(&format!("field {} : {} public = {}", field.name, TypeNameW(&field.type_name), field.public))
     }
 
     fn print_binding(&mut self, binding: &Binding) {
@@ -132,8 +132,8 @@ impl AstPrinter {
 
     fn print_pattern(&mut self, pattern: &Pattern) {
         match &pattern.pattern {
-            PatternType::Wildcard(tn) => self.print(&format!("pattern wildcard type = {}", opt_display(tn))),
-            PatternType::Name(n) => self.print(&format!("pattern name = {} type = {}", n.name, opt_display(&n.type_name))),
+            PatternType::Wildcard(tn) => self.print(&format!("pattern wildcard type = {}", opt_display(&tn.as_ref().map(TypeNameW)))),
+            PatternType::Name(n) => self.print(&format!("pattern name = {} type = {}", n.name, opt_display(&n.type_name.as_ref().map(TypeNameW)))),
             PatternType::Constant(l) => {
                 self.print_open("pattern constant");
                 self.print_literal(l);
@@ -145,7 +145,7 @@ impl AstPrinter {
                 self.print_close();
             }
             PatternType::Destruct(nested, tn) => {
-                self.print_open(&format!("pattern destructure type = {}", opt_display(tn)));
+                self.print_open(&format!("pattern destructure type = {}", opt_display(&tn.as_ref().map(TypeNameW))));
                 self.print_all(nested);
                 self.print_close();
             }
@@ -185,7 +185,7 @@ impl AstPrinter {
                 self.print_close();
             },
             ExprType::New(nt, inits) => {
-                self.print_open(&format!("new {}", opt_display(nt)));
+                self.print_open(&format!("new {}", opt_display(&nt.as_ref().map(NamedTypeW))));
                 for init in inits {
                     self.print_open(&format!("field init {} = expr", init.field_name));
                     self.print_expr(&init.expr);
@@ -287,22 +287,24 @@ impl AstNode for FieldPattern {
     }
 }
 
-impl Display for TypeNameDecl {
+struct TypeNameDeclW<'a>(&'a TypeNameDecl);
+impl Display for TypeNameDeclW<'_> {
     fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-        if self.type_params.is_empty() {
-            write!(f, "{}", self.name)
+        if self.0.type_params.is_empty() {
+            write!(f, "{}", self.0.name)
         } else {
-            write!(f, "{}<{}>", self.name, self.type_params.iter().map(|it| it.to_string()).collect::<Vec<String>>().join(" "))
+            write!(f, "{}<{}>", self.0.name, self.0.type_params.iter().map(|it| it.to_string()).collect::<Vec<String>>().join(" "))
         }
     }
 }
 
-impl Display for TypeName {
+struct TypeNameW<'a>(&'a TypeName);
+impl Display for TypeNameW<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        match &self.type_name_type {
-            TypeNameType::Named(name) => name.fmt(f),
+        match &self.0.type_name_type {
+            TypeNameType::Named(name) => NamedTypeW(name).fmt(f),
             TypeNameType::Func(func) => {
-                write!(f, "{{ {} -> {} }}", func.params.iter().map(|it| it.to_string()).collect::<Vec<String>>().join(" "), func.return_type)
+                write!(f, "{{ {} -> {} }}", func.params.iter().map(|it| TypeNameW(it).to_string()).collect::<Vec<String>>().join(" "), TypeNameW(&func.return_type))
             }
             TypeNameType::Any => write!(f, "*"),
             TypeNameType::Unit => write!(f, "()"),
@@ -312,12 +314,13 @@ impl Display for TypeName {
     }
 }
 
-impl Display for NamedType {
+struct NamedTypeW<'a>(&'a NamedType);
+impl Display for NamedTypeW<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
-        if self.type_args.is_empty() {
-            write!(f, "{}", self.name)
+        if self.0.type_args.is_empty() {
+            write!(f, "{}", self.0.name)
         } else {
-            write!(f, "{}<{}>", self.name, self.type_args.iter().map(|it| it.to_string()).collect::<Vec<String>>().join(" "))
+            write!(f, "{}<{}>", self.0.name, self.0.type_args.iter().map(|it| TypeNameW(it).to_string()).collect::<Vec<String>>().join(" "))
         }
     }
 }
@@ -409,7 +412,7 @@ impl IrtVisitor for IrPrinter {
         }
     }
 
-    fn visit_expr(&mut self, expr: &crate::resolver::irt::Expr) {
+    fn visit_expr(&mut self, expr: &snek::resolver::irt::Expr) {
         match &expr.expr_type {
             irt::ExprType::Error => {}
             irt::ExprType::LoadConstant(irt::Constant::Unit) => self.print("()"),
