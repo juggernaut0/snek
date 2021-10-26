@@ -27,7 +27,7 @@ fn run_from_file(path: &Path) {
     let root_name = Rc::clone(asts.root());
     let (root, _deps) = asts.get_ast(&root_name);
     // TODO deps
-    let (_decls, irt) = snek::resolve(root_name, root);
+    let (_decls, irt) = snek::resolve(root_name, &[], root);
     #[cfg(debug_assertions)] {
         use snek::resolver::irt::IrtNode;
         irt.accept(&mut debug::IrPrinter::new())

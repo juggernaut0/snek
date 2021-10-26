@@ -23,6 +23,24 @@ impl ModuleGraph {
         let (ast, deps) = self.asts.get(name).expect("ast not found");
         (ast, deps.as_slice())
     }
+
+    pub fn sort(mut self) -> Result<Vec<(Rc<String>, Ast, Vec<Rc<String>>)>, String> {
+        let mut result = Vec::new();
+        let mut stack = vec![self.root];
+        while let Some(name) = stack.pop() {
+            let (ast, deps) = if let Some(v) = self.asts.remove(&name) {
+                v
+            } else {
+                return Err(format!("Circular dependency detected with {}", name));
+            };
+            for dep in &deps {
+                stack.push(Rc::clone(dep));
+            }
+            result.push((name, ast, deps));
+        }
+        result.reverse();
+        Ok(result)
+    }
 }
 
 struct Importer {

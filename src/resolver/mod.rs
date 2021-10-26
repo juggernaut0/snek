@@ -89,6 +89,10 @@ pub struct ModuleDecls {
 }
 
 impl ModuleDecls {
+    pub fn name(&self) -> &Rc<String> {
+        &self.name
+    }
+
     fn get_type(&self, name: &QName) -> Option<&Rc<TypeDeclaration>> {
         self.types.iter().find(|it| it.id.fqn().as_slice() == name.parts.as_slice())
     }
