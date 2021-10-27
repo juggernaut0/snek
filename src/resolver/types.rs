@@ -3,6 +3,7 @@ use crate::ast::{Type, TypeCaseRecord};
 use std::fmt::{Debug, Formatter, Display};
 use crate::resolver::qname_list::{QNameList, Fqn};
 use crate::resolver::lookup::Lookup;
+use crate::util::join;
 
 #[derive(Clone, Eq, PartialEq, Hash)]
 pub struct TypeId(Rc<String>, Fqn);
@@ -175,18 +176,6 @@ impl Display for ResolvedType {
             ResolvedType::Hole(i) => write!(f, "hole {}", i),
         }
     }
-}
-
-fn join<T: Display>(f: &mut Formatter<'_>, ts: &[T], sep: &str) -> std::fmt::Result {
-    if ts.is_empty() {
-        return Ok(());
-    }
-    let mut it = ts.iter();
-    write!(f, "{}", it.next().unwrap())?;
-    for t in it {
-        write!(f, "{}{}", sep, t)?;
-    }
-    Ok(())
 }
 
 pub struct UndefinedType<'ast> {

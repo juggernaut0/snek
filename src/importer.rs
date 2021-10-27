@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use crate::ast::Ast;
 use crate::parser;
 use std::rc::Rc;
-use std::collections::{VecDeque, HashMap};
+use std::collections::{VecDeque, HashMap, HashSet};
 use crate::parser::ParseError;
 
 pub fn import(filepath: &Path) -> Result<ModuleGraph, Vec<Error>> {
@@ -26,19 +26,28 @@ impl ModuleGraph {
 
     pub fn sort(mut self) -> Result<Vec<(Rc<String>, Ast, Vec<Rc<String>>)>, String> {
         let mut result = Vec::new();
-        let mut stack = vec![self.root];
-        while let Some(name) = stack.pop() {
-            let (ast, deps) = if let Some(v) = self.asts.remove(&name) {
-                v
+        let mut stack = vec![(self.root, 0)];
+        let mut seen = HashSet::new();
+        while let Some((name, i)) = stack.pop() {
+            seen.insert(Rc::clone(&name));
+            let deps = if let Some((_, deps)) = self.asts.get(&name) {
+                deps
             } else {
-                return Err(format!("Circular dependency detected with {}", name));
+                continue
             };
-            for dep in &deps {
-                stack.push(Rc::clone(dep));
+            if deps.len() == i {
+                let (ast, deps) = self.asts.remove(&name).expect("missing ast");
+                seen.remove(&name);
+                result.push((name, ast, deps));
+            } else {
+                let dep_name = Rc::clone(&deps[i]);
+                if seen.contains(&dep_name) {
+                    return Err(format!("Dependency cycle found in {} via {}", name, dep_name));
+                }
+                stack.push((name, i + 1));
+                stack.push((dep_name, 0));
             }
-            result.push((name, ast, deps));
         }
-        result.reverse();
         Ok(result)
     }
 }
@@ -129,5 +138,52 @@ impl Error {
 
     pub fn base_error(&self) -> &BaseError {
         &self.base_err
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::ast::{Namespace, QName};
+    use super::*;
+
+    #[test]
+    fn module_graph_sort() {
+        let a = Rc::new("a".to_string());
+        let b = Rc::new("b".to_string());
+        let c = Rc::new("c".to_string());
+        let d = Rc::new("d".to_string());
+        let e = Rc::new("e".to_string());
+
+        let mut asts = HashMap::new();
+        asts.insert(Rc::clone(&a), (make_ast(), vec![Rc::clone(&b), Rc::clone(&e)]));
+        asts.insert(Rc::clone(&b), (make_ast(), vec![Rc::clone(&c), Rc::clone(&d)]));
+        asts.insert(Rc::clone(&c), (make_ast(), vec![Rc::clone(&d)]));
+        asts.insert(Rc::clone(&d), (make_ast(), vec![]));
+        asts.insert(Rc::clone(&e), (make_ast(), vec![]));
+
+        let graph = ModuleGraph {
+            asts,
+            root: a,
+        };
+
+        let mut order = graph.sort().expect("no loop").into_iter().map(|(name, _, _)| name);
+
+        assert_eq!(Some("d"), order.next().as_ref().map(|it| it.as_str()));
+        assert_eq!(Some("c"), order.next().as_ref().map(|it| it.as_str()));
+        assert_eq!(Some("b"), order.next().as_ref().map(|it| it.as_str()));
+        assert_eq!(Some("e"), order.next().as_ref().map(|it| it.as_str()));
+        assert_eq!(Some("a"), order.next().as_ref().map(|it| it.as_str()));
+        assert_eq!(None, order.next());
+    }
+
+    fn make_ast() -> Ast {
+        Ast {
+            imports: vec![],
+            root_namespace: Namespace {
+                name: QName { parts: vec![] },
+                public: false,
+                decls: vec![]
+            }
+        }
     }
 }

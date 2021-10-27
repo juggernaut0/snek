@@ -1,7 +1,9 @@
+use std::borrow::Cow;
 use snek::ast::*;
 use std::fmt::{Display, Error, Formatter};
-use snek::resolver::{GlobalId, LocalId};
-use snek::resolver::irt::{self, IrtNode, IrTree, IrtVisitor, Save, Statement};
+use snek::resolver::{GlobalId, LocalId, ResolvedPattern};
+use snek::resolver::irt::{self, Constant, IrtNode, IrTree, IrtVisitor, Save, Statement};
+use snek::util::{join, join_map};
 //use crate::opcode::{OpCode, Code};
 
 trait DebugPrinter {
@@ -468,13 +470,37 @@ impl IrtVisitor for IrPrinter {
             irt::ExprType::Match { expr: matched_expr, arms } => {
                 self.print_open(&format!("Match: {}", expr.resolved_type));
                 self.print_one(matched_expr.as_ref());
-                self.print_open("Arms");
-                for (_pattern, arm) in arms {
-                    // TODO printable pattern
-                    self.print_one(arm);
+                for (pattern, arm) in arms {
+                    self.print_open(&format!("{}", PatternTypeW(&pattern.pattern_type)));
+                    self.print_all(arm);
+                    self.print_close();
                 }
                 self.print_close();
-                self.print_close();
+            }
+        }
+    }
+}
+
+struct PatternTypeW<'a>(&'a snek::resolver::PatternType);
+impl Display for PatternTypeW<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            snek::resolver::PatternType::Discard => write!(f, "_"),
+            snek::resolver::PatternType::Constant(c) => {
+                match c {
+                    Constant::Unit => write!(f, "()"),
+                    Constant::Number(n) => write!(f, "{}", n),
+                    Constant::String(s) => write!(f, "{}", s),
+                    Constant::Boolean(b) => write!(f, "{}", b),
+                }
+            },
+            snek::resolver::PatternType::Name(name) => write!(f, "{}", name),
+            snek::resolver::PatternType::Destructuring(fields) => {
+                write!(f, "{{")?;
+                join_map(f, fields, ", ", |f, (name, pattern)| {
+                    write!(f, "{} => {}", name, PatternTypeW(&pattern.pattern_type))
+                })?;
+                write!(f, "}}")
             }
         }
     }

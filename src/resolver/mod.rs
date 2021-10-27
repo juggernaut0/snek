@@ -5,20 +5,20 @@ use std::iter::repeat;
 use std::rc::Rc;
 
 use globals::*;
-pub use globals::GlobalId;
 use lookup::*;
 use qname_list::*;
 use types::*;
 
-use crate::ast::*;
+use crate::ast::{self, *};
 use irt::{BinaryOp as IrtBinaryOp, Expr as IrtExpr, ExprType as IrtExprType, IrTree, Save, Statement, Constant};
-#[cfg(debug_assertions)]
-pub use locals::LocalId;
-#[cfg(not(debug_assertions))]
-use locals::LocalId;
 use unifier::Unifier;
-use patterns::{ExhaustivenessChecker, ResolvedPattern, PatternType as IrtPatternType};
+use patterns::{ExhaustivenessChecker, PatternType as IrtPatternType};
 use crate::resolver::unifier::merge_types;
+
+pub use locals::LocalId;
+pub use types::{TypeId, ResolvedType};
+pub use globals::GlobalId;
+pub use patterns::{ResolvedPattern, PatternType};
 
 mod types;
 mod globals;
@@ -546,21 +546,21 @@ impl Resolver<'_> {
         expr_type: Option<ResolvedType>,
     ) -> ResolvedPattern {
         match &pattern.pattern {
-            PatternType::Wildcard(otn) => {
+            ast::PatternType::Wildcard(otn) => {
                 let resolved_type = otn.as_ref()
                     .map(|tn| self.resolve_binding_type(tn, &[], scope))
                     .or(expr_type)
                     .unwrap_or(ResolvedType::Inferred);
                 ResolvedPattern { resolved_type, pattern_type: IrtPatternType::Discard }
             }
-            PatternType::Name(np) => {
+            ast::PatternType::Name(np) => {
                 let resolved_type = np.type_name.as_ref()
                     .map(|it| self.resolve_binding_type(it, &[], scope))
                     .or(expr_type)
                     .unwrap_or(ResolvedType::Inferred);
                 ResolvedPattern { resolved_type, pattern_type: IrtPatternType::Name(np.name.as_str().into()) }
             }
-            PatternType::Constant(lit) => {
+            ast::PatternType::Constant(lit) => {
                 let resolved_type = match lit.lit_type {
                     LiteralType::Number => BuiltinTypeNames::number(),
                     LiteralType::String => BuiltinTypeNames::string(),
@@ -570,7 +570,7 @@ impl Resolver<'_> {
                 let constant = self.literal_to_constant(lit, pattern.line, pattern.col);
                 ResolvedPattern { resolved_type, pattern_type: IrtPatternType::Constant(constant) }
             }
-            PatternType::Destruct(fps, otn) => {
+            ast::PatternType::Destruct(fps, otn) => {
                 let declared_type = otn.as_ref()
                     .map(|tn| self.resolve_binding_type(tn, &[], scope))
                     .or(expr_type);
@@ -655,7 +655,7 @@ impl Resolver<'_> {
                 let resolved_type = declared_type.unwrap_or(ResolvedType::Inferred);
                 ResolvedPattern { resolved_type, pattern_type: IrtPatternType::Destructuring(subpatterns) }
             }
-            PatternType::List(_) => { todo!("list pattern") }
+            ast::PatternType::List(_) => { todo!("list pattern") }
         }
     }
 
@@ -1067,7 +1067,12 @@ impl Resolver<'_> {
                 unreachable!("arm resolved type wasn't a function")
             };
             actual_type = merge_types(actual_type, rrt);
-            arm_exprs.push(arm_expr);
+            let statements = if let IrtExprType::Func { statements } = arm_expr.expr_type {
+                statements
+            } else {
+                unreachable!("arm resolved type wasn't a function")
+            };
+            arm_exprs.push(statements);
         }
 
         let patterns_ref: Vec<_> = patterns.iter().collect();

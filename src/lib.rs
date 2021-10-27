@@ -12,6 +12,7 @@ mod importer;
 mod parser;
 pub mod resolver;
 mod scanner;
+pub mod util;
 
 pub fn parse(path: &Path) -> ModuleGraph {
     match importer::import(path) {

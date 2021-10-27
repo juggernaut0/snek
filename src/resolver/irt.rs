@@ -34,7 +34,7 @@ pub enum ExprType {
     Binary { op: BinaryOp, left: Box<Expr>, right: Box<Expr> },
     Func { statements: Vec<Statement> },
     New { field_inits: Vec<(String, Expr)> },
-    Match { expr: Box<Expr>, arms: Vec<(ResolvedPattern, Expr)> },
+    Match { expr: Box<Expr>, arms: Vec<(ResolvedPattern, Vec<Statement>)> },
 }
 
 #[derive(PartialEq)]
