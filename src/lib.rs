@@ -29,7 +29,7 @@ pub fn parse(path: &Path) -> ModuleGraph {
     }
 }
 
-pub fn resolve(name: Rc<String>, deps: &[ModuleDecls], ast: &Ast) -> (ModuleDecls, IrTree) {
+pub fn resolve(name: Rc<String>, deps: &[ModuleDecls], ast: &Ast) -> IrTree {
     match resolver::resolve(Rc::clone(&name), deps, ast) {
         Ok(stuff) => stuff,
         Err(errors) => {

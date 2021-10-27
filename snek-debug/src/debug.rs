@@ -1,10 +1,8 @@
-use std::borrow::Cow;
 use snek::ast::*;
 use std::fmt::{Display, Error, Formatter};
-use snek::resolver::{GlobalId, LocalId, ResolvedPattern};
+use snek::resolver::{GlobalId, LocalId};
 use snek::resolver::irt::{self, Constant, IrtNode, IrTree, IrtVisitor, Save, Statement};
-use snek::util::{join, join_map};
-//use crate::opcode::{OpCode, Code};
+use snek::util::join_map;
 
 trait DebugPrinter {
     fn indent(&self) -> usize;

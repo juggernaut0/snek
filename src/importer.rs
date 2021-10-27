@@ -24,7 +24,7 @@ impl ModuleGraph {
         (ast, deps.as_slice())
     }
 
-    pub fn sort(mut self) -> Result<Vec<(Rc<String>, Ast, Vec<Rc<String>>)>, String> {
+    pub fn sort(mut self) -> Result<Vec<Module>, String> {
         let mut result = Vec::new();
         let mut stack = vec![(self.root, 0)];
         let mut seen = HashSet::new();
@@ -36,9 +36,9 @@ impl ModuleGraph {
                 continue
             };
             if deps.len() == i {
-                let (ast, deps) = self.asts.remove(&name).expect("missing ast");
+                let (ast, dependencies) = self.asts.remove(&name).expect("missing ast");
                 seen.remove(&name);
-                result.push((name, ast, deps));
+                result.push(Module {name, dependencies, ast });
             } else {
                 let dep_name = Rc::clone(&deps[i]);
                 if seen.contains(&dep_name) {
@@ -50,6 +50,12 @@ impl ModuleGraph {
         }
         Ok(result)
     }
+}
+
+pub struct Module {
+    pub name: Rc<String>,
+    pub dependencies: Vec<Rc<String>>,
+    pub ast: Ast,
 }
 
 struct Importer {
@@ -67,7 +73,7 @@ impl Importer {
         }
     }
 
-    fn parse(&mut self, filepath: &Path, name: Rc<String>) {
+    fn parse(&mut self, root_dir: &Path, filepath: &Path, name: Rc<String>) {
         if self.asts.contains_key(&name) {
             return
         }
@@ -90,7 +96,7 @@ impl Importer {
         let mut deps = Vec::new();
         for import in &mut ast.imports {
             let new_path = filepath.parent().unwrap().join(&import.filename);
-            let name = path_name(&new_path);
+            let name = path_name(&new_path.strip_prefix(root_dir).expect("Make relative path"));
             self.queue.push_back((new_path, Rc::clone(&name)));
             deps.push(name)
         }
@@ -99,10 +105,11 @@ impl Importer {
     }
 
     fn parse_all(mut self, root_filepath: &Path) -> Result<ModuleGraph, Vec<Error>> {
-        let root_name = path_name(root_filepath);
-        self.parse(root_filepath, Rc::clone(&root_name));
+        let root_dir = root_filepath.parent().unwrap();
+        let root_name = path_name(root_filepath.strip_prefix(root_dir).expect("Make relative path"));
+        self.parse(root_dir, root_filepath, Rc::clone(&root_name));
         while let Some((path, name)) = self.queue.pop_front() {
-            self.parse(&path, name);
+            self.parse(root_dir, &path, name);
         }
         if self.errors.is_empty() {
             Ok(ModuleGraph { asts: self.asts, root: root_name })
@@ -166,7 +173,7 @@ mod test {
             root: a,
         };
 
-        let mut order = graph.sort().expect("no loop").into_iter().map(|(name, _, _)| name);
+        let mut order = graph.sort().expect("no loop").into_iter().map(|module| module.name);
 
         assert_eq!(Some("d"), order.next().as_ref().map(|it| it.as_str()));
         assert_eq!(Some("c"), order.next().as_ref().map(|it| it.as_str()));

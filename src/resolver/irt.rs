@@ -1,10 +1,11 @@
-use crate::resolver::FieldPath;
+use crate::resolver::{FieldPath, ModuleDecls};
 use crate::resolver::globals::GlobalId;
 use crate::resolver::locals::LocalId;
 use crate::resolver::patterns::ResolvedPattern;
 use crate::resolver::types::ResolvedType;
 
 pub struct IrTree {
+    pub decls: ModuleDecls,
     pub statements: Vec<Statement>,
 }
 

@@ -148,7 +148,7 @@ fn union() {
 #[test]
 fn func_field() {
     let src = "type BiConsumer<T> { consume: { T T -> () } }";
-    let (decls, _) = assert_no_errs(resolve_from_src(src));
+    let IrTree { decls, .. } = assert_no_errs(resolve_from_src(src));
 
     let t = get_type_decl(&decls, "BiConsumer");
     let fields = if let TypeDefinition::Record(fields) = &t.definition { fields } else { panic!() };
@@ -177,7 +177,7 @@ fn named_globals() {
 
 #[test]
 fn destructured_simple() {
-    let (decls, _) = assert_no_errs(resolve_from_src(include_str!("destructured_simple.snek")));
+    let IrTree { decls, .. } = assert_no_errs(resolve_from_src(include_str!("destructured_simple.snek")));
 
     assert_eq!(5, decls.globals.len());
 
@@ -287,7 +287,7 @@ fn inference() {
 let x = 5
 let y = x
     ";
-    let (decls, _) = assert_no_errs(resolve_from_src(src));
+    let IrTree { decls, .. } = assert_no_errs(resolve_from_src(src));
 
     let number_type = ResolvedType::Id(BUILTIN_TYPE_NAMES.with(|btn| btn.number.clone()), Vec::new());
 
@@ -346,10 +346,10 @@ let b: Boolean = true
 fn wildcard_discard() {
     let src = "let _ = 5";
 
-    let (decls, irt) = assert_no_errs(resolve_from_src(src));
+    let IrTree { decls, statements } = assert_no_errs(resolve_from_src(src));
     assert!(decls.globals.is_empty());
-    assert_eq!(irt.statements.len(), 1);
-    assert!(matches!(irt.statements[0], Statement::Discard(irt::Expr { expr_type: irt::ExprType::LoadConstant(irt::Constant::Number(5.0)), .. })));
+    assert_eq!(statements.len(), 1);
+    assert!(matches!(statements[0], Statement::Discard(irt::Expr { expr_type: irt::ExprType::LoadConstant(irt::Constant::Number(5.0)), .. })));
 }
 
 #[test]
@@ -472,10 +472,10 @@ fn get_global<'a>(decls: &'a ModuleDecls, name: &str) -> &'a GlobalDeclaration {
     }).unwrap()
 }
 
-fn assert_no_errs(result: ResolveResult) -> (ModuleDecls, IrTree) {
+fn assert_no_errs(result: ResolveResult) -> IrTree {
     match result {
         Err(errors) => panic!("resolver had errors: {:?}", errors),
-        Ok(stuff) => stuff,
+        Ok(irt) => irt,
     }
 }
 

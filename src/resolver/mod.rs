@@ -31,13 +31,14 @@ mod patterns;
 #[cfg(test)]
 mod test;
 
-type ResolveResult = Result<(ModuleDecls, IrTree), Vec<Error>>;
+type ResolveResult = Result<IrTree, Vec<Error>>;
 
 pub fn resolve(name: Rc<String>, deps: &[ModuleDecls], ast: &Ast) -> ResolveResult {
     let mut resolver = Resolver::new(name, deps);
-    let irt = resolver.resolve(ast);
+    let statements = resolver.resolve(ast);
+    let irt = IrTree { decls: resolver.exports, statements };
     if resolver.errors.is_empty() {
-        Ok((resolver.exports, irt))
+        Ok(irt)
     } else {
         Err(resolver.errors)
     }
@@ -187,12 +188,8 @@ impl Resolver<'_> {
     }
     */
 
-    pub fn resolve(&mut self, ast: &Ast) -> IrTree {
-        let stmts = self.resolve_4(ast);
-
-        IrTree {
-            statements: stmts
-        }
+    pub fn resolve(&mut self, ast: &Ast) -> Vec<Statement> {
+        self.resolve_4(ast)
     }
 
     fn resolve_1<'ast>(&mut self, ast: &'ast Ast) -> Vec<UndefinedType<'ast>> {
