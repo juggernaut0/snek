@@ -96,7 +96,7 @@ impl Importer {
         let mut deps = Vec::new();
         for import in &mut ast.imports {
             let new_path = filepath.parent().unwrap().join(&import.filename);
-            let name = path_name(&new_path.strip_prefix(root_dir).expect("Make relative path"));
+            let name = path_name(new_path.strip_prefix(root_dir).expect("Make relative path"));
             self.queue.push_back((new_path, Rc::clone(&name)));
             deps.push(name)
         }

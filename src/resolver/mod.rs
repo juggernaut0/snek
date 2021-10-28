@@ -15,19 +15,22 @@ use unifier::Unifier;
 use patterns::{ExhaustivenessChecker, PatternType as IrtPatternType};
 use crate::resolver::unifier::merge_types;
 
-pub use locals::LocalId;
-pub use types::{TypeId, ResolvedType};
+pub use functions::{FunctionId, FunctionDeclaration};
 pub use globals::GlobalId;
+pub use locals::LocalId;
 pub use patterns::{ResolvedPattern, PatternType};
+pub use types::{TypeId, ResolvedType};
 
-mod types;
-mod globals;
-mod lookup;
-mod qname_list;
+mod functions;
 pub mod irt;
+mod globals;
 mod locals;
-mod unifier;
+mod lookup;
 mod patterns;
+mod qname_list;
+mod types;
+mod unifier;
+
 #[cfg(test)]
 mod test;
 
@@ -87,6 +90,7 @@ pub struct ModuleDecls {
     name: Rc<String>,
     types: Vec<Rc<TypeDeclaration>>,
     globals: Vec<Rc<GlobalDeclaration>>,
+    functions: Vec<Rc<FunctionDeclaration>>,
 }
 
 impl ModuleDecls {
@@ -94,12 +98,16 @@ impl ModuleDecls {
         &self.name
     }
 
-    fn get_type(&self, name: &QName) -> Option<&Rc<TypeDeclaration>> {
+    pub fn get_type(&self, name: &QName) -> Option<&Rc<TypeDeclaration>> {
         self.types.iter().find(|it| it.id.fqn().as_slice() == name.parts.as_slice())
     }
 
-    fn get_global(&self, name: &QName) -> Option<&Rc<GlobalDeclaration>> {
+    pub fn get_global(&self, name: &QName) -> Option<&Rc<GlobalDeclaration>> {
         self.globals.iter().find(|it| it.fqn().as_slice() == name.parts.as_slice())
+    }
+
+    pub fn functions(&self) -> &Vec<Rc<FunctionDeclaration>> {
+        &self.functions
     }
 }
 
@@ -139,6 +147,7 @@ fn make_builtins() -> ModuleDecls {
                 return_type: Box::new(ResolvedType::Nothing)
             }),
         ],
+        functions: Vec::new(),
         name: BuiltinTypeNames::mod_name(),
     }
 }
@@ -150,6 +159,8 @@ pub struct Resolver<'deps> {
     globals: HashMap<GlobalId, Rc<GlobalDeclaration>>,
     // This module's types
     exports: ModuleDecls,
+
+    func_seq: u32,
 
     //usages: HashMap<QNameExpr, (ValueId, String)>,
     dependencies: HashMap<&'deps String, &'deps ModuleDecls>,
@@ -166,11 +177,12 @@ impl Resolver<'_> {
             name,
             types: Vec::default(),
             globals: Vec::default(),
+            functions: Vec::default(),
         };
         Resolver {
             types: HashMap::new(),
             globals: HashMap::new(),
-            //usages: HashMap::new(),
+            func_seq: 0,
             dependencies,
             exports,
             errors: Vec::new(),
@@ -900,7 +912,7 @@ impl Resolver<'_> {
                 }
             },
             ExprType::Lambda(lambda_expr) => {
-                match self.resolve_lambda_expr(expected_type.clone(), expr, type_scope, global_scope, local_scope, lambda_expr) {
+                match self.resolve_function(expected_type.clone(), expr, type_scope, global_scope, local_scope, lambda_expr) {
                     Ok(it) => it,
                     Err(dfg) => return dfg
                 }
@@ -1053,22 +1065,8 @@ impl Resolver<'_> {
             let pattern = self.resolve_pattern(&lambda.params[0], type_scope, Some(matched_expr.resolved_type.clone()));
             patterns.push(pattern);
 
-            let dgr = self.resolve_expr(expected_arm_type.clone(), None, arg, type_scope, global_scope, local_scope);
-            let arm_expr = match dgr {
-                DefineGlobalResult::Success(e) => e,
-                DefineGlobalResult::NeedsType(_) => return Err(dgr),
-            };
-            let rrt = if let ResolvedType::Func { return_type, .. } = &arm_expr.resolved_type {
-                return_type.as_ref().clone()
-            } else {
-                unreachable!("arm resolved type wasn't a function")
-            };
+            let (rrt, statements) = self.resolve_match_arm(expected_arm_type.clone(), arg, type_scope, global_scope, local_scope, lambda)?;
             actual_type = merge_types(actual_type, rrt);
-            let statements = if let IrtExprType::Func { statements } = arm_expr.expr_type {
-                statements
-            } else {
-                unreachable!("arm resolved type wasn't a function")
-            };
             arm_exprs.push(statements);
         }
 
@@ -1085,7 +1083,20 @@ impl Resolver<'_> {
         Ok((actual_type, IrtExprType::Match { expr: Box::new(matched_expr), arms }))
     }
 
-    fn resolve_lambda_expr(
+    fn resolve_match_arm(
+        &mut self,
+        expected_type: ResolvedType,
+        expr: &Expr,
+        type_scope: &LookupScope<TypeDeclLookup>,
+        global_scope: &LookupScope<GlobalLookup>,
+        local_scope: &LocalScope,
+        lambda_expr: &LambdaExpr,
+    ) -> Result<(ResolvedType, Vec<Statement>), DefineGlobalResult> {
+        let (_, rt, statements) = self.resolve_lambda_expr(expected_type, expr, type_scope, global_scope, local_scope, lambda_expr)?;
+        Ok((rt, statements))
+    }
+
+    fn resolve_function(
         &mut self,
         expected_type: ResolvedType,
         expr: &Expr,
@@ -1094,6 +1105,22 @@ impl Resolver<'_> {
         local_scope: &LocalScope,
         lambda_expr: &LambdaExpr,
     ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
+        let (params, return_type, statements) = self.resolve_lambda_expr(expected_type, expr, type_scope, global_scope, local_scope, lambda_expr)?;
+        let rt = ResolvedType::Func { params, return_type: Box::new(return_type) };
+        let func_id = self.define_function(rt.clone(), statements);
+        let irt_expr_type = IrtExprType::Func(func_id);
+        Ok((rt, irt_expr_type))
+    }
+
+    fn resolve_lambda_expr(
+        &mut self,
+        expected_type: ResolvedType,
+        expr: &Expr,
+        type_scope: &LookupScope<TypeDeclLookup>,
+        global_scope: &LookupScope<GlobalLookup>,
+        local_scope: &LocalScope,
+        lambda_expr: &LambdaExpr,
+    ) -> Result<(Vec<ResolvedType>, ResolvedType, Vec<Statement>), DefineGlobalResult> {
         let (expected_params, expected_return_type) = match expected_type {
             ResolvedType::Func { params, return_type } =>{
                 if params.len() != lambda_expr.params.len() {
@@ -1214,13 +1241,11 @@ impl Resolver<'_> {
             DefineGlobalResult::NeedsType(_) => return Err(dfg),
             DefineGlobalResult::Success(irt_expr) => irt_expr,
         };
-        let return_type = Box::new(irt_expr.resolved_type.clone());
+        let return_type = irt_expr.resolved_type.clone();
 
         statements.push(Statement::Return(irt_expr));
 
-        let rt = ResolvedType::Func { params: param_types, return_type };
-        let irt_expr_type = IrtExprType::Func { statements };
-        Ok((rt, irt_expr_type))
+        Ok((param_types, return_type, statements))
     }
 
     fn resolve_new_expr(
@@ -1442,6 +1467,15 @@ impl Resolver<'_> {
             }
         }
         res
+    }
+
+    fn define_function(&mut self, resolved_type: ResolvedType, statements: Vec<Statement>) -> FunctionId {
+        let seq_id = self.func_seq;
+        self.func_seq += 1;
+        let decl = FunctionDeclaration::new(Rc::clone(&self.exports.name), seq_id, resolved_type, statements);
+        let id = decl.id();
+        self.exports.functions.push(Rc::new(decl));
+        id
     }
 }
 

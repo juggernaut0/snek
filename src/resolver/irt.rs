@@ -1,4 +1,4 @@
-use crate::resolver::{FieldPath, ModuleDecls};
+use crate::resolver::{FieldPath, FunctionId, ModuleDecls};
 use crate::resolver::globals::GlobalId;
 use crate::resolver::locals::LocalId;
 use crate::resolver::patterns::ResolvedPattern;
@@ -33,7 +33,7 @@ pub enum ExprType {
     LoadParam,
     Call { callee: Box<Expr>, args: Vec<Expr> },
     Binary { op: BinaryOp, left: Box<Expr>, right: Box<Expr> },
-    Func { statements: Vec<Statement> },
+    Func(FunctionId),
     New { field_inits: Vec<(String, Expr)> },
     Match { expr: Box<Expr>, arms: Vec<(ResolvedPattern, Vec<Statement>)> },
 }

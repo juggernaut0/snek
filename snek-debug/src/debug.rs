@@ -369,6 +369,13 @@ impl<T: IrtNode> DebugPrinterNode<IrPrinter> for T {
 impl IrtVisitor for IrPrinter {
     fn visit_ir_tree(&mut self, tree: &IrTree) {
         self.print_open("IR");
+
+        for func in tree.decls.functions() {
+            self.print_open(&format!("Function {}", func.id().id()));
+            self.print_all(func.statements());
+            self.print_close();
+        }
+
         self.print_all(&tree.statements);
         self.print_close();
     }
@@ -451,10 +458,8 @@ impl IrtVisitor for IrPrinter {
             irt::ExprType::LoadParam => {
                 self.print("Pop param")
             }
-            irt::ExprType::Func { statements } => {
-                self.print_open(&format!("Lambda: {}", expr.resolved_type));
-                self.print_all(statements);
-                self.print_close();
+            irt::ExprType::Func(id) => {
+                self.print(&format!("Function {}: {}", id.id(), expr.resolved_type));
             }
             irt::ExprType::New { field_inits } => {
                 self.print_open(&format!("New: {}", expr.resolved_type));
