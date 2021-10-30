@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::ops::Range;
-use snek::resolver::{get_builtin_id, GlobalId};
+use snek::resolver::{get_builtin_id, GlobalId, ResolvedField, ResolvedType, TypeDeclaration, TypeDefinition, TypeId};
 use snek::resolver::irt::*;
 
 pub fn generate(irt: &IrTree) -> String {
@@ -11,12 +11,14 @@ pub fn generate(irt: &IrTree) -> String {
 
 struct JsGenerator {
     output: String,
+    indent: u32,
 }
 
 impl JsGenerator {
     fn new() -> JsGenerator {
         JsGenerator {
             output: String::new(),
+            indent: 0,
         }
     }
 
@@ -24,6 +26,13 @@ impl JsGenerator {
         self.generate_builtins();
         // TODO generate imports
         // TODO generate types
+        for typ in irt.decls.types() {
+            self.generate_instance_of(typ);
+            if let TypeDefinition::Record(fields) = &typ.definition {
+                self.generate_constructor(typ, fields);
+            }
+        }
+
         for statement in &irt.statements {
             self.statement(statement)
         }
@@ -33,10 +42,65 @@ impl JsGenerator {
         self.output.push_str(code);
     }
 
+    fn write_indent(&mut self) {
+        for _ in 0..self.indent {
+            self.output.push_str("  ");
+        }
+    }
+
+    fn indent(&mut self) {
+        self.indent += 1;
+    }
+
+    fn unindent(&mut self) {
+        self.indent -= 1;
+    }
+
     fn generate_builtins(&mut self) {
         self.write("var ");
         self.global_identifier(&get_builtin_id("println"));
         self.write("=console.log;\n");
+    }
+
+    fn generate_instance_of(&mut self, typ: &TypeDeclaration) {
+        self.write("function ");
+        self.type_identifier(&typ.id);
+        self.write("_instance_of(o){\n");
+        self.indent();
+        match &typ.definition {
+            TypeDefinition::Record(_) => {
+                self.write_indent();
+                self.write("return o.__proto__.constructor===");
+                self.type_identifier(&typ.id);
+                self.write(";\n");
+            }
+            TypeDefinition::Union(cases) => { todo!("instance of union") }
+            TypeDefinition::Primitive => unreachable!("primitive types handled in builtin module")
+        }
+        self.unindent();
+        self.write("}\n");
+    }
+
+    fn generate_constructor(&mut self, typ: &TypeDeclaration, fields: &[ResolvedField]) {
+        self.write("function ");
+        self.type_identifier(&typ.id);
+        self.write("(");
+        for field in fields {
+            self.write(&field.name);
+            self.write(",");
+        }
+        self.write("){\n");
+        self.indent();
+        for field in fields {
+            self.write_indent();
+            self.write("this.");
+            self.write(&field.name);
+            self.write("=");
+            self.write(&field.name);
+            self.write(";\n");
+        }
+        self.unindent();
+        self.write("}\n");
     }
 
     fn statement(&mut self, statement: &Statement) {
@@ -73,6 +137,15 @@ impl JsGenerator {
         }
     }
 
+    fn type_identifier(&mut self, type_id: &TypeId) {
+        self.write("$T$");
+        self.write(type_id.module());
+        for part in type_id.fqn().as_slice() {
+            self.write("_");
+            self.write(part);
+        }
+    }
+
     fn expr(&mut self, expr: &Expr) {
         match &expr.expr_type {
             ExprType::Error => panic!("error expr in codegen"),
@@ -89,9 +162,39 @@ impl JsGenerator {
                 }
                 self.write(")");
             },
-            ExprType::Binary { .. } => todo!("generate expr binary"),
+            ExprType::Binary { op, left, right } => {
+                let op_str = match op {
+                    BinaryOp::Error => panic!("error operator in codegen"),
+                    BinaryOp::Eq => "===",
+                    BinaryOp::Neq => "!==",
+                    BinaryOp::LessThan => "<",
+                    BinaryOp::LessEq => "<=",
+                    BinaryOp::GreaterThan => ">",
+                    BinaryOp::GreaterEq => ">=",
+                    BinaryOp::NumberAdd => "+",
+                    BinaryOp::NumberSub => "-",
+                    BinaryOp::NumberMul => "*",
+                    BinaryOp::NumberDiv => "/",
+                    BinaryOp::StringConcat => "+",
+                };
+                self.write("(");
+                self.expr(left);
+                self.write(op_str);
+                self.expr(right);
+                self.write(")");
+            },
             ExprType::Func(_) => todo!("generate expr func"),
-            ExprType::New { .. } => todo!("generate expr new"),
+            ExprType::New { field_inits } => {
+                let type_id = if let ResolvedType::Id(id, _) = &expr.resolved_type { id } else { unreachable!() };
+                self.write("new ");
+                self.type_identifier(type_id);
+                self.write("(");
+                for (_, expr) in field_inits {
+                    self.expr(expr);
+                    self.write(",");
+                }
+                self.write(")");
+            },
             ExprType::Match { .. } => todo!("generate expr match"),
         }
     }

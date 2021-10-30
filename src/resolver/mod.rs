@@ -19,7 +19,7 @@ pub use functions::{FunctionId, FunctionDeclaration};
 pub use globals::GlobalId;
 pub use locals::LocalId;
 pub use patterns::{ResolvedPattern, PatternType};
-pub use types::{TypeId, ResolvedType};
+pub use types::{TypeId, ResolvedType, TypeDefinition, TypeDeclaration, ResolvedField};
 
 mod functions;
 pub mod irt;
@@ -108,6 +108,10 @@ impl ModuleDecls {
 
     pub fn functions(&self) -> &Vec<Rc<FunctionDeclaration>> {
         &self.functions
+    }
+
+    pub fn types(&self) -> &Vec<Rc<TypeDeclaration>> {
+        &self.types
     }
 }
 

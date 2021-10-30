@@ -13,7 +13,6 @@ impl TypeId {
         TypeId(mod_name, fqn)
     }
 
-    #[cfg(test)]
     pub fn module(&self) -> &str {
         &self.0
     }

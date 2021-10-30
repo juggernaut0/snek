@@ -1,3 +1,4 @@
 type A
 type B { x: A }
-let { x: A }: B = new { x: new {} }
+let b: B = new { x: new {} }
+(println b)
