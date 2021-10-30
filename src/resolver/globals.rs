@@ -15,7 +15,6 @@ impl GlobalId {
 }
 
 impl GlobalId {
-    #[cfg(test)]
     pub fn module(&self) -> &str {
         &self.0
     }

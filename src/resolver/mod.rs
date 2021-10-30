@@ -121,9 +121,13 @@ fn make_primitive_type(id: TypeId) -> Rc<TypeDeclaration> {
     })
 }
 
+pub fn get_builtin_id(name: &str) -> GlobalId {
+    GlobalId::new(BuiltinTypeNames::mod_name(), Fqn::new(Vec::new(), name.to_string()))
+}
+
 fn make_builtin_global(name: &str, resolved_type: ResolvedType) -> Rc<GlobalDeclaration> {
     Rc::new(GlobalDeclaration {
-        id: GlobalId::new(BuiltinTypeNames::mod_name(), Fqn::new(Vec::new(), name.to_string())),
+        id: get_builtin_id(name),
         resolved_type,
         visibility: Vec::new(),
         export: true,
@@ -1317,6 +1321,7 @@ impl Resolver<'_> {
         };
 
         let mut init_to_field = HashMap::new();
+        let mut field_iter_order = Vec::new();
         for init in inits {
             init_to_field.insert(&init.field_name, (Some(&init.expr), None));
         }
@@ -1337,15 +1342,19 @@ impl Resolver<'_> {
                 } else {
                     init_to_field.insert(&field.name, (None, Some(field.resolved_type.clone())));
                 }
+
+                field_iter_order.push(&field.name);
             }
         } else {
-            for (_, typ) in init_to_field.values_mut() {
-                *typ = Some(ResolvedType::Inferred)
+            for (name, (_, typ)) in init_to_field.iter_mut() {
+                *typ = Some(ResolvedType::Inferred);
+                field_iter_order.push(name);
             }
         }
 
         let mut field_inits = Vec::new();
-        for (field_name, v) in init_to_field {
+        for field_name in field_iter_order {
+            let v = init_to_field.remove(field_name).expect("field in order but not map");
             match v {
                 (Some(init_expr), Some(expected_field_type)) => {
                     let dgr = self.resolve_expr(expected_field_type, Some(&mut holes), init_expr, type_scope, global_scope, local_scope);
@@ -1354,7 +1363,6 @@ impl Resolver<'_> {
                         _ => return Err(dgr)
                     };
                     field_inits.push((field_name.clone(), e));
-                    // TODO assign e.resolved_type to type parameter of actual_type
                 }
                 (None, Some(_)) => {
                     self.errors.push(Error {
@@ -1557,7 +1565,7 @@ fn error_expr() -> IrtExpr {
 pub struct FieldPath(Vec<String>);
 
 impl FieldPath {
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 }

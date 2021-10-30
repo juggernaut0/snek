@@ -1,5 +1,4 @@
 use std::rc::Rc;
-use crate::ast::Expr;
 use crate::resolver::irt::Statement;
 use crate::resolver::ResolvedType;
 

@@ -14,7 +14,7 @@ fn main() {
         let deps: Vec<_> = module.dependencies.iter().map(|name| decls.remove(name).expect("missing module")).collect();
 
         let irt = snek::resolve(Rc::clone(&module.name), &deps, &module.ast);
-        codegen::generate(&irt);
+        println!("{}", codegen::generate(&irt)); // TODO save to file
 
         decls.insert(module.name, irt.decls);
         for dep in deps {

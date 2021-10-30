@@ -120,7 +120,7 @@ impl Importer {
 }
 
 fn path_name(filepath: &Path) -> Rc<String> {
-    Rc::new(filepath.display().to_string())
+    Rc::new(filepath.file_stem().unwrap_or_else(|| filepath.as_os_str()).to_string_lossy().into_owned())
 }
 
 pub struct Error {
