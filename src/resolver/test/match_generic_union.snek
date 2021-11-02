@@ -1,0 +1,6 @@
+type MyUn<T> = T | ()
+let s: MyUn<String> = "hello"
+(match s
+    { _: String -> (println "It was a string") }
+    { () -> (println "It was a unit") }
+)

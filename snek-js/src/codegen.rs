@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::ops::Range;
-use snek::resolver::{get_builtin_id, GlobalId, ResolvedField, ResolvedType, TypeDeclaration, TypeDefinition, TypeId};
+use snek::resolver::{get_builtin_id, GlobalId, PatternType, ResolvedField, ResolvedPattern, ResolvedType, TypeDeclaration, TypeDefinition, TypeId};
 use snek::resolver::irt::*;
 
 pub fn generate(irt: &IrTree) -> String {
@@ -64,33 +64,91 @@ impl JsGenerator {
 
     fn generate_instance_of(&mut self, typ: &TypeDeclaration) {
         self.write("function ");
-        self.type_identifier(&typ.id);
-        self.write("_instance_of(o){\n");
+        self.instance_of_name(&typ.id);
+        self.write("(o,a){\n");
         self.indent();
+        self.write_indent();
         match &typ.definition {
             TypeDefinition::Record(_) => {
-                self.write_indent();
                 self.write("return o.__proto__.constructor===");
                 self.type_identifier(&typ.id);
                 self.write(";\n");
             }
-            TypeDefinition::Union(cases) => { todo!("instance of union") }
+            TypeDefinition::Union(cases) => {
+                let mut it = cases.iter();
+                self.write("return ");
+                self.check_type("o", "a", it.next().unwrap());
+                for case in it {
+                    self.write("||");
+                    self.check_type("o", "a", case);
+                }
+                self.write(";\n");
+            }
             TypeDefinition::Primitive => unreachable!("primitive types handled in builtin module")
         }
         self.unindent();
         self.write("}\n");
     }
 
+    fn instance_of_name(&mut self, type_id: &TypeId) {
+        self.type_identifier(&type_id);
+        self.write("_instance_of");
+    }
+
+    fn check_type(&mut self, ident: &str, args_ident: &str, typ: &ResolvedType) {
+        match typ {
+            ResolvedType::Id(id, args) => {
+                self.instance_of_name(id);
+                self.write("(");
+                self.write(ident);
+                self.write(",[");
+                for arg in args {
+                    self.type_check_ref(arg);
+                    self.write(",");
+                }
+                self.write("])");
+            }
+            ResolvedType::TypeParam(i) => {
+                self.write(args_ident);
+                self.write("[");
+                self.write(&i.to_string());
+                self.write("](");
+                self.write(ident);
+                self.write(",");
+                self.write(ident);
+                self.write(".$__type_args)");
+            },
+            ResolvedType::Func { .. } => todo!("check_type func"),
+            ResolvedType::Callable(_) => panic!("callable type in codegen"),
+            ResolvedType::Unit => {
+                self.write(ident);
+                self.write("===null");
+            }
+            ResolvedType::Any => self.write("true"),
+            ResolvedType::Nothing => self.write("false"),
+            ResolvedType::Inferred => panic!("inferred type in codegen"),
+            ResolvedType::Error => panic!("error type in codegen"),
+            ResolvedType::Hole(_) => panic!("hole type in codegen"),
+        }
+    }
+
+    fn type_check_ref(&mut self, typ: &ResolvedType) {
+        self.write("(ao,aa) -> ");
+        self.check_type("ao", "aa", typ);
+    }
+
     fn generate_constructor(&mut self, typ: &TypeDeclaration, fields: &[ResolvedField]) {
         self.write("function ");
         self.type_identifier(&typ.id);
-        self.write("(");
+        self.write("($__type_args,");
         for field in fields {
             self.write(&field.name);
             self.write(",");
         }
         self.write("){\n");
         self.indent();
+        self.write_indent();
+        self.write("this.$__type_args=$__type_args");
         for field in fields {
             self.write_indent();
             self.write("this.");
@@ -104,6 +162,7 @@ impl JsGenerator {
     }
 
     fn statement(&mut self, statement: &Statement) {
+        self.write_indent();
         match statement {
             Statement::SaveGlobal(save, expr) => {
                 // special case for non-destructuring assignment
@@ -124,7 +183,11 @@ impl JsGenerator {
                 self.expr(expr);
                 self.write(");\n");
             },
-            Statement::Return(_) => todo!("generate statement return"),
+            Statement::Return(expr) => {
+                self.write("return ");
+                self.expr(expr);
+                self.write(";\n");
+            }
         }
     }
 
@@ -152,7 +215,9 @@ impl JsGenerator {
             ExprType::LoadConstant(c) => self.constant(c),
             ExprType::LoadGlobal(id) => self.global_identifier(id),
             ExprType::LoadLocal(_) => todo!("generate expr loadLocal"),
-            ExprType::LoadParam => todo!("generate expr loadParam"),
+            ExprType::LoadParam => {
+                self.write("$args.pop()");
+            },
             ExprType::Call { callee, args } => {
                 self.expr(callee);
                 self.write("(");
@@ -185,17 +250,66 @@ impl JsGenerator {
             },
             ExprType::Func(_) => todo!("generate expr func"),
             ExprType::New { field_inits } => {
-                let type_id = if let ResolvedType::Id(id, _) = &expr.resolved_type { id } else { unreachable!() };
+                let (type_id, type_args) = if let ResolvedType::Id(id, args) = &expr.resolved_type { (id, args) } else { unreachable!() };
                 self.write("new ");
                 self.type_identifier(type_id);
-                self.write("(");
+                self.write("([");
+                for arg in type_args {
+                    self.type_check_ref(arg);
+                    self.write(",");
+                }
+                self.write("],");
                 for (_, expr) in field_inits {
                     self.expr(expr);
                     self.write(",");
                 }
                 self.write(")");
             },
-            ExprType::Match { .. } => todo!("generate expr match"),
+            ExprType::Match { expr, arms } => {
+                self.write("(function($e){\n");
+                self.indent();
+                self.write_indent();
+                self.write("let $args=[$e];\n");
+                self.write_indent();
+                for (pat, stmts) in arms {
+                    self.write("if(");
+                    self.matches("$e", pat);
+                    self.write("){\n");
+                    self.indent();
+                    for stmt in stmts {
+                        self.statement(stmt);
+                    }
+                    self.unindent();
+                    self.write_indent();
+                    self.write("}else ");
+                }
+                self.write("{\n");
+                self.indent();
+                self.write_indent();
+                self.write("throw \"Unmatched match expression\";\n");
+                self.unindent();
+                self.write_indent();
+                self.write("};\n");
+                self.unindent();
+                self.write_indent();
+                self.write("})(");
+                self.expr(expr);
+                self.write(")");
+            },
+        }
+    }
+
+    // returns boolean expression of whether ident matches patter
+    fn matches(&mut self, ident: &str, pattern: &ResolvedPattern) {
+        match &pattern.pattern_type {
+            PatternType::Discard => self.check_type(ident, "[]", &pattern.resolved_type),
+            PatternType::Name(_) => self.check_type(ident, "[]", &pattern.resolved_type),
+            PatternType::Constant(c) => {
+                self.write(ident);
+                self.write("===");
+                self.constant(c);
+            }
+            PatternType::Destructuring(_) => todo!("matches destructuring")
         }
     }
 

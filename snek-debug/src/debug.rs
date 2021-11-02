@@ -474,7 +474,7 @@ impl IrtVisitor for IrPrinter {
                 self.print_open(&format!("Match: {}", expr.resolved_type));
                 self.print_one(matched_expr.as_ref());
                 for (pattern, arm) in arms {
-                    self.print_open(&format!("{}", PatternTypeW(&pattern.pattern_type)));
+                    self.print_open(&format!("{}", ResolvedPatternW(pattern)));
                     self.print_all(arm);
                     self.print_close();
                 }
@@ -484,11 +484,12 @@ impl IrtVisitor for IrPrinter {
     }
 }
 
-struct PatternTypeW<'a>(&'a snek::resolver::PatternType);
-impl Display for PatternTypeW<'_> {
+struct ResolvedPatternW<'a>(&'a snek::resolver::ResolvedPattern);
+impl Display for ResolvedPatternW<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match &self.0 {
-            snek::resolver::PatternType::Discard => write!(f, "_"),
+        let rt = &self.0.resolved_type;
+        match &self.0.pattern_type {
+            snek::resolver::PatternType::Discard => write!(f, "_: {}", rt),
             snek::resolver::PatternType::Constant(c) => {
                 match c {
                     Constant::Unit => write!(f, "()"),
@@ -497,13 +498,13 @@ impl Display for PatternTypeW<'_> {
                     Constant::Boolean(b) => write!(f, "{}", b),
                 }
             },
-            snek::resolver::PatternType::Name(name) => write!(f, "{}", name),
+            snek::resolver::PatternType::Name(name) => write!(f, "{}: {}", name, rt),
             snek::resolver::PatternType::Destructuring(fields) => {
                 write!(f, "{{")?;
                 join_map(f, fields, ", ", |f, (name, pattern)| {
-                    write!(f, "{} => {}", name, PatternTypeW(&pattern.pattern_type))
+                    write!(f, "{} => {}", name, ResolvedPatternW(pattern))
                 })?;
-                write!(f, "}}")
+                write!(f, "}}: {}", rt)
             }
         }
     }
