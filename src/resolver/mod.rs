@@ -47,7 +47,7 @@ pub fn resolve(name: Rc<String>, deps: &[ModuleDecls], ast: &Ast) -> ResolveResu
     }
 }
 
-struct BuiltinTypeNames {
+pub struct BuiltinTypeNames {
     mod_name: Rc<String>,
     number: TypeId,
     string: TypeId,
@@ -69,16 +69,25 @@ impl BuiltinTypeNames {
         BUILTIN_TYPE_NAMES.with(|btn| Rc::clone(&btn.mod_name))
     }
 
+    pub fn number_id() -> TypeId {
+        BUILTIN_TYPE_NAMES.with(|btn| btn.number.clone())
+    }
     fn number() -> ResolvedType {
-        ResolvedType::Id(BUILTIN_TYPE_NAMES.with(|btn| btn.number.clone()), Vec::new())
+        ResolvedType::Id(BuiltinTypeNames::number_id(), Vec::new())
     }
 
+    pub fn string_id() -> TypeId {
+        BUILTIN_TYPE_NAMES.with(|btn| btn.string.clone())
+    }
     fn string() -> ResolvedType {
-        ResolvedType::Id(BUILTIN_TYPE_NAMES.with(|btn| btn.string.clone()), Vec::new())
+        ResolvedType::Id(BuiltinTypeNames::string_id(), Vec::new())
     }
 
+    pub fn boolean_id() -> TypeId {
+        BUILTIN_TYPE_NAMES.with(|btn| btn.boolean.clone())
+    }
     fn boolean() -> ResolvedType {
-        ResolvedType::Id(BUILTIN_TYPE_NAMES.with(|btn| btn.boolean.clone()), Vec::new())
+        ResolvedType::Id(BuiltinTypeNames::boolean_id(), Vec::new())
     }
 }
 

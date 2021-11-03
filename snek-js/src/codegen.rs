@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::ops::Range;
-use snek::resolver::{get_builtin_id, GlobalId, PatternType, ResolvedField, ResolvedPattern, ResolvedType, TypeDeclaration, TypeDefinition, TypeId};
+use snek::resolver::{BuiltinTypeNames, get_builtin_id, GlobalId, LocalId, PatternType, ResolvedField, ResolvedPattern, ResolvedType, TypeDeclaration, TypeDefinition, TypeId};
 use snek::resolver::irt::*;
 
 pub fn generate(irt: &IrTree) -> String {
@@ -60,6 +60,24 @@ impl JsGenerator {
         self.write("var ");
         self.global_identifier(&get_builtin_id("println"));
         self.write("=console.log;\n");
+
+        self.primitive_instance_of(&BuiltinTypeNames::number_id(), "typeof o===\"number\"");
+        self.primitive_instance_of(&BuiltinTypeNames::string_id(), "typeof o===\"string\"");
+        self.primitive_instance_of(&BuiltinTypeNames::boolean_id(), "typeof o===\"boolean\"");
+    }
+
+    fn primitive_instance_of(&mut self, id: &TypeId, body: &str) {
+        self.write("function ");
+        self.instance_of_name(id);
+        self.write("(o,a){\n");
+        self.indent();
+        self.write_indent();
+        self.write("return ");
+        self.write(body);
+        self.write(";\n");
+        self.unindent();
+        self.write_indent();
+        self.write("}\n");
     }
 
     fn generate_instance_of(&mut self, typ: &TypeDeclaration) {
@@ -177,7 +195,19 @@ impl JsGenerator {
                     todo!("generate statement save_global destructured")
                 }
             },
-            Statement::SaveLocal(_, _) => todo!("generate statement save_local"),
+            Statement::SaveLocal(save, expr) => {
+                // special case for non-destructuring assignment
+                if save.paths.len() == 1 && save.paths[0].0.is_empty() {
+                    let target = &save.paths[0].1;
+                    self.write("let ");
+                    self.local(target);
+                    self.write("=");
+                    self.expr(expr);
+                    self.write(";\n");
+                } else {
+                    todo!("generate statement save_local destructured")
+                }
+            },
             Statement::Discard(expr) => {
                 self.write("(");
                 self.expr(expr);
@@ -200,6 +230,11 @@ impl JsGenerator {
         }
     }
 
+    fn local(&mut self, LocalId(i): &LocalId) {
+        self.write("var_");
+        self.write(&i.to_string());
+    }
+
     fn type_identifier(&mut self, type_id: &TypeId) {
         self.write("$T$");
         self.write(type_id.module());
@@ -214,7 +249,7 @@ impl JsGenerator {
             ExprType::Error => panic!("error expr in codegen"),
             ExprType::LoadConstant(c) => self.constant(c),
             ExprType::LoadGlobal(id) => self.global_identifier(id),
-            ExprType::LoadLocal(_) => todo!("generate expr loadLocal"),
+            ExprType::LoadLocal(id) => self.local(id),
             ExprType::LoadParam => {
                 self.write("$args.pop()");
             },
