@@ -1,0 +1,2 @@
+type Option<T> = T | None {}
+(match 2 { x: Option<Number> -> (println x) })

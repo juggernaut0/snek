@@ -428,6 +428,11 @@ fn match_generic_union() {
     assert_no_errs(resolve_from_src(include_str!("match_generic_union.snek")));
 }
 
+#[test]
+fn match_widening() {
+    assert_no_errs(resolve_from_src(include_str!("match_widening.snek")));
+}
+
 fn define_types(src: &str) -> Resolver {
     let (ast, errs) = crate::parser::parse(src);
     assert!(errs.is_empty());

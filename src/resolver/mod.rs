@@ -65,7 +65,7 @@ impl BuiltinTypeNames {
         }
     }
 
-    fn mod_name() -> Rc<String> {
+    pub fn mod_name() -> Rc<String> {
         BUILTIN_TYPE_NAMES.with(|btn| Rc::clone(&btn.mod_name))
     }
 

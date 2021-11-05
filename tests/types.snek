@@ -1,4 +1,6 @@
 type A
 type B { x: A }
+type C = A | B
 let b: B = new { x: new {} }
-(println b)
+let c: C = b
+(println c)

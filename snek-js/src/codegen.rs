@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::fmt::Write;
 use std::ops::Range;
 use snek::resolver::{BuiltinTypeNames, get_builtin_id, GlobalId, LocalId, PatternType, ResolvedField, ResolvedPattern, ResolvedType, TypeDeclaration, TypeDefinition, TypeId};
 use snek::resolver::irt::*;
@@ -27,9 +28,9 @@ impl JsGenerator {
         // TODO generate imports
         // TODO generate types
         for typ in irt.decls.types() {
-            self.generate_instance_of(typ);
+            self.runtime_type_constructor(typ);
             if let TypeDefinition::Record(fields) = &typ.definition {
-                self.generate_constructor(typ, fields);
+                self.constructor(typ, fields);
             }
         }
 
@@ -61,104 +62,66 @@ impl JsGenerator {
         self.global_identifier(&get_builtin_id("println"));
         self.write("=console.log;\n");
 
-        self.primitive_instance_of(&BuiltinTypeNames::number_id(), "typeof o===\"number\"");
-        self.primitive_instance_of(&BuiltinTypeNames::string_id(), "typeof o===\"string\"");
-        self.primitive_instance_of(&BuiltinTypeNames::boolean_id(), "typeof o===\"boolean\"");
+        self.write(include_str!("runtimeTypeOf.js"));
     }
 
-    fn primitive_instance_of(&mut self, id: &TypeId, body: &str) {
+    fn runtime_type_name(&mut self, id: &TypeId) {
+        self.type_identifier(id);
+        self.write("_RuntimeType");
+    }
+
+    fn runtime_type_constructor(&mut self, type_decl: &TypeDeclaration) {
         self.write("function ");
-        self.instance_of_name(id);
-        self.write("(o,a){\n");
+        self.runtime_type_name(&type_decl.id);
+        self.write("(args){\n");
         self.indent();
         self.write_indent();
-        self.write("return ");
-        self.write(body);
-        self.write(";\n");
+        self.write("RuntimeType.call(this);\n");
+        self.write_indent();
+        self.write("this.args=args;\n");
         self.unindent();
         self.write_indent();
         self.write("}\n");
-    }
 
-    fn generate_instance_of(&mut self, typ: &TypeDeclaration) {
-        self.write("function ");
-        self.instance_of_name(&typ.id);
-        self.write("(o,a){\n");
+        self.write_indent();
+        self.runtime_type_name(&type_decl.id);
+        self.write(".prototype=Object.create(RuntimeType.prototype);\n");
+
+        self.write_indent();
+        self.runtime_type_name(&type_decl.id);
+        self.write(".prototype.equals=function(other){\n");
         self.indent();
         self.write_indent();
-        match &typ.definition {
+        self.write("let exactMatch = this.__proto__===other.__proto__");
+        for i in 0..type_decl.num_type_params {
+            write!(self, "&&this.args[{}]===other.args[{}]", i, i).unwrap();
+        }
+        self.write(";\n");
+        self.write_indent();
+        match &type_decl.definition {
             TypeDefinition::Record(_) => {
-                self.write("return o.__proto__.constructor===");
-                self.type_identifier(&typ.id);
-                self.write(";\n");
+                self.write("return exactMatch;\n")
             }
             TypeDefinition::Union(cases) => {
-                let mut it = cases.iter();
-                self.write("return ");
-                self.check_type("o", "a", it.next().unwrap());
-                for case in it {
+                self.write("return exactMatch");
+                for case in cases {
                     self.write("||");
-                    self.check_type("o", "a", case);
+                    self.runtime_type(case, "this.args");
+                    self.write(".equals(other)");
                 }
                 self.write(";\n");
             }
-            TypeDefinition::Primitive => unreachable!("primitive types handled in builtin module")
+            TypeDefinition::Primitive => unreachable!("user types cannot be primitive")
         }
         self.unindent();
+        self.write_indent();
         self.write("}\n");
     }
 
-    fn instance_of_name(&mut self, type_id: &TypeId) {
-        self.type_identifier(&type_id);
-        self.write("_instance_of");
-    }
-
-    fn check_type(&mut self, ident: &str, args_ident: &str, typ: &ResolvedType) {
-        match typ {
-            ResolvedType::Id(id, args) => {
-                self.instance_of_name(id);
-                self.write("(");
-                self.write(ident);
-                self.write(",[");
-                for arg in args {
-                    self.type_check_ref(arg);
-                    self.write(",");
-                }
-                self.write("])");
-            }
-            ResolvedType::TypeParam(i) => {
-                self.write(args_ident);
-                self.write("[");
-                self.write(&i.to_string());
-                self.write("](");
-                self.write(ident);
-                self.write(",");
-                self.write(ident);
-                self.write(".$__type_args)");
-            },
-            ResolvedType::Func { .. } => todo!("check_type func"),
-            ResolvedType::Callable(_) => panic!("callable type in codegen"),
-            ResolvedType::Unit => {
-                self.write(ident);
-                self.write("===null");
-            }
-            ResolvedType::Any => self.write("true"),
-            ResolvedType::Nothing => self.write("false"),
-            ResolvedType::Inferred => panic!("inferred type in codegen"),
-            ResolvedType::Error => panic!("error type in codegen"),
-            ResolvedType::Hole(_) => panic!("hole type in codegen"),
-        }
-    }
-
-    fn type_check_ref(&mut self, typ: &ResolvedType) {
-        self.write("(ao,aa) -> ");
-        self.check_type("ao", "aa", typ);
-    }
-
-    fn generate_constructor(&mut self, typ: &TypeDeclaration, fields: &[ResolvedField]) {
+    fn constructor(&mut self, typ: &TypeDeclaration, fields: &[ResolvedField]) {
         self.write("function ");
         self.type_identifier(&typ.id);
-        self.write("($__type_args,");
+        self.write("($type_args,");
         for field in fields {
             self.write(&field.name);
             self.write(",");
@@ -166,17 +129,62 @@ impl JsGenerator {
         self.write("){\n");
         self.indent();
         self.write_indent();
-        self.write("this.$__type_args=$__type_args");
+        self.write("this.$type=new ");
+        self.runtime_type_name(&typ.id);
+        self.write("($type_args);\n");
         for field in fields {
             self.write_indent();
-            self.write("this.");
-            self.write(&field.name);
-            self.write("=");
-            self.write(&field.name);
-            self.write(";\n");
+            let name = &field.name;
+            writeln!(self, "this.{}={};", name, name).unwrap();
         }
         self.unindent();
+        self.write_indent();
         self.write("}\n");
+    }
+
+    fn runtime_type(&mut self, typ: &ResolvedType, type_args: &str) {
+        match typ {
+            ResolvedType::Id(id, args) => {
+                if id == &BuiltinTypeNames::number_id() {
+                    self.write("Number_RuntimeType");
+                } else if id == &BuiltinTypeNames::string_id() {
+                    self.write("String_RuntimeType");
+                } else if id == &BuiltinTypeNames::boolean_id() {
+                    self.write("Boolean_RuntimeType");
+                } else {
+                    self.write("new ");
+                    self.runtime_type_name(id);
+                    self.write("([");
+                    for arg in args {
+                        self.runtime_type(arg, type_args);
+                        self.write(",");
+                    }
+                    self.write("])");
+                }
+            }
+            ResolvedType::TypeParam(i) => {
+                write!(self, "{}[{}]", type_args, i).unwrap();
+            },
+            ResolvedType::Func { .. } => todo!("check_type func"),
+            ResolvedType::Callable(_) => panic!("callable type in codegen"),
+            ResolvedType::Unit => {
+                self.write("Unit_RuntimeType");
+            }
+            ResolvedType::Any => {
+                self.write("Any_RuntimeType");
+            }
+            ResolvedType::Nothing => {
+                self.write("Nothing_RuntimeType");
+            }
+            ResolvedType::Inferred => panic!("inferred type in codegen"),
+            ResolvedType::Error => panic!("error type in codegen"),
+            ResolvedType::Hole(_) => panic!("hole type in codegen"),
+        }
+    }
+
+    fn check_type(&mut self, typ: &ResolvedType, object: &str, type_args: &str) {
+        self.runtime_type(typ, type_args);
+        write!(self, ".instanceOf({})", object).unwrap();
     }
 
     fn statement(&mut self, statement: &Statement) {
@@ -236,10 +244,14 @@ impl JsGenerator {
     }
 
     fn type_identifier(&mut self, type_id: &TypeId) {
-        self.write("$T$");
-        self.write(type_id.module());
-        for part in type_id.fqn().as_slice() {
-            self.write("_");
+        let module = type_id.module();
+        if module != BuiltinTypeNames::mod_name().as_str() {
+            write!(self, "$T${}_", module).unwrap();
+        }
+        for (i, part) in type_id.fqn().as_slice().iter().enumerate() {
+            if i != 0 {
+                self.write("_");
+            }
             self.write(part);
         }
     }
@@ -290,7 +302,7 @@ impl JsGenerator {
                 self.type_identifier(type_id);
                 self.write("([");
                 for arg in type_args {
-                    self.type_check_ref(arg);
+                    self.runtime_type(arg,"[]");
                     self.write(",");
                 }
                 self.write("],");
@@ -337,8 +349,8 @@ impl JsGenerator {
     // returns boolean expression of whether ident matches patter
     fn matches(&mut self, ident: &str, pattern: &ResolvedPattern) {
         match &pattern.pattern_type {
-            PatternType::Discard => self.check_type(ident, "[]", &pattern.resolved_type),
-            PatternType::Name(_) => self.check_type(ident, "[]", &pattern.resolved_type),
+            PatternType::Discard => self.check_type(&pattern.resolved_type, ident, "[]"),
+            PatternType::Name(_) => self.check_type(&pattern.resolved_type, ident, "[]"),
             PatternType::Constant(c) => {
                 self.write(ident);
                 self.write("===");
@@ -359,6 +371,16 @@ impl JsGenerator {
             },
             Constant::Boolean(b) => self.write(&b.to_string()),
         }
+    }
+}
+
+impl Write for JsGenerator {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        self.output.write_str(s)
+    }
+
+    fn write_char(&mut self, c: char) -> std::fmt::Result {
+        self.output.write_char(c)
     }
 }
 
