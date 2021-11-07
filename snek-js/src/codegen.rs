@@ -26,12 +26,15 @@ impl JsGenerator {
     fn generate(&mut self, irt: &IrTree) {
         self.generate_builtins();
         // TODO generate imports
-        // TODO generate types
+
         for typ in irt.decls.types() {
             self.runtime_type_constructor(typ);
             if let TypeDefinition::Record(fields) = &typ.definition {
                 self.constructor(typ, fields);
             }
+        }
+        for func in irt.decls.functions() {
+
         }
 
         for statement in &irt.statements {
@@ -62,7 +65,7 @@ impl JsGenerator {
         self.global_identifier(&get_builtin_id("println"));
         self.write("=console.log;\n");
 
-        self.write(include_str!("runtimeTypeOf.js"));
+        self.write(include_str!("runtime_type.js"));
     }
 
     fn runtime_type_name(&mut self, id: &TypeId) {
@@ -262,6 +265,7 @@ impl JsGenerator {
             ExprType::LoadConstant(c) => self.constant(c),
             ExprType::LoadGlobal(id) => self.global_identifier(id),
             ExprType::LoadLocal(id) => self.local(id),
+            ExprType::LoadCapture(id) => todo!("load capture"),
             ExprType::LoadParam => {
                 self.write("$args.pop()");
             },

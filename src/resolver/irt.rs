@@ -30,6 +30,7 @@ pub enum ExprType {
     LoadConstant(Constant),
     LoadGlobal(GlobalId),
     LoadLocal(LocalId),
+    LoadCapture(LocalId),
     LoadParam,
     Call { callee: Box<Expr>, args: Vec<Expr> },
     Binary { op: BinaryOp, left: Box<Expr>, right: Box<Expr> },

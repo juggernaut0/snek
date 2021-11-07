@@ -21,6 +21,7 @@ pub use locals::LocalId;
 pub use patterns::{ResolvedPattern, PatternType};
 pub use types::{TypeId, ResolvedType, TypeDefinition, TypeDeclaration, ResolvedField};
 
+mod expr;
 mod functions;
 pub mod irt;
 mod globals;
@@ -764,7 +765,7 @@ impl Resolver<'_> {
             let ns = ugb.namespace.as_slice();
             let type_scope = root_type_scope.enter_scope(ns);
             let global_scope = root_global_scope.enter_scope(ns);
-            let dgr = self.resolve_expr(ugb.expected_type.clone(), None, &ugb.ast_node.expr, &type_scope, &global_scope, &LocalScope::new(None));
+            let dgr = self.resolve_expr(ugb.expected_type.clone(), None, &ugb.ast_node.expr, &type_scope, &global_scope, &LocalScope::new(None, false), None);
             match dgr {
                 DefineGlobalResult::NeedsType(id) => {
                     let dep = ugbs_by_gid.get(&id).copied().unwrap();
@@ -841,12 +842,20 @@ impl Resolver<'_> {
         expr: &Expr,
         type_scope: &LookupScope<TypeDeclLookup>,
         global_scope: &LookupScope<GlobalLookup>,
-        local_scope: &LocalScope
+        local_scope: &LocalScope,
+        mut captures: Option<&mut Vec<LocalId>>,
     ) -> DefineGlobalResult {
         let (actual_type, irt_expr_type) = match &expr.expr_type {
             ExprType::QName(qn) => {
-                if let Some(local) = local_scope.get_from_qname(qn) {
-                    (local.typ.clone(), IrtExprType::LoadLocal(local.id))
+                if let Some((local, capture)) = local_scope.get_from_qname(qn) {
+                    if capture {
+                        if let Some(captures) = captures {
+                            captures.push(local.id);
+                        }
+                        (local.typ.clone(), IrtExprType::LoadCapture(local.id))
+                    } else {
+                        (local.typ.clone(), IrtExprType::LoadLocal(local.id))
+                    }
                 } else if let Some((global, visible)) = global_scope.get(&qn.parts) {
                     if !visible {
                         self.errors.push(Error {
@@ -884,11 +893,12 @@ impl Resolver<'_> {
             },
             ExprType::Unary(_, _) => todo!(),
             ExprType::Binary(op, left, right) => {
-                let res_left = match self.resolve_expr(ResolvedType::Inferred, None, left, type_scope, global_scope, local_scope) {
+                // This garbage with captures is necessary because a Option<&mut> is not Copy
+                let res_left = match self.resolve_expr(ResolvedType::Inferred, None, left, type_scope, global_scope, local_scope, captures.copy_ref()) {
                     DefineGlobalResult::Success(it) => it,
                     DefineGlobalResult::NeedsType(id) => return DefineGlobalResult::NeedsType(id),
                 };
-                let res_right = match self.resolve_expr(ResolvedType::Inferred, None, right, type_scope, global_scope, local_scope) {
+                let res_right = match self.resolve_expr(ResolvedType::Inferred, None, right, type_scope, global_scope, local_scope, captures) {
                     DefineGlobalResult::Success(it) => it,
                     DefineGlobalResult::NeedsType(id) => return DefineGlobalResult::NeedsType(id),
                 };
@@ -923,20 +933,20 @@ impl Resolver<'_> {
                 (rt, IrtExprType::Binary { op, left: Box::new(res_left), right: Box::new(res_right) })
             },
             ExprType::Call(call_expr) => {
-                match self.resolve_call_expr(expected_type.clone(), expr, type_scope, global_scope, local_scope, call_expr) {
+                match self.resolve_call_expr(expected_type.clone(), expr, type_scope, global_scope, local_scope, captures, call_expr) {
                     Ok(it) => it,
                     Err(dfg) => return dfg
                 }
             },
             ExprType::Lambda(lambda_expr) => {
-                match self.resolve_function(expected_type.clone(), expr, type_scope, global_scope, local_scope, lambda_expr) {
+                match self.resolve_function(expected_type.clone(), expr, type_scope, global_scope, local_scope, captures, lambda_expr) {
                     Ok(it) => it,
                     Err(dfg) => return dfg
                 }
             }
             ExprType::List(_) => todo!(),
             ExprType::New(nt, inits) => {
-                match self.resolve_new_expr(expected_type.clone(), expr, type_scope, global_scope, local_scope, nt.as_ref(), inits) {
+                match self.resolve_new_expr(expected_type.clone(), expr, type_scope, global_scope, local_scope, captures, nt.as_ref(), inits) {
                     Ok(it) => it,
                     Err(dfg) => return dfg
                 }
@@ -958,15 +968,16 @@ impl Resolver<'_> {
         type_scope: &LookupScope<TypeDeclLookup>,
         global_scope: &LookupScope<GlobalLookup>,
         local_scope: &LocalScope,
+        mut captures: Option<&mut Vec<LocalId>>,
         call_expr: &CallExpr,
     ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
         if let ExprType::Match = &call_expr.callee.expr_type {
-            return self.resolve_match_expr(expected_type, expr, type_scope, global_scope, local_scope, &call_expr.args);
+            return self.resolve_match_expr(expected_type, expr, type_scope, global_scope, local_scope, captures, &call_expr.args);
         } else if let ExprType::Dot = &call_expr.callee.expr_type {
             todo!("tail recursion calls")
         }
 
-        let callee_result = self.resolve_expr(ResolvedType::Callable(Box::new(expected_type)), None, &call_expr.callee, type_scope, global_scope, local_scope);
+        let callee_result = self.resolve_expr(ResolvedType::Callable(Box::new(expected_type)), None, &call_expr.callee, type_scope, global_scope, local_scope, captures.copy_ref());
         let callee = match callee_result {
             DefineGlobalResult::NeedsType(_) => return Err(callee_result),
             DefineGlobalResult::Success(callee_expr) => callee_expr,
@@ -1012,7 +1023,7 @@ impl Resolver<'_> {
             .chain(repeat(ResolvedType::Inferred))
             .zip(&call_expr.args)
             .map(|(exp_arg_type, arg_expr)| {
-                self.resolve_expr(exp_arg_type, None, arg_expr, type_scope, global_scope, local_scope)
+                self.resolve_expr(exp_arg_type, None, arg_expr, type_scope, global_scope, local_scope, captures.copy_ref())
             });
 
         let mut args = Vec::new();
@@ -1038,6 +1049,7 @@ impl Resolver<'_> {
         type_scope: &LookupScope<TypeDeclLookup>,
         global_scope: &LookupScope<GlobalLookup>,
         local_scope: &LocalScope,
+        mut captures: Option<&mut Vec<LocalId>>,
         args: &[Expr],
     ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
         if args.is_empty() {
@@ -1048,7 +1060,7 @@ impl Resolver<'_> {
             });
         }
 
-        let dgr = self.resolve_expr(ResolvedType::Inferred, None, &args[0], type_scope, global_scope, local_scope);
+        let dgr = self.resolve_expr(ResolvedType::Inferred, None, &args[0], type_scope, global_scope, local_scope, captures.copy_ref());
         let matched_expr = match dgr {
             DefineGlobalResult::Success(e) => e,
             DefineGlobalResult::NeedsType(_) => return Err(dgr),
@@ -1082,7 +1094,7 @@ impl Resolver<'_> {
             let pattern = self.resolve_pattern(&lambda.params[0], type_scope, Some(matched_expr.resolved_type.clone()));
             patterns.push(pattern);
 
-            let (rrt, statements) = self.resolve_match_arm(expected_arm_type.clone(), arg, type_scope, global_scope, local_scope, lambda)?;
+            let (rrt, statements) = self.resolve_match_arm(expected_arm_type.clone(), arg, type_scope, global_scope, local_scope, captures.copy_ref(), lambda)?;
             actual_type = merge_types(actual_type, rrt);
             arm_exprs.push(statements);
         }
@@ -1107,10 +1119,14 @@ impl Resolver<'_> {
         type_scope: &LookupScope<TypeDeclLookup>,
         global_scope: &LookupScope<GlobalLookup>,
         local_scope: &LocalScope,
+        captures: Option<&mut Vec<LocalId>>,
         lambda_expr: &LambdaExpr,
     ) -> Result<(ResolvedType, Vec<Statement>), DefineGlobalResult> {
-        let (_, rt, statements) = self.resolve_lambda_expr(expected_type, expr, type_scope, global_scope, local_scope, lambda_expr)?;
-        Ok((rt, statements))
+        let ResolvedLambdaExpr { return_type, statements, captures: my_captures, .. } = self.resolve_lambda_expr(expected_type, expr, type_scope, global_scope, local_scope, lambda_expr, false)?;
+        if let Some(captures) = captures {
+            captures.extend(my_captures);
+        }
+        Ok((return_type, statements))
     }
 
     fn resolve_function(
@@ -1120,11 +1136,22 @@ impl Resolver<'_> {
         type_scope: &LookupScope<TypeDeclLookup>,
         global_scope: &LookupScope<GlobalLookup>,
         local_scope: &LocalScope,
+        captures: Option<&mut Vec<LocalId>>,
         lambda_expr: &LambdaExpr,
     ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
-        let (params, return_type, statements) = self.resolve_lambda_expr(expected_type, expr, type_scope, global_scope, local_scope, lambda_expr)?;
+        let ResolvedLambdaExpr {
+            param_types: params,
+            return_type,
+            statements,
+            captures: mut my_captures,
+            locals,
+        } = self.resolve_lambda_expr(expected_type, expr, type_scope, global_scope, local_scope, lambda_expr, true)?;
+        my_captures.retain(|it| !locals.contains(it));
+        if let Some(captures) = captures {
+            captures.extend(my_captures.iter().copied());
+        }
         let rt = ResolvedType::Func { params, return_type: Box::new(return_type) };
-        let func_id = self.define_function(rt.clone(), statements);
+        let func_id = self.define_function(rt.clone(), statements, my_captures);
         let irt_expr_type = IrtExprType::Func(func_id);
         Ok((rt, irt_expr_type))
     }
@@ -1137,7 +1164,8 @@ impl Resolver<'_> {
         global_scope: &LookupScope<GlobalLookup>,
         local_scope: &LocalScope,
         lambda_expr: &LambdaExpr,
-    ) -> Result<(Vec<ResolvedType>, ResolvedType, Vec<Statement>), DefineGlobalResult> {
+        capturing: bool,
+    ) -> Result<ResolvedLambdaExpr, DefineGlobalResult> {
         let (expected_params, expected_return_type) = match expected_type {
             ResolvedType::Func { params, return_type } =>{
                 if params.len() != lambda_expr.params.len() {
@@ -1162,7 +1190,7 @@ impl Resolver<'_> {
 
         let mut statements = Vec::new();
         let mut param_types = Vec::new();
-        let mut scope = LocalScope::new(Some(local_scope));
+        let mut scope = LocalScope::new(Some(local_scope), capturing);
 
         let params = lambda_expr.params.iter()
             .zip(expected_params.into_iter().chain(repeat(ResolvedType::Inferred)));
@@ -1199,6 +1227,7 @@ impl Resolver<'_> {
             statements.push(statement);
         }
 
+        let mut captures = Vec::new();
         for binding in &lambda_expr.bindings {
             #[cfg(debug_assertions)] {
                 if let Expr { expr_type: ExprType::QName(qn), .. } = &binding.expr {
@@ -1215,7 +1244,7 @@ impl Resolver<'_> {
             let resolved_pattern = self.resolve_pattern(pattern, type_scope, None);
             let expected_type = resolved_pattern.resolved_type.clone();
             let names = self.extract_names(resolved_pattern);
-            let dgr = self.resolve_expr(expected_type, None, &binding.expr, type_scope, global_scope, &scope);
+            let dgr = self.resolve_expr(expected_type, None, &binding.expr, type_scope, global_scope, &scope, Some(&mut captures));
             // TODO can I accumulate these across all bindings and return them all at once?
             let irt_expr = match dgr {
                 DefineGlobalResult::NeedsType(_) => return Err(dgr),
@@ -1253,7 +1282,7 @@ impl Resolver<'_> {
             statements.push(statement);
         }
 
-        let dfg = self.resolve_expr(expected_return_type, None, &lambda_expr.expr, type_scope, global_scope, &scope);
+        let dfg = self.resolve_expr(expected_return_type, None, &lambda_expr.expr, type_scope, global_scope, &scope, Some(&mut captures));
         let irt_expr = match dfg {
             DefineGlobalResult::NeedsType(_) => return Err(dfg),
             DefineGlobalResult::Success(irt_expr) => irt_expr,
@@ -1262,7 +1291,8 @@ impl Resolver<'_> {
 
         statements.push(Statement::Return(irt_expr));
 
-        Ok((param_types, return_type, statements))
+        // TODO need to also get locals declared in local match arms
+        Ok(ResolvedLambdaExpr { param_types, return_type, statements, captures, locals: scope.declared_locals() })
     }
 
     fn resolve_new_expr(
@@ -1272,6 +1302,7 @@ impl Resolver<'_> {
         type_scope: &LookupScope<TypeDeclLookup>,
         global_scope: &LookupScope<GlobalLookup>,
         local_scope: &LocalScope,
+        mut captures: Option<&mut Vec<LocalId>>,
         named_type: Option<&NamedType>,
         inits: &[FieldInit],
     ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
@@ -1370,7 +1401,7 @@ impl Resolver<'_> {
             let v = init_to_field.remove(field_name).expect("field in order but not map");
             match v {
                 (Some(init_expr), Some(expected_field_type)) => {
-                    let dgr = self.resolve_expr(expected_field_type, Some(&mut holes), init_expr, type_scope, global_scope, local_scope);
+                    let dgr = self.resolve_expr(expected_field_type, Some(&mut holes), init_expr, type_scope, global_scope, local_scope, captures.copy_ref());
                     let e = match dgr {
                         DefineGlobalResult::Success(e) => e,
                         _ => return Err(dgr)
@@ -1390,7 +1421,7 @@ impl Resolver<'_> {
                         line: expr.line,
                         col: expr.col,
                     });
-                    let dgr = self.resolve_expr(ResolvedType::Inferred, Some(&mut holes), init_expr, type_scope, global_scope, local_scope);
+                    let dgr = self.resolve_expr(ResolvedType::Inferred, Some(&mut holes), init_expr, type_scope, global_scope, local_scope, captures.copy_ref());
                     match dgr {
                         DefineGlobalResult::Success(_) => {} // discard
                         _ => return Err(dgr)
@@ -1490,10 +1521,10 @@ impl Resolver<'_> {
         res
     }
 
-    fn define_function(&mut self, resolved_type: ResolvedType, statements: Vec<Statement>) -> FunctionId {
+    fn define_function(&mut self, resolved_type: ResolvedType, statements: Vec<Statement>, captures: Vec<LocalId>) -> FunctionId {
         let seq_id = self.func_seq;
         self.func_seq += 1;
-        let decl = FunctionDeclaration::new(Rc::clone(&self.exports.name), seq_id, resolved_type, statements);
+        let decl = FunctionDeclaration::new(Rc::clone(&self.exports.name), seq_id, resolved_type, statements, captures);
         let id = decl.id();
         self.exports.functions.push(Rc::new(decl));
         id
@@ -1512,6 +1543,7 @@ impl TypeStore for Resolver<'_> {
 
 struct LocalScope<'a> {
     parent: Option<&'a LocalScope<'a>>,
+    capturing: bool,
     declarations: Vec<ScopeItem>,
     local_id_seq: u32,
 }
@@ -1523,9 +1555,10 @@ struct ScopeItem {
 }
 
 impl<'a> LocalScope<'a> {
-    fn new(parent: Option<&'a LocalScope<'a>>) -> LocalScope<'a> {
+    fn new(parent: Option<&'a LocalScope<'a>>, capturing: bool) -> LocalScope<'a> {
         LocalScope {
             parent,
+            capturing,
             declarations: Vec::new(),
             local_id_seq: parent.map(|p| p.local_id_seq).unwrap_or(0),
         }
@@ -1533,18 +1566,25 @@ impl<'a> LocalScope<'a> {
 
     fn insert(&mut self, name: String, typ: ResolvedType) -> LocalId {
         let id = LocalId(self.local_id_seq);
-        self.local_id_seq += 1; // TODO I don't think this is right, parent scopes also need their seqs incremented
+        self.local_id_seq += 1;
         self.declarations.push(ScopeItem { name, id, typ });
         id
     }
 
-    fn get(&self, name: &str) -> Option<&ScopeItem> {
-        self.declarations.iter().find(|d| d.name == name).or_else(|| self.parent.and_then(|p| p.get(name)))
+    // returns item and whether the item was a capture
+    fn get(&self, name: &str) -> Option<(&ScopeItem, bool)> {
+        self.declarations.iter().find(|d| d.name == name)
+            .map(|it| (it, false))
+            .or_else(|| self.parent.and_then(|p| p.get(name).map(|(it, _)| (it, p.capturing))))
     }
 
-    fn get_from_qname(&self, qn: &QName) -> Option<&ScopeItem> {
+    fn get_from_qname(&self, qn: &QName) -> Option<(&ScopeItem, bool)> {
         if qn.parts.len() != 1 { return None }
         self.get(qn.parts.last().unwrap())
+    }
+
+    fn declared_locals(&self) -> Vec<LocalId> {
+        self.declarations.iter().map(|it| it.id).collect()
     }
 }
 
@@ -1586,6 +1626,23 @@ impl FieldPath {
 impl Display for FieldPath {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0.join("::"))
+    }
+}
+
+struct ResolvedLambdaExpr {
+    param_types: Vec<ResolvedType>,
+    return_type: ResolvedType,
+    statements: Vec<Statement>,
+    captures: Vec<LocalId>,
+    locals: Vec<LocalId>,
+}
+
+trait CopyRef<T> {
+    fn copy_ref(&mut self) -> Option<&mut T>;
+}
+impl<T> CopyRef<T> for Option<&mut T> {
+    fn copy_ref(&mut self) -> Option<&mut T> {
+        self.as_mut().map(|x| &mut **x)
     }
 }
 

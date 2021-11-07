@@ -1,0 +1,11 @@
+let f = { n: * ->
+    #(println n)
+    (match n { x: * ->
+        { ->
+            { -> (println x) }
+        }
+    })
+}
+#let print_zero = ((f 0))
+#let _ = (print_zero)
+#(print_zero)

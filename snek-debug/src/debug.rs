@@ -371,7 +371,7 @@ impl IrtVisitor for IrPrinter {
         self.print_open("IR");
 
         for func in tree.decls.functions() {
-            self.print_open(&format!("Function {}", func.id().id()));
+            self.print_open(&format!("Function {}: {} (captures {:?})", func.id().id(), func.resolved_type(), func.captures().iter().map(|it| it.0).collect::<Vec<_>>()));
             self.print_all(func.statements());
             self.print_close();
         }
@@ -428,6 +428,7 @@ impl IrtVisitor for IrPrinter {
             irt::ExprType::LoadConstant(irt::Constant::Number(f)) => self.print(&f.to_string()),
             irt::ExprType::LoadGlobal(g) => self.print(&format!("global {}: {}", g.fqn(), expr.resolved_type)),
             irt::ExprType::LoadLocal(l) => self.print(&format!("local {}: {}", l.0, expr.resolved_type)),
+            irt::ExprType::LoadCapture(l) => self.print(&format!("local capture {}: {}", l.0, expr.resolved_type)),
             irt::ExprType::Call { callee, args } => {
                 self.print_open(&format!("Call: {}", expr.resolved_type));
                 self.print_one(callee.as_ref());
