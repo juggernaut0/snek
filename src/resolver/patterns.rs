@@ -1,4 +1,4 @@
-use crate::resolver::{BUILTIN_TYPE_NAMES, TypeStore};
+use crate::resolver::{BUILTIN_TYPE_NAMES, FieldPath, TypeStore};
 use crate::resolver::irt::Constant;
 use crate::resolver::types::{ResolvedField, ResolvedType, TypeDefinition};
 use crate::resolver::unifier::Unifier;
@@ -7,6 +7,32 @@ use crate::resolver::unifier::Unifier;
 pub struct ResolvedPattern {
     pub resolved_type: ResolvedType,
     pub pattern_type: PatternType,
+}
+
+impl ResolvedPattern {
+    // returns a list of tuples of (name, type for that name, field navigation path for that name)
+    pub fn extract_names(self) -> Vec<(String, ResolvedType, FieldPath)> {
+        let mut names = Vec::new();
+        self.extract_names_impl(&mut names, Vec::new());
+        names
+    }
+
+    fn extract_names_impl(self, names: &mut Vec<(String, ResolvedType, FieldPath)>, nav: Vec<String>) {
+        match self.pattern_type {
+            PatternType::Discard => {}
+            PatternType::Constant(_) => {}
+            PatternType::Name(name) => {
+                names.push((name, self.resolved_type.clone(), FieldPath(nav)))
+            }
+            PatternType::Destructuring(fields) => {
+                for (name, field) in fields {
+                    let mut nav = nav.clone(); // TODO avoid this clone by being smarter about sharing nav parents (tree structure)?
+                    nav.push(name);
+                    field.extract_names_impl(names, nav);
+                }
+            }
+        }
+    }
 }
 
 #[derive(PartialEq)]

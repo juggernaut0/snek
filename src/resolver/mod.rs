@@ -1,7 +1,5 @@
-use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
-use std::iter::repeat;
 use std::rc::Rc;
 
 use globals::*;
@@ -10,16 +8,16 @@ use qname_list::*;
 use types::*;
 
 use crate::ast::{self, *};
-use irt::{BinaryOp as IrtBinaryOp, Expr as IrtExpr, ExprType as IrtExprType, IrTree, Save, Statement, Constant};
+use irt::{Expr as IrtExpr, IrTree, Save, Statement, Constant};
 use unifier::Unifier;
 use patterns::{ExhaustivenessChecker, PatternType as IrtPatternType};
-use crate::resolver::unifier::merge_types;
 
 pub use functions::{FunctionId, FunctionDeclaration};
 pub use globals::GlobalId;
 pub use locals::LocalId;
 pub use patterns::{ResolvedPattern, PatternType};
 pub use types::{TypeId, ResolvedType, TypeDefinition, TypeDeclaration, ResolvedField};
+use crate::resolver::expr::{ExprResolver, ExprResolverContext};
 
 mod expr;
 mod functions;
@@ -504,7 +502,7 @@ impl Resolver<'_> {
                 Decl::Binding(b) => {
                     let resolved_pattern = self.resolve_pattern(&b.pattern, &scope, None);
                     let expected_type = resolved_pattern.resolved_type.clone();
-                    let names = self.extract_names(resolved_pattern);
+                    let names = resolved_pattern.extract_names();
                     let decls = names
                         .into_iter()
                         .map(|(name, declared_type, from)| {
@@ -538,30 +536,6 @@ impl Resolver<'_> {
                     undefined_globals.push(ugb);
                 }
                 _ => ()
-            }
-        }
-    }
-
-    // returns a list of tuples of (name, type for that name, field navigation path for that name)
-    fn extract_names(&mut self, pattern: ResolvedPattern) -> Vec<(String, ResolvedType, FieldPath)> {
-        let mut names = Vec::new();
-        self.extract_names_impl(&mut names, pattern, Vec::new());
-        names
-    }
-
-    fn extract_names_impl(&mut self, names: &mut Vec<(String, ResolvedType, FieldPath)>, pattern: ResolvedPattern, nav: Vec<String>) {
-        match pattern.pattern_type {
-            IrtPatternType::Discard => {}
-            IrtPatternType::Constant(_) => {}
-            IrtPatternType::Name(name) => {
-                names.push((name, pattern.resolved_type.clone(), FieldPath(nav)))
-            }
-            IrtPatternType::Destructuring(fields) => {
-                for (name, field) in fields {
-                    let mut nav = nav.clone(); // TODO avoid this clone by being smarter about sharing nav parents (tree structure)?
-                    nav.push(name);
-                    self.extract_names_impl(names, field, nav);
-                }
             }
         }
     }
@@ -765,7 +739,7 @@ impl Resolver<'_> {
             let ns = ugb.namespace.as_slice();
             let type_scope = root_type_scope.enter_scope(ns);
             let global_scope = root_global_scope.enter_scope(ns);
-            let dgr = self.resolve_expr(ugb.expected_type.clone(), None, &ugb.ast_node.expr, &type_scope, &global_scope, &LocalScope::new(None, false), None);
+            let dgr = self.resolve_expr(ugb.expected_type.clone(), &ugb.ast_node.expr, &type_scope, &global_scope);
             match dgr {
                 DefineGlobalResult::NeedsType(id) => {
                     let dep = ugbs_by_gid.get(&id).copied().unwrap();
@@ -838,617 +812,59 @@ impl Resolver<'_> {
     fn resolve_expr(
         &mut self,
         expected_type: ResolvedType,
-        holes: Option<&mut [Hole]>,
         expr: &Expr,
         type_scope: &LookupScope<TypeDeclLookup>,
         global_scope: &LookupScope<GlobalLookup>,
-        local_scope: &LocalScope,
-        mut captures: Option<&mut Vec<LocalId>>,
     ) -> DefineGlobalResult {
-        let (actual_type, irt_expr_type) = match &expr.expr_type {
-            ExprType::QName(qn) => {
-                if let Some((local, capture)) = local_scope.get_from_qname(qn) {
-                    if capture {
-                        if let Some(captures) = captures {
-                            captures.push(local.id);
-                        }
-                        (local.typ.clone(), IrtExprType::LoadCapture(local.id))
-                    } else {
-                        (local.typ.clone(), IrtExprType::LoadLocal(local.id))
-                    }
-                } else if let Some((global, visible)) = global_scope.get(&qn.parts) {
-                    if !visible {
-                        self.errors.push(Error {
-                            message: format!("{} is private and cannot be accessed here.", global.fqn()),
-                            line: expr.line,
-                            col: expr.col,
-                        })
-                    }
-
-                    let actual_type = if let Some(g_decl) =  self.globals.get(&global) {
-                        g_decl.resolved_type.clone()
-                    } else {
-                        return DefineGlobalResult::NeedsType(global)
-                    };
-
-                    (actual_type, irt::ExprType::LoadGlobal(global))
-                } else {
-                    self.errors.push(Error {
-                        message: format!("Unknown name {}", qn.parts.join(".")),
-                        line: expr.line,
-                        col: expr.col,
-                    });
-                    return DefineGlobalResult::error_expr()
-                }
-            },
-            ExprType::Constant(lit) => {
-                let actual_type = match lit.lit_type {
-                    LiteralType::Number => BuiltinTypeNames::number(),
-                    LiteralType::String => BuiltinTypeNames::string(),
-                    LiteralType::Bool => BuiltinTypeNames::boolean(),
-                    LiteralType::Unit => ResolvedType::Unit,
-                };
-                let cons = self.literal_to_constant(lit, expr.line, expr.col);
-                (actual_type, IrtExprType::LoadConstant(cons))
-            },
-            ExprType::Unary(_, _) => todo!(),
-            ExprType::Binary(op, left, right) => {
-                // This garbage with captures is necessary because a Option<&mut> is not Copy
-                let res_left = match self.resolve_expr(ResolvedType::Inferred, None, left, type_scope, global_scope, local_scope, captures.copy_ref()) {
-                    DefineGlobalResult::Success(it) => it,
-                    DefineGlobalResult::NeedsType(id) => return DefineGlobalResult::NeedsType(id),
-                };
-                let res_right = match self.resolve_expr(ResolvedType::Inferred, None, right, type_scope, global_scope, local_scope, captures) {
-                    DefineGlobalResult::Success(it) => it,
-                    DefineGlobalResult::NeedsType(id) => return DefineGlobalResult::NeedsType(id),
-                };
-                let (rt, op) = match (op, &res_left.resolved_type, &res_right.resolved_type) {
-                    (BinaryOp::Equal, _, _) => (BuiltinTypeNames::boolean(), IrtBinaryOp::Eq),
-                    (BinaryOp::NotEqual, _, _) => (BuiltinTypeNames::boolean(), IrtBinaryOp::Neq),
-                    (BinaryOp::LessThan, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::boolean(), IrtBinaryOp::LessThan),
-                    (BinaryOp::GreaterThan, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::boolean(), IrtBinaryOp::GreaterThan),
-                    (BinaryOp::LessEqual, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::boolean(), IrtBinaryOp::LessEq),
-                    (BinaryOp::GreaterEqual, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::boolean(), IrtBinaryOp::GreaterEq),
-                    (BinaryOp::Plus, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::number(), IrtBinaryOp::NumberAdd),
-                    (BinaryOp::Minus, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::number(), IrtBinaryOp::NumberSub),
-                    (BinaryOp::Times, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::number(), IrtBinaryOp::NumberMul),
-                    (BinaryOp::Div, l, r) if l == &BuiltinTypeNames::number() && r == &BuiltinTypeNames::number() => (BuiltinTypeNames::number(), IrtBinaryOp::NumberDiv),
-                    (BinaryOp::Plus, l, r) if l == &BuiltinTypeNames::string() && r == &BuiltinTypeNames::string() => (BuiltinTypeNames::string(), IrtBinaryOp::StringConcat),
-                    (op, left, right) => {
-                        let message = if left.is_inferred() {
-                            "Unable to infer type of left-hand operand".to_string()
-                        } else if right.is_inferred() {
-                            "Unable to infer type of right-hand operand".to_string()
-                        } else {
-                            format!("Incompatible operand types for binary operator {:?}: {} & {}", op, left, right)
-                        };
-                        self.errors.push(Error {
-                            message,
-                            line: expr.line,
-                            col: expr.col,
-                        });
-                        (ResolvedType::Error, IrtBinaryOp::Error)
-                    },
-                };
-                (rt, IrtExprType::Binary { op, left: Box::new(res_left), right: Box::new(res_right) })
-            },
-            ExprType::Call(call_expr) => {
-                match self.resolve_call_expr(expected_type.clone(), expr, type_scope, global_scope, local_scope, captures, call_expr) {
-                    Ok(it) => it,
-                    Err(dfg) => return dfg
-                }
-            },
-            ExprType::Lambda(lambda_expr) => {
-                match self.resolve_function(expected_type.clone(), expr, type_scope, global_scope, local_scope, captures, lambda_expr) {
-                    Ok(it) => it,
-                    Err(dfg) => return dfg
-                }
-            }
-            ExprType::List(_) => todo!(),
-            ExprType::New(nt, inits) => {
-                match self.resolve_new_expr(expected_type.clone(), expr, type_scope, global_scope, local_scope, captures, nt.as_ref(), inits) {
-                    Ok(it) => it,
-                    Err(dfg) => return dfg
-                }
-            },
-            ExprType::Dot => unreachable!("dot handled in resolve_call_expr"),
-            ExprType::Match => unreachable!("match handled in resolve_call_expr")
-        };
-        let resolved_type = self.unify(expected_type, actual_type, holes, expr.line, expr.col);
-        DefineGlobalResult::Success(irt::Expr {
-            resolved_type,
-            expr_type: irt_expr_type,
-        })
-    }
-
-    fn resolve_call_expr(
-        &mut self,
-        expected_type: ResolvedType,
-        expr: &Expr,
-        type_scope: &LookupScope<TypeDeclLookup>,
-        global_scope: &LookupScope<GlobalLookup>,
-        local_scope: &LocalScope,
-        mut captures: Option<&mut Vec<LocalId>>,
-        call_expr: &CallExpr,
-    ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
-        if let ExprType::Match = &call_expr.callee.expr_type {
-            return self.resolve_match_expr(expected_type, expr, type_scope, global_scope, local_scope, captures, &call_expr.args);
-        } else if let ExprType::Dot = &call_expr.callee.expr_type {
-            todo!("tail recursion calls")
+        let local_scope = LocalScope::new(None, false);
+        struct Context<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j> {
+            resolver: &'a mut Resolver<'b>,
+            type_scope: &'c LookupScope<'d, 'e, 'f, TypeDeclLookup>,
+            global_scope: &'g LookupScope<'h, 'i, 'j, GlobalLookup>,
         }
-
-        let callee_result = self.resolve_expr(ResolvedType::Callable(Box::new(expected_type)), None, &call_expr.callee, type_scope, global_scope, local_scope, captures.copy_ref());
-        let callee = match callee_result {
-            DefineGlobalResult::NeedsType(_) => return Err(callee_result),
-            DefineGlobalResult::Success(callee_expr) => callee_expr,
-        };
-        let (params, return_type) = match callee.resolved_type.clone() {
-            ResolvedType::Func { params, return_type } => (params, return_type),
-            ResolvedType::Callable(et) => {
-                self.errors.push(Error {
-                    message: "Unable to infer callee type".into(),
-                    line: expr.line,
-                    col: expr.col,
-                });
-                // TODO is this a good idea?
-                // let rt = if et.is_inferred() { ResolvedType::Error } else { *et };
-                return Ok((*et, IrtExprType::Error))
-            },
-            ResolvedType::Error => return Err(DefineGlobalResult::error_expr()),
-            _ => unreachable!() // Callable does not unify with anything except Func or Callable
-        };
-
-        match params.len().cmp(&call_expr.args.len()) {
-            Ordering::Less => {
-                self.errors.push(Error {
-                    message: "Too many arguments provided for function".to_string(),
-                    line: expr.line,
-                    col: expr.col,
-                })
+        impl ExprResolverContext for Context<'_, '_, '_, '_, '_, '_, '_, '_, '_, '_> {
+            fn push_error(&mut self, error: Error) {
+                self.resolver.errors.push(error);
             }
-            Ordering::Greater => {
-                // TODO currying
-                self.errors.push(Error {
-                    message: "Partial application not yet supported".to_string(),
-                    line: expr.line,
-                    col: expr.col,
-                })
+
+            fn get_type_decl(&self, id: &TypeId) -> &TypeDeclaration {
+                self.resolver.get_type(id)
             }
-            Ordering::Equal => {}
-        }
 
-        let arg_results = params
-            .iter()
-            .cloned()
-            .chain(repeat(ResolvedType::Inferred))
-            .zip(&call_expr.args)
-            .map(|(exp_arg_type, arg_expr)| {
-                self.resolve_expr(exp_arg_type, None, arg_expr, type_scope, global_scope, local_scope, captures.copy_ref())
-            });
+            fn get_global(&self, qn: &QName) -> Option<(GlobalId, bool)> {
+                self.global_scope.get(&qn.parts)
+            }
 
-        let mut args = Vec::new();
-        for arg_result in arg_results {
-            match arg_result {
-                DefineGlobalResult::NeedsType(_) => return Err(arg_result),
-                DefineGlobalResult::Success(expr) => args.push(expr),
+            fn get_global_decl(&self, id: &GlobalId) -> Option<&GlobalDeclaration> {
+                self.resolver.globals.get(id).map(|it| it.as_ref())
+            }
+
+            fn resolve_named_type(&mut self, named_type: &NamedType, type_params: &[String], line: u32, col: u32) -> ResolvedType {
+                self.resolver.resolve_named_type(named_type, type_params, self.type_scope, line, col)
+            }
+
+            fn resolve_pattern(&mut self, pattern: &Pattern, expr_type: Option<ResolvedType>) -> ResolvedPattern {
+                self.resolver.resolve_pattern(pattern, self.type_scope, expr_type)
+            }
+
+            fn navigate_type_fields(&mut self, path: &FieldPath, base_type: ResolvedType, line: u32, col: u32) -> ResolvedType {
+                self.resolver.navigate_type_fields(path, base_type, line, col)
+            }
+
+            fn is_visible(&self, visibility: &[String]) -> bool {
+                self.type_scope.is_visible(visibility)
+            }
+
+            fn define_function(&mut self, resolved_type: ResolvedType, statements: Vec<Statement>, captures: Vec<LocalId>) -> FunctionId {
+                self.resolver.define_function(resolved_type, statements, captures)
+            }
+
+            fn literal_to_constant(&mut self, lit: &Literal, line: u32, col: u32) -> Constant {
+                self.resolver.literal_to_constant(lit, line, col)
             }
         }
-        Ok((
-            *return_type,
-            irt::ExprType::Call {
-                callee: Box::new(callee),
-                args,
-            }
-        ))
-    }
-
-    fn resolve_match_expr(
-        &mut self,
-        expected_type: ResolvedType,
-        expr: &Expr,
-        type_scope: &LookupScope<TypeDeclLookup>,
-        global_scope: &LookupScope<GlobalLookup>,
-        local_scope: &LocalScope,
-        mut captures: Option<&mut Vec<LocalId>>,
-        args: &[Expr],
-    ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
-        if args.is_empty() {
-            self.errors.push(Error {
-                message: "Expression to match missing".to_string(),
-                line: expr.line,
-                col: expr.col,
-            });
-        }
-
-        let dgr = self.resolve_expr(ResolvedType::Inferred, None, &args[0], type_scope, global_scope, local_scope, captures.copy_ref());
-        let matched_expr = match dgr {
-            DefineGlobalResult::Success(e) => e,
-            DefineGlobalResult::NeedsType(_) => return Err(dgr),
-        };
-
-        let mut patterns: Vec<_> = Vec::new();
-        let mut arm_exprs: Vec<_> = Vec::new();
-        let mut actual_type = ResolvedType::Inferred;
-        let expected_arm_type = ResolvedType::Func { params: vec![matched_expr.resolved_type.clone()], return_type: Box::new(expected_type) };
-        for arg in &args[1..] {
-            let lambda = if let ExprType::Lambda(lambda) = &arg.expr_type {
-                lambda
-            } else {
-                self.errors.push(Error {
-                    message: "Every arm in a match expression must be a lambda".to_string(),
-                    line: arg.line,
-                    col: arg.col,
-                });
-                continue
-            };
-
-            if lambda.params.len() != 1 {
-                self.errors.push(Error {
-                    message: "Every arm in a match expression must have exactly one pattern".to_string(),
-                    line: arg.line,
-                    col: arg.col,
-                });
-                continue
-            }
-
-            let pattern = self.resolve_pattern(&lambda.params[0], type_scope, Some(matched_expr.resolved_type.clone()));
-            patterns.push(pattern);
-
-            let (rrt, statements) = self.resolve_match_arm(expected_arm_type.clone(), arg, type_scope, global_scope, local_scope, captures.copy_ref(), lambda)?;
-            actual_type = merge_types(actual_type, rrt);
-            arm_exprs.push(statements);
-        }
-
-        let patterns_ref: Vec<_> = patterns.iter().collect();
-        if !self.exhaustive(&patterns_ref, matched_expr.resolved_type.clone()) {
-            self.errors.push(Error {
-                message: "Match expression arms must be exhaustive".to_string(),
-                line: expr.line,
-                col: expr.col,
-            });
-        }
-
-        let arms = patterns.into_iter().zip(arm_exprs).collect();
-        Ok((actual_type, IrtExprType::Match { expr: Box::new(matched_expr), arms }))
-    }
-
-    fn resolve_match_arm(
-        &mut self,
-        expected_type: ResolvedType,
-        expr: &Expr,
-        type_scope: &LookupScope<TypeDeclLookup>,
-        global_scope: &LookupScope<GlobalLookup>,
-        local_scope: &LocalScope,
-        captures: Option<&mut Vec<LocalId>>,
-        lambda_expr: &LambdaExpr,
-    ) -> Result<(ResolvedType, Vec<Statement>), DefineGlobalResult> {
-        let ResolvedLambdaExpr { return_type, statements, captures: my_captures, .. } = self.resolve_lambda_expr(expected_type, expr, type_scope, global_scope, local_scope, lambda_expr, false)?;
-        if let Some(captures) = captures {
-            captures.extend(my_captures);
-        }
-        Ok((return_type, statements))
-    }
-
-    fn resolve_function(
-        &mut self,
-        expected_type: ResolvedType,
-        expr: &Expr,
-        type_scope: &LookupScope<TypeDeclLookup>,
-        global_scope: &LookupScope<GlobalLookup>,
-        local_scope: &LocalScope,
-        captures: Option<&mut Vec<LocalId>>,
-        lambda_expr: &LambdaExpr,
-    ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
-        let ResolvedLambdaExpr {
-            param_types: params,
-            return_type,
-            statements,
-            captures: mut my_captures,
-            locals,
-        } = self.resolve_lambda_expr(expected_type, expr, type_scope, global_scope, local_scope, lambda_expr, true)?;
-        my_captures.retain(|it| !locals.contains(it));
-        if let Some(captures) = captures {
-            captures.extend(my_captures.iter().copied());
-        }
-        let rt = ResolvedType::Func { params, return_type: Box::new(return_type) };
-        let func_id = self.define_function(rt.clone(), statements, my_captures);
-        let irt_expr_type = IrtExprType::Func(func_id);
-        Ok((rt, irt_expr_type))
-    }
-
-    fn resolve_lambda_expr(
-        &mut self,
-        expected_type: ResolvedType,
-        expr: &Expr,
-        type_scope: &LookupScope<TypeDeclLookup>,
-        global_scope: &LookupScope<GlobalLookup>,
-        local_scope: &LocalScope,
-        lambda_expr: &LambdaExpr,
-        capturing: bool,
-    ) -> Result<ResolvedLambdaExpr, DefineGlobalResult> {
-        let (expected_params, expected_return_type) = match expected_type {
-            ResolvedType::Func { params, return_type } =>{
-                if params.len() != lambda_expr.params.len() {
-                    self.errors.push(Error {
-                        message: format!("Parameter count mismatch. Expected {} Actual {}", params.len(), lambda_expr.params.len()),
-                        line: expr.line,
-                        col: expr.col,
-                    });
-                }
-                (params, *return_type)
-            }
-            ResolvedType::Inferred => (Vec::new(), ResolvedType::Inferred),
-            _ => {
-                self.errors.push(Error {
-                    message: "Type mismatch".to_string(),
-                    line: expr.line,
-                    col: expr.col,
-                });
-                (Vec::new(), ResolvedType::Inferred)
-            }
-        };
-
-        let mut statements = Vec::new();
-        let mut param_types = Vec::new();
-        let mut scope = LocalScope::new(Some(local_scope), capturing);
-
-        let params = lambda_expr.params.iter()
-            .zip(expected_params.into_iter().chain(repeat(ResolvedType::Inferred)));
-        for (param, expected_param_type) in params {
-            let resolved_pattern = self.resolve_pattern(param, type_scope, Some(expected_param_type));
-            // TODO check pattern exhaustiveness when NOT an arm of a match expr
-            let resolved_type = resolved_pattern.resolved_type.clone();
-            let names = self.extract_names(resolved_pattern);
-            if resolved_type.is_inferred() {
-                self.errors.push(Error {
-                    message: "Unable to infer parameter type, specify the type explicitly".to_string(),
-                    line: param.line,
-                    col: param.col,
-                });
-            }
-            let irt_expr = IrtExpr { resolved_type: resolved_type.clone(), expr_type: IrtExprType::LoadParam };
-            param_types.push(resolved_type);
-            let paths: Vec<_> = names.into_iter()
-                .map(|(name, declared_type, path)| {
-                    let resolved_type = if path.is_empty() {
-                        declared_type
-                    } else {
-                        let actual_type = self.navigate_type_fields(&path, irt_expr.resolved_type.clone(), param.line, param.col);
-                        self.unify(declared_type, actual_type, None, param.line, param.col)
-                    };
-                    (path, scope.insert(name, resolved_type))
-                })
-                .collect();
-            let statement = if paths.is_empty() {
-                Statement::Discard(irt_expr)
-            } else {
-                Statement::SaveLocal(Save { paths }, irt_expr)
-            };
-            statements.push(statement);
-        }
-
-        let mut captures = Vec::new();
-        for binding in &lambda_expr.bindings {
-            #[cfg(debug_assertions)] {
-                if let Expr { expr_type: ExprType::QName(qn), .. } = &binding.expr {
-                    if qn.parts.len() == 1 && &qn.parts[0] == "diag" {
-                        for item in &scope.declarations {
-                            println!("local {} is {}: {}", item.id.0, item.name, item.typ)
-                        }
-                        continue
-                    }
-                }
-            }
-
-            let pattern = &binding.pattern;
-            let resolved_pattern = self.resolve_pattern(pattern, type_scope, None);
-            let expected_type = resolved_pattern.resolved_type.clone();
-            let names = self.extract_names(resolved_pattern);
-            let dgr = self.resolve_expr(expected_type, None, &binding.expr, type_scope, global_scope, &scope, Some(&mut captures));
-            // TODO can I accumulate these across all bindings and return them all at once?
-            let irt_expr = match dgr {
-                DefineGlobalResult::NeedsType(_) => return Err(dgr),
-                DefineGlobalResult::Success(irt_expr) => irt_expr,
-            };
-
-            if irt_expr.resolved_type.is_inferred() {
-                self.errors.push(Error {
-                    message: "Unable to infer type of local binding".into(),
-                    line: pattern.line,
-                    col: pattern.col,
-                });
-            }
-            let resolved_pattern = self.resolve_pattern(pattern, type_scope, Some(irt_expr.resolved_type.clone()));
-            if !self.exhaustive(std::slice::from_ref(&&resolved_pattern), irt_expr.resolved_type.clone()) {
-                self.errors.push(Error {
-                    message: "Binding pattern must be exhaustive".into(),
-                    line: pattern.line,
-                    col: pattern.col,
-                });
-            }
-
-            let paths: Vec<_> = names.into_iter()
-                .map(|(name, declared_type, path)| {
-                    let actual_type = self.navigate_type_fields(&path, irt_expr.resolved_type.clone(), pattern.line, pattern.col);
-                    let resolved_type = self.unify(declared_type, actual_type, None, pattern.line, pattern.col);
-                    (path, scope.insert(name, resolved_type))
-                })
-                .collect();
-            let statement = if paths.is_empty() {
-                Statement::Discard(irt_expr)
-            } else {
-                Statement::SaveLocal(Save { paths }, irt_expr)
-            };
-            statements.push(statement);
-        }
-
-        let dfg = self.resolve_expr(expected_return_type, None, &lambda_expr.expr, type_scope, global_scope, &scope, Some(&mut captures));
-        let irt_expr = match dfg {
-            DefineGlobalResult::NeedsType(_) => return Err(dfg),
-            DefineGlobalResult::Success(irt_expr) => irt_expr,
-        };
-        let return_type = irt_expr.resolved_type.clone();
-
-        statements.push(Statement::Return(irt_expr));
-
-        // TODO need to also get locals declared in local match arms
-        Ok(ResolvedLambdaExpr { param_types, return_type, statements, captures, locals: scope.declared_locals() })
-    }
-
-    fn resolve_new_expr(
-        &mut self,
-        expected_type: ResolvedType,
-        expr: &Expr,
-        type_scope: &LookupScope<TypeDeclLookup>,
-        global_scope: &LookupScope<GlobalLookup>,
-        local_scope: &LocalScope,
-        mut captures: Option<&mut Vec<LocalId>>,
-        named_type: Option<&NamedType>,
-        inits: &[FieldInit],
-    ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
-        let actual_type = named_type
-            .map(|nt| self.resolve_named_type(nt, &[], type_scope, expr.line, expr.col))
-            .unwrap_or(expected_type);
-
-        let mut holes = Vec::new();
-        let fields = match actual_type.clone() {
-            ResolvedType::Id(id, args) => {
-                holes = args.iter()
-                    .map(|arg| {
-                        match arg {
-                            ResolvedType::Inferred => Hole::Empty,
-                            ResolvedType::Hole(_) => Hole::Empty,
-                            _ => Hole::Fixed
-                        }
-                    })
-                    .collect();
-                let typ = self.get_type(&id);
-                let holey_args: Vec<_> = args.into_iter()
-                    .enumerate()
-                    .map(|(i, arg)| {
-                        match arg {
-                            ResolvedType::Inferred => ResolvedType::Hole(i),
-                            _ => arg
-                        }
-                    })
-                    .collect();
-                let def = typ.definition.clone().instantiate_into(&holey_args);
-
-                if let TypeDefinition::Record(fields) = def {
-                    Some((fields, typ))
-                } else {
-                    self.errors.push(Error {
-                        message: "Only record types can be created using new".to_string(),
-                        line: expr.line,
-                        col: expr.col,
-                    });
-                    None
-                }
-            }
-            ResolvedType::TypeParam(_) => {
-                self.errors.push(Error {
-                    message: "Can not create instance of type parameters using new".to_string(),
-                    line: expr.line,
-                    col: expr.col,
-                });
-                None
-            },
-            ResolvedType::Inferred => {
-                self.errors.push(Error {
-                    message: "Cannot infer new expression type".to_string(),
-                    line: expr.line,
-                    col: expr.col,
-                });
-                None
-            }
-            _ => None
-        };
-
-        let mut init_to_field = HashMap::new();
-        let mut field_iter_order = Vec::new();
-        for init in inits {
-            init_to_field.insert(&init.field_name, (Some(&init.expr), None));
-        }
-        if let Some((fields, type_decl)) = &fields {
-            let fqn = type_decl.id.fqn().clone();
-            let fields_are_visible = type_scope.is_visible(fqn.namespace());
-            for field in fields {
-                if !field.public && !fields_are_visible {
-                    self.errors.push(Error {
-                        message: format!("Cannot construct type {} with private field {}", fqn, &field.name),
-                        line: expr.line, // TODO get more specific line&col
-                        col: expr.col,
-                    });
-                }
-
-                if let Some((_, typ)) = init_to_field.get_mut(&field.name) {
-                    *typ = Some(field.resolved_type.clone());
-                } else {
-                    init_to_field.insert(&field.name, (None, Some(field.resolved_type.clone())));
-                }
-
-                field_iter_order.push(&field.name);
-            }
-        } else {
-            for (name, (_, typ)) in init_to_field.iter_mut() {
-                *typ = Some(ResolvedType::Inferred);
-                field_iter_order.push(name);
-            }
-        }
-
-        let mut field_inits = Vec::new();
-        for field_name in field_iter_order {
-            let v = init_to_field.remove(field_name).expect("field in order but not map");
-            match v {
-                (Some(init_expr), Some(expected_field_type)) => {
-                    let dgr = self.resolve_expr(expected_field_type, Some(&mut holes), init_expr, type_scope, global_scope, local_scope, captures.copy_ref());
-                    let e = match dgr {
-                        DefineGlobalResult::Success(e) => e,
-                        _ => return Err(dgr)
-                    };
-                    field_inits.push((field_name.clone(), e));
-                }
-                (None, Some(_)) => {
-                    self.errors.push(Error {
-                        message: format!("Field {} must be initialized", field_name),
-                        line: expr.line,
-                        col: expr.col,
-                    });
-                }
-                (Some(init_expr), None) => {
-                    self.errors.push(Error {
-                        message: format!("Unknown field {}", field_name),
-                        line: expr.line,
-                        col: expr.col,
-                    });
-                    let dgr = self.resolve_expr(ResolvedType::Inferred, Some(&mut holes), init_expr, type_scope, global_scope, local_scope, captures.copy_ref());
-                    match dgr {
-                        DefineGlobalResult::Success(_) => {} // discard
-                        _ => return Err(dgr)
-                    };
-                }
-                _ => unreachable!()
-            }
-        }
-
-        let resolved_type = match actual_type {
-            ResolvedType::Id(id, args) => {
-                let filled_args = args.into_iter()
-                    .zip(holes)
-                    .map(|(arg, hole)| {
-                        match hole {
-                            Hole::Empty => panic!("unfilled hole"),
-                            Hole::Fixed => arg,
-                            Hole::Filled(t) => t,
-                        }
-                    })
-                    .collect();
-                ResolvedType::Id(id, filled_args)
-            }
-            _ => actual_type
-        };
-
-        Ok((resolved_type, IrtExprType::New { field_inits }))
+        let mut context = Context { resolver: self, type_scope, global_scope };
+        ExprResolver::new(&mut context).resolve_expr(expected_type, expr, &local_scope, None)
     }
 
     fn unify(&mut self, expected: ResolvedType, actual: ResolvedType, holes: Option<&mut [Hole]>, line: u32, col: u32) -> ResolvedType {
@@ -1582,10 +998,6 @@ impl<'a> LocalScope<'a> {
         if qn.parts.len() != 1 { return None }
         self.get(qn.parts.last().unwrap())
     }
-
-    fn declared_locals(&self) -> Vec<LocalId> {
-        self.declarations.iter().map(|it| it.id).collect()
-    }
 }
 
 #[derive(Debug)]
@@ -1627,14 +1039,6 @@ impl Display for FieldPath {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0.join("::"))
     }
-}
-
-struct ResolvedLambdaExpr {
-    param_types: Vec<ResolvedType>,
-    return_type: ResolvedType,
-    statements: Vec<Statement>,
-    captures: Vec<LocalId>,
-    locals: Vec<LocalId>,
 }
 
 trait CopyRef<T> {
