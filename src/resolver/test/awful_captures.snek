@@ -1,0 +1,14 @@
+let _ = { -> # 3 locals: [a] captures: []
+    let a = 0
+    a
+    { -> # 2 locals: [b] captures: [a]
+        (match 0
+            { b ->
+                { -> # 1 locals: [c] captures: [a, b]
+                    let c = (a + b)
+                    c
+                }
+            }
+        )
+    }
+}

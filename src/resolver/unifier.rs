@@ -9,7 +9,7 @@ pub struct Unifier<'r, 'h> {
 }
 
 impl Unifier<'_, '_> {
-    pub fn new<'r, 'h>(type_store: &'r dyn TypeStore, holes: Option<&'h mut [Hole]>, line: u32, col: u32,) -> Unifier<'r, 'h> {
+    pub(super) fn new<'r, 'h>(type_store: &'r dyn TypeStore, holes: Option<&'h mut [Hole]>, line: u32, col: u32,) -> Unifier<'r, 'h> {
         Unifier { type_store, holes, line, col }
     }
 

@@ -433,6 +433,20 @@ fn match_widening() {
     assert_no_errs(resolve_from_src(include_str!("match_widening.snek")));
 }
 
+#[test]
+fn awful_captures() {
+    let ir_tree = assert_no_errs(resolve_from_src(include_str!("awful_captures.snek")));
+
+    let f0 = ir_tree.decls.functions[0].as_ref();
+    assert_eq!(f0.captures(), &vec![LocalId(0), LocalId(1)]);
+
+    let f1 = ir_tree.decls.functions[1].as_ref();
+    assert_eq!(f1.captures(), &vec![LocalId(0)]);
+
+    let f2 = ir_tree.decls.functions[2].as_ref();
+    assert_eq!(f2.captures(), &vec![]);
+}
+
 fn define_types(src: &str) -> Resolver {
     let (ast, errs) = crate::parser::parse(src);
     assert!(errs.is_empty());

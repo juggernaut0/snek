@@ -10,7 +10,7 @@ use crate::resolver::patterns::ExhaustivenessChecker;
 use crate::resolver::types::{Hole};
 use crate::resolver::unifier::{merge_types, Unifier};
 
-pub trait ExprResolverContext {
+pub(super) trait ExprResolverContext {
     fn push_error(&mut self, error: Error);
     fn get_type_decl(&self, id: &TypeId) -> &TypeDeclaration;
     fn get_global(&self, qn: &QName) -> Option<(GlobalId, bool)>;
@@ -30,7 +30,7 @@ pub struct ExprResolver<'ctx> {
 }
 
 impl ExprResolver<'_> {
-    pub fn new(context: &mut dyn ExprResolverContext) -> ExprResolver {
+    pub(super) fn new(context: &mut dyn ExprResolverContext) -> ExprResolver {
         ExprResolver {
             context,
             captures: Vec::new(),
@@ -49,12 +49,12 @@ impl ExprResolver<'_> {
     pub(super) fn resolve_expr(&mut self, expected_type: ResolvedType, expr: &Expr, scope: &LocalScope, holes: Option<&mut [Hole]>) -> DefineGlobalResult {
         let (actual_type, irt_expr_type) = match &expr.expr_type {
             ExprType::QName(qn) => {
-                if let Some((local, capture)) = scope.get_from_qname(qn) {
-                    if capture {
+                if let Some(local) = scope.get_from_qname(qn) {
+                    if local.level == scope.level {
+                        (local.typ.clone(), IrtExprType::LoadLocal(local.id))
+                    } else {
                         self.captures.push(local.id);
                         (local.typ.clone(), IrtExprType::LoadCapture(local.id))
-                    } else {
-                        (local.typ.clone(), IrtExprType::LoadLocal(local.id))
                     }
                 } else if let Some((global, visible)) = self.context.get_global(qn) {
                     if !visible {
@@ -334,7 +334,8 @@ impl ExprResolver<'_> {
             statements,
         } = sub_resolver.resolve_lambda_expr(expected_type, expr, lambda_expr, scope, true)?;
         let mut my_captures = sub_resolver.captures;
-        my_captures.retain(|it| !self.locals.contains(it));
+        let my_locals = sub_resolver.locals;
+        my_captures.retain(|it| !my_locals.contains(it));
         self.captures.extend(my_captures.iter().copied());
         let rt = ResolvedType::Func { params, return_type: Box::new(return_type) };
         let func_id = self.context.define_function(rt.clone(), statements, my_captures);

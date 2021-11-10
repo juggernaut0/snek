@@ -48,7 +48,7 @@ pub struct ExhaustivenessChecker<'r> {
 }
 
 impl ExhaustivenessChecker<'_> {
-    pub fn new(type_store: &dyn TypeStore) -> ExhaustivenessChecker {
+    pub(super) fn new(type_store: &dyn TypeStore) -> ExhaustivenessChecker {
         ExhaustivenessChecker { type_store }
     }
 

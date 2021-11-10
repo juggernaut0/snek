@@ -947,7 +947,7 @@ impl Resolver<'_> {
     }
 }
 
-pub trait TypeStore {
+trait TypeStore {
     fn get_type(&self, id: &TypeId) -> &TypeDeclaration;
 }
 
@@ -959,7 +959,7 @@ impl TypeStore for Resolver<'_> {
 
 struct LocalScope<'a> {
     parent: Option<&'a LocalScope<'a>>,
-    capturing: bool,
+    level: u32,
     declarations: Vec<ScopeItem>,
     local_id_seq: u32,
 }
@@ -967,6 +967,7 @@ struct LocalScope<'a> {
 struct ScopeItem {
     pub name: String,
     pub id: LocalId,
+    pub level: u32,
     pub typ: ResolvedType,
 }
 
@@ -974,7 +975,7 @@ impl<'a> LocalScope<'a> {
     fn new(parent: Option<&'a LocalScope<'a>>, capturing: bool) -> LocalScope<'a> {
         LocalScope {
             parent,
-            capturing,
+            level: parent.map(|p| p.level + if capturing { 1 } else { 0 }).unwrap_or(0),
             declarations: Vec::new(),
             local_id_seq: parent.map(|p| p.local_id_seq).unwrap_or(0),
         }
@@ -983,18 +984,16 @@ impl<'a> LocalScope<'a> {
     fn insert(&mut self, name: String, typ: ResolvedType) -> LocalId {
         let id = LocalId(self.local_id_seq);
         self.local_id_seq += 1;
-        self.declarations.push(ScopeItem { name, id, typ });
+        self.declarations.push(ScopeItem { name, id, level: self.level, typ });
         id
     }
 
-    // returns item and whether the item was a capture
-    fn get(&self, name: &str) -> Option<(&ScopeItem, bool)> {
+    fn get(&self, name: &str) -> Option<&ScopeItem> {
         self.declarations.iter().find(|d| d.name == name)
-            .map(|it| (it, false))
-            .or_else(|| self.parent.and_then(|p| p.get(name).map(|(it, _)| (it, p.capturing))))
+            .or_else(|| self.parent.and_then(|p| p.get(name)))
     }
 
-    fn get_from_qname(&self, qn: &QName) -> Option<(&ScopeItem, bool)> {
+    fn get_from_qname(&self, qn: &QName) -> Option<&ScopeItem> {
         if qn.parts.len() != 1 { return None }
         self.get(qn.parts.last().unwrap())
     }
