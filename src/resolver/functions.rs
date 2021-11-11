@@ -9,6 +9,9 @@ pub struct FunctionId {
 }
 
 impl FunctionId {
+    pub fn module(&self) -> &str {
+        &self.module
+    }
     pub fn id(&self) -> u32 {
         self.seq_id
     }

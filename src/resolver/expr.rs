@@ -1,11 +1,11 @@
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::iter::repeat;
 
 use crate::ast::{BinaryOp, CallExpr, Expr, ExprType, FieldInit, LambdaExpr, Literal, LiteralType, NamedType, Pattern, QName};
 use crate::resolver::{BuiltinTypeNames, DefineGlobalResult, Error, FieldPath, FunctionId, GlobalId, LocalId, LocalScope, ResolvedPattern, ResolvedType, TypeDeclaration, TypeDefinition, TypeId, TypeStore};
 use crate::resolver::globals::GlobalDeclaration;
-use crate::resolver::irt::{BinaryOp as IrtBinaryOp, Constant, Expr as IrtExpr, ExprType as IrtExprType, Save, Statement};
+use crate::resolver::irt::{BinaryOp as IrtBinaryOp, Constant, Expr as IrtExpr, ExprType as IrtExprType, FuncCapture, Save, Statement};
 use crate::resolver::patterns::ExhaustivenessChecker;
 use crate::resolver::types::{Hole};
 use crate::resolver::unifier::{merge_types, Unifier};
@@ -25,24 +25,24 @@ pub(super) trait ExprResolverContext {
 
 pub struct ExprResolver<'ctx> {
     context: &'ctx mut dyn ExprResolverContext,
-    captures: Vec<LocalId>,
-    locals: Vec<LocalId>,
+    captures: HashSet<LocalId>,
+    locals: HashSet<LocalId>,
 }
 
 impl ExprResolver<'_> {
     pub(super) fn new(context: &mut dyn ExprResolverContext) -> ExprResolver {
         ExprResolver {
             context,
-            captures: Vec::new(),
-            locals: Vec::new(),
+            captures: HashSet::new(),
+            locals: HashSet::new(),
         }
     }
 
     fn new_sub_resolver(&mut self) -> ExprResolver {
         ExprResolver {
             context: self.context,
-            captures: Vec::new(),
-            locals: Vec::new(),
+            captures: HashSet::new(),
+            locals: HashSet::new(),
         }
     }
 
@@ -53,7 +53,7 @@ impl ExprResolver<'_> {
                     if local.level == scope.level {
                         (local.typ.clone(), IrtExprType::LoadLocal(local.id))
                     } else {
-                        self.captures.push(local.id);
+                        self.captures.insert(local.id);
                         (local.typ.clone(), IrtExprType::LoadCapture(local.id))
                     }
                 } else if let Some((global, visible)) = self.context.get_global(qn) {
@@ -337,9 +337,15 @@ impl ExprResolver<'_> {
         let my_locals = sub_resolver.locals;
         my_captures.retain(|it| !my_locals.contains(it));
         self.captures.extend(my_captures.iter().copied());
+        let mut captures: Vec<_> = my_captures.into_iter().collect();
+        captures.sort_by_key(|it| it.0);
+        let func_captures = captures.iter()
+            .copied()
+            .map(|it| if self.locals.contains(&it) { FuncCapture::Local(it) } else { FuncCapture::Capture(it) } )
+            .collect();
         let rt = ResolvedType::Func { params, return_type: Box::new(return_type) };
-        let func_id = self.context.define_function(rt.clone(), statements, my_captures);
-        let irt_expr_type = IrtExprType::Func(func_id);
+        let id = self.context.define_function(rt.clone(), statements, captures);
+        let irt_expr_type = IrtExprType::Func { id, captures: func_captures };
         Ok((rt, irt_expr_type))
     }
 
@@ -402,7 +408,7 @@ impl ExprResolver<'_> {
                         self.unify(declared_type, actual_type, None, param.line, param.col)
                     };
                     let id = scope.insert(name, resolved_type);
-                    self.locals.push(id);
+                    self.locals.insert(id);
                     (path, id)
                 })
                 .collect();
@@ -458,7 +464,7 @@ impl ExprResolver<'_> {
                     let actual_type = self.context.navigate_type_fields(&path, irt_expr.resolved_type.clone(), pattern.line, pattern.col);
                     let resolved_type = self.unify(declared_type, actual_type, None, pattern.line, pattern.col);
                     let id = scope.insert(name, resolved_type);
-                    self.locals.push(id);
+                    self.locals.insert(id);
                     (path, id)
                 })
                 .collect();

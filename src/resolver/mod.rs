@@ -975,9 +975,9 @@ impl<'a> LocalScope<'a> {
     fn new(parent: Option<&'a LocalScope<'a>>, capturing: bool) -> LocalScope<'a> {
         LocalScope {
             parent,
-            level: parent.map(|p| p.level + if capturing { 1 } else { 0 }).unwrap_or(0),
+            level: parent.map_or(0, |p| p.level + if capturing { 1 } else { 0 }),
             declarations: Vec::new(),
-            local_id_seq: parent.map(|p| p.local_id_seq).unwrap_or(0),
+            local_id_seq: parent.map_or(0, |p| p.local_id_seq),
         }
     }
 

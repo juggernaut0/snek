@@ -34,7 +34,7 @@ pub enum ExprType {
     LoadParam,
     Call { callee: Box<Expr>, args: Vec<Expr> },
     Binary { op: BinaryOp, left: Box<Expr>, right: Box<Expr> },
-    Func(FunctionId),
+    Func { id: FunctionId, captures: Vec<FuncCapture> },
     New { field_inits: Vec<(String, Expr)> },
     Match { expr: Box<Expr>, arms: Vec<(ResolvedPattern, Vec<Statement>)> },
 }
@@ -60,6 +60,11 @@ pub enum BinaryOp {
     NumberMul,
     NumberDiv,
     StringConcat,
+}
+
+pub enum FuncCapture {
+    Local(LocalId),
+    Capture(LocalId),
 }
 
 #[allow(unused)]

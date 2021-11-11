@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::fmt::Write;
 use std::ops::Range;
-use snek::resolver::{BuiltinTypeNames, get_builtin_id, GlobalId, LocalId, PatternType, ResolvedField, ResolvedPattern, ResolvedType, TypeDeclaration, TypeDefinition, TypeId};
+use snek::resolver::{BuiltinTypeNames, FunctionDeclaration, FunctionId, get_builtin_id, GlobalId, LocalId, PatternType, ResolvedField, ResolvedPattern, ResolvedType, TypeDeclaration, TypeDefinition, TypeId};
 use snek::resolver::irt::*;
 
 pub fn generate(irt: &IrTree) -> String {
@@ -34,7 +34,7 @@ impl JsGenerator {
             }
         }
         for func in irt.decls.functions() {
-
+            self.function(func);
         }
 
         for statement in &irt.statements {
@@ -63,7 +63,7 @@ impl JsGenerator {
     fn generate_builtins(&mut self) {
         self.write("var ");
         self.global_identifier(&get_builtin_id("println"));
-        self.write("=console.log;\n");
+        self.write("={call:(args)=>{console.log(...args);}};\n");
 
         self.write(include_str!("runtime_type.js"));
     }
@@ -190,6 +190,36 @@ impl JsGenerator {
         write!(self, ".instanceOf({})", object).unwrap();
     }
 
+    fn function(&mut self, func: &FunctionDeclaration) {
+        self.write("function ");
+        self.function_name(&func.id());
+        self.write("($captures){\n");
+        self.indent();
+        self.write_indent();
+        self.write("Object.assign(this, $captures);\n");
+        self.unindent();
+        self.write_indent();
+        self.write("}\n");
+        self.write_indent();
+        self.function_name(&func.id());
+        self.write(".prototype.call=function($args){\n");
+        self.indent();
+        for stmt in func.statements() {
+            self.statement(stmt);
+        }
+        self.unindent();
+        self.write_indent();
+        self.write("};\n");
+    }
+
+    fn function_name(&mut self, func_id: &FunctionId) {
+        let module = func_id.module();
+        if module != BuiltinTypeNames::mod_name().as_str() {
+            write!(self, "$F${}_", module).unwrap();
+        }
+        write!(self, "func{}", func_id.id()).unwrap();
+    }
+
     fn statement(&mut self, statement: &Statement) {
         self.write_indent();
         match statement {
@@ -246,6 +276,11 @@ impl JsGenerator {
         self.write(&i.to_string());
     }
 
+    fn capture(&mut self, id: &LocalId) {
+        self.write("this.");
+        self.local(id);
+    }
+
     fn type_identifier(&mut self, type_id: &TypeId) {
         let module = type_id.module();
         if module != BuiltinTypeNames::mod_name().as_str() {
@@ -265,18 +300,18 @@ impl JsGenerator {
             ExprType::LoadConstant(c) => self.constant(c),
             ExprType::LoadGlobal(id) => self.global_identifier(id),
             ExprType::LoadLocal(id) => self.local(id),
-            ExprType::LoadCapture(id) => todo!("load capture"),
+            ExprType::LoadCapture(id) => self.capture(id),
             ExprType::LoadParam => {
                 self.write("$args.pop()");
             },
             ExprType::Call { callee, args } => {
                 self.expr(callee);
-                self.write("(");
+                self.write(".call([");
                 for arg in args {
                     self.expr(arg);
                     self.write(",");
                 }
-                self.write(")");
+                self.write("])");
             },
             ExprType::Binary { op, left, right } => {
                 let op_str = match op {
@@ -299,7 +334,27 @@ impl JsGenerator {
                 self.expr(right);
                 self.write(")");
             },
-            ExprType::Func(_) => todo!("generate expr func"),
+            ExprType::Func { id, captures } => {
+                self.write("new ");
+                self.function_name(id);
+                self.write("({");
+                for capture in captures {
+                    match capture {
+                        FuncCapture::Local(id) => {
+                            self.local(id);
+                            self.write(":");
+                            self.local(id);
+                        }
+                        FuncCapture::Capture(id) => {
+                            self.local(id);
+                            self.write(":");
+                            self.capture(id);
+                        }
+                    }
+                    self.write(",");
+                }
+                self.write("})");
+            },
             ExprType::New { field_inits } => {
                 let (type_id, type_args) = if let ResolvedType::Id(id, args) = &expr.resolved_type { (id, args) } else { unreachable!() };
                 self.write("new ");
