@@ -18,6 +18,7 @@ pub use locals::LocalId;
 pub use patterns::{ResolvedPattern, PatternType};
 pub use types::{TypeId, ResolvedType, TypeDefinition, TypeDeclaration, ResolvedField};
 use crate::resolver::expr::{ExprResolver, ExprResolverContext};
+use crate::resolver::locals::LocalScope;
 
 mod expr;
 mod functions;
@@ -954,48 +955,6 @@ trait TypeStore {
 impl TypeStore for Resolver<'_> {
     fn get_type(&self, id: &TypeId) -> &TypeDeclaration {
         self.types.get(id).expect("missing type")
-    }
-}
-
-struct LocalScope<'a> {
-    parent: Option<&'a LocalScope<'a>>,
-    level: u32,
-    declarations: Vec<ScopeItem>,
-    local_id_seq: u32,
-}
-
-struct ScopeItem {
-    pub name: String,
-    pub id: LocalId,
-    pub level: u32,
-    pub typ: ResolvedType,
-}
-
-impl<'a> LocalScope<'a> {
-    fn new(parent: Option<&'a LocalScope<'a>>, capturing: bool) -> LocalScope<'a> {
-        LocalScope {
-            parent,
-            level: parent.map_or(0, |p| p.level + if capturing { 1 } else { 0 }),
-            declarations: Vec::new(),
-            local_id_seq: parent.map_or(0, |p| p.local_id_seq),
-        }
-    }
-
-    fn insert(&mut self, name: String, typ: ResolvedType) -> LocalId {
-        let id = LocalId(self.local_id_seq);
-        self.local_id_seq += 1;
-        self.declarations.push(ScopeItem { name, id, level: self.level, typ });
-        id
-    }
-
-    fn get(&self, name: &str) -> Option<&ScopeItem> {
-        self.declarations.iter().find(|d| d.name == name)
-            .or_else(|| self.parent.and_then(|p| p.get(name)))
-    }
-
-    fn get_from_qname(&self, qn: &QName) -> Option<&ScopeItem> {
-        if qn.parts.len() != 1 { return None }
-        self.get(qn.parts.last().unwrap())
     }
 }
 

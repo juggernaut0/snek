@@ -1,0 +1,6 @@
+let f = { ->
+    let x = 0
+    let x = ""
+    let y: String = x
+    ()
+}

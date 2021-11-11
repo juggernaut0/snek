@@ -447,6 +447,11 @@ fn awful_captures() {
     assert_eq!(f2.captures(), &vec![]);
 }
 
+#[test]
+fn shadowing() {
+    assert_no_errs(resolve_from_src(include_str!("shadowing.snek")));
+}
+
 fn define_types(src: &str) -> Resolver {
     let (ast, errs) = crate::parser::parse(src);
     assert!(errs.is_empty());

@@ -50,7 +50,7 @@ impl ExprResolver<'_> {
         let (actual_type, irt_expr_type) = match &expr.expr_type {
             ExprType::QName(qn) => {
                 if let Some(local) = scope.get_from_qname(qn) {
-                    if local.level == scope.level {
+                    if local.level == scope.level() {
                         (local.typ.clone(), IrtExprType::LoadLocal(local.id))
                     } else {
                         self.captures.insert(local.id);
@@ -424,9 +424,9 @@ impl ExprResolver<'_> {
             #[cfg(debug_assertions)] {
                 if let Expr { expr_type: ExprType::QName(qn), .. } = &binding.expr {
                     if qn.parts.len() == 1 && &qn.parts[0] == "diag" {
-                        for item in &scope.declarations {
+                        /*for item in &scope.declarations {
                             println!("local {} is {}: {}", item.id.0, item.name, item.typ)
-                        }
+                        }*/
                         continue
                     }
                 }
