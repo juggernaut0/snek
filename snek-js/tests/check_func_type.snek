@@ -1,0 +1,1 @@
+(match { _: Number -> "hello" } { x: { Number -> String } -> (println (x 0)) })

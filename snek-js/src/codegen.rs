@@ -168,7 +168,16 @@ impl JsGenerator {
             ResolvedType::TypeParam(i) => {
                 write!(self, "{}[{}]", type_args, i).unwrap();
             },
-            ResolvedType::Func { .. } => todo!("check_type func"),
+            ResolvedType::Func { params, return_type } => {
+                self.write("new Function_RuntimeType([");
+                for param_type in params {
+                    self.runtime_type(param_type, type_args);
+                    self.write(",");
+                }
+                self.write("],");
+                self.runtime_type(return_type, type_args);
+                self.write(")");
+            },
             ResolvedType::Callable(_) => panic!("callable type in codegen"),
             ResolvedType::Unit => {
                 self.write("Unit_RuntimeType");
@@ -200,6 +209,13 @@ impl JsGenerator {
         self.unindent();
         self.write_indent();
         self.write("}\n");
+
+        self.write_indent();
+        self.function_name(&func.id());
+        self.write(".prototype.$type=");
+        self.runtime_type(func.resolved_type(), "[]");
+        self.write(";\n");
+
         self.write_indent();
         self.function_name(&func.id());
         self.write(".prototype.call=function($args){\n");
