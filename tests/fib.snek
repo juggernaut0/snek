@@ -1,8 +1,8 @@
-let fib: { Number -> Number } = { n ->
+let fib = { n: Number ->
   (match n
     { 1 -> 1 }
     { 2 -> 1 }
-    { _ -> ((fib (n - 1)) + (fib (n - 2))) }
+    { _ -> ((. (n - 1)) + (. (n - 2))) }
   )
 }
 

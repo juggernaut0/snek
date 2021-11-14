@@ -1,5 +1,5 @@
 let fib = { n: Number ->
-  ({ a b n ->
+  ({ a: Number b: Number n: Number ->
     (println n)
     (match n
       { 0 -> a }

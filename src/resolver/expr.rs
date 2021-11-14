@@ -27,6 +27,7 @@ pub struct ExprResolver<'ctx> {
     context: &'ctx mut dyn ExprResolverContext,
     captures: HashSet<LocalId>,
     locals: HashSet<LocalId>,
+    parameters: Option<Vec<ResolvedType>>,
 }
 
 impl ExprResolver<'_> {
@@ -35,6 +36,7 @@ impl ExprResolver<'_> {
             context,
             captures: HashSet::new(),
             locals: HashSet::new(),
+            parameters: None,
         }
     }
 
@@ -43,6 +45,7 @@ impl ExprResolver<'_> {
             context: self.context,
             captures: HashSet::new(),
             locals: HashSet::new(),
+            parameters: None,
         }
     }
 
@@ -167,31 +170,39 @@ impl ExprResolver<'_> {
         call_expr: &CallExpr,
         scope: &LocalScope,
     ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
-        if let ExprType::Match = &call_expr.callee.expr_type {
+        let (params, return_type, callee) = if let ExprType::Match = &call_expr.callee.expr_type {
             return self.resolve_match_expr(expected_type, expr, &call_expr.args, scope);
         } else if let ExprType::Dot = &call_expr.callee.expr_type {
-            todo!("tail recursion calls")
-        }
-
-        let callee_result = self.resolve_expr(ResolvedType::Callable(Box::new(expected_type)),  &call_expr.callee, scope, None);
-        let callee = match callee_result {
-            DefineGlobalResult::NeedsType(_) => return Err(callee_result),
-            DefineGlobalResult::Success(callee_expr) => callee_expr,
-        };
-        let (params, return_type) = match callee.resolved_type.clone() {
-            ResolvedType::Func { params, return_type } => (params, return_type),
-            ResolvedType::Callable(et) => {
+            let params = if let Some(params) = &self.parameters {
+                params.clone()
+            } else {
                 self.context.push_error(Error {
-                    message: "Unable to infer callee type".into(),
-                    line: expr.line,
-                    col: expr.col,
+                    message: "Recursive call cannot be used here".to_string(),
+                    line: call_expr.callee.line,
+                    col: call_expr.callee.col,
                 });
-                // TODO is this a good idea?
-                // let rt = if et.is_inferred() { ResolvedType::Error } else { *et };
-                return Ok((*et, IrtExprType::Error))
-            },
-            ResolvedType::Error => return Err(DefineGlobalResult::error_expr()),
-            _ => unreachable!() // Callable does not unify with anything except Func or Callable
+                return Ok((ResolvedType::Error, IrtExprType::Error));
+            };
+            (params, ResolvedType::Nothing, None)
+        } else {
+            let callee_result = self.resolve_expr(ResolvedType::Callable(Box::new(expected_type)), &call_expr.callee, scope, None);
+            let callee = match callee_result {
+                DefineGlobalResult::NeedsType(_) => return Err(callee_result),
+                DefineGlobalResult::Success(callee_expr) => callee_expr,
+            };
+            match callee.resolved_type.clone() {
+                ResolvedType::Func { params, return_type } => (params, *return_type, Some(callee)),
+                ResolvedType::Callable(et) => {
+                    self.context.push_error(Error {
+                        message: "Unable to infer callee type".into(),
+                        line: expr.line,
+                        col: expr.col,
+                    });
+                    return Ok((*et, IrtExprType::Error))
+                },
+                ResolvedType::Error => return Err(DefineGlobalResult::error_expr()),
+                _ => unreachable!() // Callable does not unify with anything except Func or Callable
+            }
         };
 
         match params.len().cmp(&call_expr.args.len()) {
@@ -229,12 +240,17 @@ impl ExprResolver<'_> {
                 DefineGlobalResult::Success(expr) => args.push(expr),
             }
         }
-        Ok((
-            *return_type,
+        let et = if let Some(callee) = callee {
             IrtExprType::Call {
                 callee: Box::new(callee),
                 args,
             }
+        } else {
+            IrtExprType::RecCall { args }
+        };
+        Ok((
+            return_type,
+            et,
         ))
     }
 
@@ -315,7 +331,6 @@ impl ExprResolver<'_> {
         let ResolvedLambdaExpr {
             return_type,
             statements,
-            ..
         } = self.resolve_lambda_expr(expected_type, expr, lambda_expr, scope, false)?;
         Ok((return_type, statements))
     }
@@ -329,13 +344,14 @@ impl ExprResolver<'_> {
     ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
         let mut sub_resolver = self.new_sub_resolver();
         let ResolvedLambdaExpr {
-            param_types: params,
             return_type,
             statements,
         } = sub_resolver.resolve_lambda_expr(expected_type, expr, lambda_expr, scope, true)?;
         let mut my_captures = sub_resolver.captures;
         let my_locals = sub_resolver.locals;
         my_captures.retain(|it| !my_locals.contains(it));
+        let params = sub_resolver.parameters.expect("lambda did not set parameters");
+
         self.captures.extend(my_captures.iter().copied());
         let mut captures: Vec<_> = my_captures.into_iter().collect();
         captures.sort_by_key(|it| it.0);
@@ -343,6 +359,7 @@ impl ExprResolver<'_> {
             .copied()
             .map(|it| if self.locals.contains(&it) { FuncCapture::Local(it) } else { FuncCapture::Capture(it) } )
             .collect();
+
         let rt = ResolvedType::Func { params, return_type: Box::new(return_type) };
         let id = self.context.define_function(rt.clone(), statements, captures);
         let irt_expr_type = IrtExprType::Func { id, captures: func_captures };
@@ -358,7 +375,7 @@ impl ExprResolver<'_> {
         capturing: bool,
     ) -> Result<ResolvedLambdaExpr, DefineGlobalResult> {
         let (expected_params, expected_return_type) = match expected_type {
-            ResolvedType::Func { params, return_type } =>{
+            ResolvedType::Func { params, return_type } => {
                 if params.len() != lambda_expr.params.len() {
                     self.context.push_error(Error {
                         message: format!("Parameter count mismatch. Expected {} Actual {}", params.len(), lambda_expr.params.len()),
@@ -368,10 +385,11 @@ impl ExprResolver<'_> {
                 }
                 (params, *return_type)
             }
+            ResolvedType::Callable(return_type) => (Vec::new(), *return_type),
             ResolvedType::Inferred => (Vec::new(), ResolvedType::Inferred),
-            _ => {
+            e => {
                 self.context.push_error(Error {
-                    message: "Type mismatch".to_string(),
+                    message: format!("Type mismatch, expected: {}", e),
                     line: expr.line,
                     col: expr.col,
                 });
@@ -418,6 +436,9 @@ impl ExprResolver<'_> {
                 Statement::SaveLocal(Save { paths }, irt_expr)
             };
             statements.push(statement);
+        }
+        if capturing {
+            self.parameters = Some(param_types);
         }
 
         for binding in &lambda_expr.bindings {
@@ -485,7 +506,7 @@ impl ExprResolver<'_> {
 
         statements.push(Statement::Return(irt_expr));
 
-        Ok(ResolvedLambdaExpr { param_types, return_type, statements })
+        Ok(ResolvedLambdaExpr { return_type, statements })
     }
 
     fn resolve_new_expr(
@@ -661,7 +682,6 @@ impl TypeStore for &mut dyn ExprResolverContext {
 }
 
 struct ResolvedLambdaExpr {
-    param_types: Vec<ResolvedType>,
     return_type: ResolvedType,
     statements: Vec<Statement>,
 }

@@ -452,6 +452,33 @@ fn shadowing() {
     assert_no_errs(resolve_from_src(include_str!("shadowing.snek")));
 }
 
+#[test]
+#[ignore] // TODO need to reevaluate this file
+fn nested_generic_funcs() {
+    assert_no_errs(resolve_from_src(include_str!("nested_generic_funcs.snek")));
+}
+
+#[test]
+#[ignore] // TODO needs generic functions
+fn pair_constructor() {
+    assert_no_errs(resolve_from_src(include_str!("pair_constructor.snek")));
+}
+
+#[test]
+fn infinite_loop() {
+    assert_no_errs(resolve_from_src(include_str!("infinite_loop.snek")));
+}
+
+#[test]
+fn non_tail_rec() {
+    assert_no_errs(resolve_from_src(include_str!("../../../tests/fib.snek")));
+}
+
+#[test]
+fn tail_rec() {
+    assert_no_errs(resolve_from_src(include_str!("../../../tests/fibi.snek")));
+}
+
 fn define_types(src: &str) -> Resolver {
     let (ast, errs) = crate::parser::parse(src);
     assert!(errs.is_empty());

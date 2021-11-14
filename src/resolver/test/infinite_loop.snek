@@ -1,0 +1,5 @@
+let f = { i: Number ->
+    (println i)
+    (. (i + 1))
+}
+let f1: { Number -> ! } = f
