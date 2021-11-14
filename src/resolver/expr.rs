@@ -28,6 +28,7 @@ pub struct ExprResolver<'ctx> {
     captures: HashSet<LocalId>,
     locals: HashSet<LocalId>,
     parameters: Option<Vec<ResolvedType>>,
+    expected_return_type: Option<ResolvedType>,
 }
 
 impl ExprResolver<'_> {
@@ -37,15 +38,17 @@ impl ExprResolver<'_> {
             captures: HashSet::new(),
             locals: HashSet::new(),
             parameters: None,
+            expected_return_type: None,
         }
     }
 
-    fn new_sub_resolver(&mut self) -> ExprResolver {
+    fn new_sub_resolver(&mut self, expected_return_type: ResolvedType) -> ExprResolver {
         ExprResolver {
             context: self.context,
             captures: HashSet::new(),
             locals: HashSet::new(),
             parameters: None,
+            expected_return_type: Some(expected_return_type),
         }
     }
 
@@ -183,7 +186,10 @@ impl ExprResolver<'_> {
                 });
                 return Ok((ResolvedType::Error, IrtExprType::Error));
             };
-            (params, ResolvedType::Nothing, None)
+            let return_type = self.expected_return_type.clone()
+                .filter(|it| it != &ResolvedType::Inferred)
+                .unwrap_or(ResolvedType::Nothing);
+            (params, return_type, None)
         } else {
             let callee_result = self.resolve_expr(ResolvedType::Callable(Box::new(expected_type)), &call_expr.callee, scope, None);
             let callee = match callee_result {
@@ -342,7 +348,12 @@ impl ExprResolver<'_> {
         lambda_expr: &LambdaExpr,
         scope: &LocalScope,
     ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
-        let mut sub_resolver = self.new_sub_resolver();
+        let expected_return_type = match &expected_type {
+            ResolvedType::Func { return_type, .. } => return_type.as_ref().clone(),
+            ResolvedType::Callable(return_type) => return_type.as_ref().clone(),
+            _ => ResolvedType::Inferred,
+        };
+        let mut sub_resolver = self.new_sub_resolver(expected_return_type);
         let ResolvedLambdaExpr {
             return_type,
             statements,
