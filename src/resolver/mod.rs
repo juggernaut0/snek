@@ -817,7 +817,6 @@ impl Resolver<'_> {
         type_scope: &LookupScope<TypeDeclLookup>,
         global_scope: &LookupScope<GlobalLookup>,
     ) -> DefineGlobalResult {
-        let local_scope = LocalScope::new(None, false);
         struct Context<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j> {
             resolver: &'a mut Resolver<'b>,
             type_scope: &'c LookupScope<'d, 'e, 'f, TypeDeclLookup>,
@@ -865,7 +864,7 @@ impl Resolver<'_> {
             }
         }
         let mut context = Context { resolver: self, type_scope, global_scope };
-        ExprResolver::new(&mut context).resolve_expr(expected_type, expr, &local_scope, None)
+        ExprResolver::new(&mut context).resolve_top_expr(expected_type, expr)
     }
 
     fn unify(&mut self, expected: ResolvedType, actual: ResolvedType, holes: Option<&mut [Hole]>, line: u32, col: u32) -> ResolvedType {

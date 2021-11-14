@@ -479,6 +479,11 @@ fn tail_rec() {
     assert_no_errs(resolve_from_src(include_str!("../../../tests/fibi.snek")));
 }
 
+#[test]
+fn strange_recursion() {
+    assert!(resolve_from_src(include_str!("strange_recursion.snek")).is_err())
+}
+
 fn define_types(src: &str) -> Resolver {
     let (ast, errs) = crate::parser::parse(src);
     assert!(errs.is_empty());

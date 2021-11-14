@@ -1,0 +1,9 @@
+let f = { b: Boolean ->
+    (match b
+        { true -> () }
+        { false ->
+            let x = (. true)
+            (match x { _: String -> () })
+        }
+    )
+}

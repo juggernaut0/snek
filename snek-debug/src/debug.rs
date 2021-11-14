@@ -436,6 +436,11 @@ impl IrtVisitor for IrPrinter {
                 self.print_close();
 
             }
+            irt::ExprType::RecCall { args } => {
+                self.print_open(&format!("Recursive call: {}", expr.resolved_type));
+                self.print_all(args);
+                self.print_close();
+            }
             irt::ExprType::Binary { left, right, op } => {
                 let op_str = match op {
                     irt::BinaryOp::Error => "?",
@@ -459,7 +464,7 @@ impl IrtVisitor for IrPrinter {
             irt::ExprType::LoadParam => {
                 self.print("Pop param")
             }
-            irt::ExprType::Func(id) => {
+            irt::ExprType::Func{ id, .. } => {
                 self.print(&format!("Function {}: {}", id.id(), expr.resolved_type));
             }
             irt::ExprType::New { field_inits } => {

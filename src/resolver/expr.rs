@@ -52,7 +52,11 @@ impl ExprResolver<'_> {
         }
     }
 
-    pub(super) fn resolve_expr(&mut self, expected_type: ResolvedType, expr: &Expr, scope: &LocalScope, holes: Option<&mut [Hole]>) -> DefineGlobalResult {
+    pub(super) fn resolve_top_expr(&mut self, expected_type: ResolvedType, expr: &Expr) -> DefineGlobalResult {
+        self.resolve_expr(expected_type, expr, &LocalScope::new(None, false), None, false)
+    }
+
+    fn resolve_expr(&mut self, expected_type: ResolvedType, expr: &Expr, scope: &LocalScope, holes: Option<&mut [Hole]>, tail: bool) -> DefineGlobalResult {
         let (actual_type, irt_expr_type) = match &expr.expr_type {
             ExprType::QName(qn) => {
                 if let Some(local) = scope.get_from_qname(qn) {
@@ -99,11 +103,11 @@ impl ExprResolver<'_> {
             },
             ExprType::Unary(_, _) => todo!(),
             ExprType::Binary(op, left, right) => {
-                let res_left = match self.resolve_expr(ResolvedType::Inferred, left, scope, None) {
+                let res_left = match self.resolve_expr(ResolvedType::Inferred, left, scope, None, false) {
                     DefineGlobalResult::Success(it) => it,
                     DefineGlobalResult::NeedsType(id) => return DefineGlobalResult::NeedsType(id),
                 };
-                let res_right = match self.resolve_expr(ResolvedType::Inferred, right, scope, None) {
+                let res_right = match self.resolve_expr(ResolvedType::Inferred, right, scope, None, false) {
                     DefineGlobalResult::Success(it) => it,
                     DefineGlobalResult::NeedsType(id) => return DefineGlobalResult::NeedsType(id),
                 };
@@ -138,7 +142,7 @@ impl ExprResolver<'_> {
                 (rt, IrtExprType::Binary { op, left: Box::new(res_left), right: Box::new(res_right) })
             },
             ExprType::Call(call_expr) => {
-                match self.resolve_call_expr(expected_type.clone(), expr, call_expr, scope) {
+                match self.resolve_call_expr(expected_type.clone(), expr, call_expr, scope, tail) {
                     Ok(it) => it,
                     Err(dfg) => return dfg
                 }
@@ -172,9 +176,10 @@ impl ExprResolver<'_> {
         expr: &Expr,
         call_expr: &CallExpr,
         scope: &LocalScope,
+        tail: bool,
     ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
         let (params, return_type, callee) = if let ExprType::Match = &call_expr.callee.expr_type {
-            return self.resolve_match_expr(expected_type, expr, &call_expr.args, scope);
+            return self.resolve_match_expr(expected_type, expr, &call_expr.args, scope, tail);
         } else if let ExprType::Dot = &call_expr.callee.expr_type {
             let params = if let Some(params) = &self.parameters {
                 params.clone()
@@ -186,12 +191,21 @@ impl ExprResolver<'_> {
                 });
                 return Ok((ResolvedType::Error, IrtExprType::Error));
             };
+
             let return_type = self.expected_return_type.clone()
                 .filter(|it| it != &ResolvedType::Inferred)
-                .unwrap_or(ResolvedType::Nothing);
+                .unwrap_or_else(|| if tail { ResolvedType::Nothing } else {ResolvedType::Inferred });
+            if return_type.is_inferred() {
+                self.context.push_error(Error {
+                    message: "Cannot infer type of recursive call".to_string(),
+                    line: expr.line,
+                    col: expr.col,
+                })
+            }
+
             (params, return_type, None)
         } else {
-            let callee_result = self.resolve_expr(ResolvedType::Callable(Box::new(expected_type)), &call_expr.callee, scope, None);
+            let callee_result = self.resolve_expr(ResolvedType::Callable(Box::new(expected_type)), &call_expr.callee, scope, None, false);
             let callee = match callee_result {
                 DefineGlobalResult::NeedsType(_) => return Err(callee_result),
                 DefineGlobalResult::Success(callee_expr) => callee_expr,
@@ -236,7 +250,7 @@ impl ExprResolver<'_> {
             .chain(repeat(ResolvedType::Inferred))
             .zip(&call_expr.args)
             .map(|(exp_arg_type, arg_expr)| {
-                self.resolve_expr(exp_arg_type, arg_expr, scope, None)
+                self.resolve_expr(exp_arg_type, arg_expr, scope, None, false)
             });
 
         let mut args = Vec::new();
@@ -266,6 +280,7 @@ impl ExprResolver<'_> {
         expr: &Expr,
         args: &[Expr],
         scope: &LocalScope,
+        tail: bool,
     ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
         if args.is_empty() {
             self.context.push_error(Error {
@@ -275,7 +290,7 @@ impl ExprResolver<'_> {
             });
         }
 
-        let dgr = self.resolve_expr(ResolvedType::Inferred, &args[0], scope, None);
+        let dgr = self.resolve_expr(ResolvedType::Inferred, &args[0], scope, None, false);
         let matched_expr = match dgr {
             DefineGlobalResult::Success(e) => e,
             DefineGlobalResult::NeedsType(_) => return Err(dgr),
@@ -309,7 +324,7 @@ impl ExprResolver<'_> {
             let pattern = self.context.resolve_pattern(&lambda.params[0], Some(matched_expr.resolved_type.clone()));
             patterns.push(pattern);
 
-            let (rrt, statements) = self.resolve_match_arm(expected_arm_type.clone(), arg, lambda, scope)?;
+            let (rrt, statements) = self.resolve_match_arm(expected_arm_type.clone(), arg, lambda, scope, tail)?;
             actual_type = merge_types(actual_type, rrt);
             arm_exprs.push(statements);
         }
@@ -333,11 +348,12 @@ impl ExprResolver<'_> {
         expr: &Expr,
         lambda_expr: &LambdaExpr,
         scope: &LocalScope,
+        tail: bool,
     ) -> Result<(ResolvedType, Vec<Statement>), DefineGlobalResult> {
         let ResolvedLambdaExpr {
             return_type,
             statements,
-        } = self.resolve_lambda_expr(expected_type, expr, lambda_expr, scope, false)?;
+        } = self.resolve_lambda_expr(expected_type, expr, lambda_expr, scope, false, tail)?;
         Ok((return_type, statements))
     }
 
@@ -357,7 +373,7 @@ impl ExprResolver<'_> {
         let ResolvedLambdaExpr {
             return_type,
             statements,
-        } = sub_resolver.resolve_lambda_expr(expected_type, expr, lambda_expr, scope, true)?;
+        } = sub_resolver.resolve_lambda_expr(expected_type, expr, lambda_expr, scope, true, true)?;
         let mut my_captures = sub_resolver.captures;
         let my_locals = sub_resolver.locals;
         my_captures.retain(|it| !my_locals.contains(it));
@@ -384,6 +400,7 @@ impl ExprResolver<'_> {
         lambda_expr: &LambdaExpr,
         parent_scope: &LocalScope,
         capturing: bool,
+        tail: bool,
     ) -> Result<ResolvedLambdaExpr, DefineGlobalResult> {
         let (expected_params, expected_return_type) = match expected_type {
             ResolvedType::Func { params, return_type } => {
@@ -468,7 +485,7 @@ impl ExprResolver<'_> {
             let resolved_pattern = self.context.resolve_pattern(pattern, None);
             let expected_type = resolved_pattern.resolved_type.clone();
             let names = resolved_pattern.extract_names();
-            let dgr = self.resolve_expr(expected_type,  &binding.expr, &scope, None);
+            let dgr = self.resolve_expr(expected_type,  &binding.expr, &scope, None, false);
             // TODO can I accumulate these across all bindings and return them all at once?
             let irt_expr = match dgr {
                 DefineGlobalResult::NeedsType(_) => return Err(dgr),
@@ -508,7 +525,7 @@ impl ExprResolver<'_> {
             statements.push(statement);
         }
 
-        let dfg = self.resolve_expr(expected_return_type, &lambda_expr.expr, &scope, None);
+        let dfg = self.resolve_expr(expected_return_type, &lambda_expr.expr, &scope, None, tail);
         let irt_expr = match dfg {
             DefineGlobalResult::NeedsType(_) => return Err(dfg),
             DefineGlobalResult::Success(irt_expr) => irt_expr,
@@ -623,7 +640,7 @@ impl ExprResolver<'_> {
             let v = init_to_field.remove(field_name).expect("field in order but not map");
             match v {
                 (Some(init_expr), Some(expected_field_type)) => {
-                    let dgr = self.resolve_expr(expected_field_type, init_expr, scope, Some(&mut holes));
+                    let dgr = self.resolve_expr(expected_field_type, init_expr, scope, Some(&mut holes), false);
                     let e = match dgr {
                         DefineGlobalResult::Success(e) => e,
                         _ => return Err(dgr)
@@ -643,7 +660,7 @@ impl ExprResolver<'_> {
                         line: expr.line,
                         col: expr.col,
                     });
-                    let dgr = self.resolve_expr(ResolvedType::Inferred, init_expr, scope, Some(&mut holes));
+                    let dgr = self.resolve_expr(ResolvedType::Inferred, init_expr, scope, Some(&mut holes), false);
                     match dgr {
                         DefineGlobalResult::Success(_) => {} // discard
                         _ => return Err(dgr)
