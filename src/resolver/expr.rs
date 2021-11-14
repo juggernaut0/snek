@@ -266,7 +266,7 @@ impl ExprResolver<'_> {
                 args,
             }
         } else {
-            IrtExprType::RecCall { args }
+            IrtExprType::RecCall { args, tail }
         };
         Ok((
             return_type,

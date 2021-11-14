@@ -36,3 +36,10 @@ function runtimeTypeOf(o) {
         throw 'Unknown runtime runtime type of ' + o;
     }
 }
+
+function TailRecursion(args) {
+    this.args = args;
+}
+function tailRecurse(args) {
+    throw new TailRecursion(args);
+}

@@ -65,7 +65,7 @@ impl JsGenerator {
         self.global_identifier(&get_builtin_id("println"));
         self.write("={call:(args)=>{console.log(...args);}};\n");
 
-        self.write(include_str!("runtime_type.js"));
+        self.write(include_str!("builtins.js"));
     }
 
     fn runtime_type_name(&mut self, id: &TypeId) {
@@ -220,9 +220,27 @@ impl JsGenerator {
         self.function_name(&func.id());
         self.write(".prototype.call=function($args){\n");
         self.indent();
+        self.write_indent();
+        self.write("while(true){\n");
+        self.indent();
+        self.write_indent();
+        self.write("try{\n");
+        self.indent();
         for stmt in func.statements() {
             self.statement(stmt);
         }
+        self.unindent();
+        self.write_indent();
+        self.write("}catch(e){\n");
+        self.indent();
+        self.write_indent();
+        self.write("if(e instanceof TailRecursion){$args=e.args;continue;}else{throw e;}\n");
+        self.unindent();
+        self.write_indent();
+        self.write("}\n");
+        self.unindent();
+        self.write_indent();
+        self.write("}\n");
         self.unindent();
         self.write_indent();
         self.write("};\n");
@@ -318,7 +336,7 @@ impl JsGenerator {
             ExprType::LoadLocal(id) => self.local(id),
             ExprType::LoadCapture(id) => self.capture(id),
             ExprType::LoadParam => {
-                self.write("$args.pop()");
+                self.write("$args.shift()");
             },
             ExprType::Call { callee, args } => {
                 self.expr(callee);
@@ -329,6 +347,18 @@ impl JsGenerator {
                 }
                 self.write("])");
             },
+            ExprType::RecCall { args, tail } => {
+                if *tail {
+                    self.write("tailRecurse([");
+                } else {
+                    self.write("this.call([");
+                }
+                for arg in args {
+                    self.expr(arg);
+                    self.write(",");
+                }
+                self.write("])");
+            }
             ExprType::Binary { op, left, right } => {
                 let op_str = match op {
                     BinaryOp::Error => panic!("error operator in codegen"),
@@ -414,7 +444,7 @@ impl JsGenerator {
                 self.write("};\n");
                 self.unindent();
                 self.write_indent();
-                self.write("})(");
+                self.write("}).call(this,");
                 self.expr(expr);
                 self.write(")");
             },
