@@ -465,6 +465,12 @@ fn pair_constructor() {
 }
 
 #[test]
+#[ignore] // TODO needs generic functions
+fn generic_type_check() {
+    assert_no_errs(resolve_from_src(include_str!("generic_type_check.snek")));
+}
+
+#[test]
 fn infinite_loop() {
     assert_no_errs(resolve_from_src(include_str!("infinite_loop.snek")));
 }

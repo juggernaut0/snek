@@ -230,3 +230,29 @@ let unfoo: { <T> Foo<T> -> T } = { { t } -> t }
                 - expr type is Any
         - unify _ & builtin:Unit -> builtin:Unit
         - expr type is builtin:Unit
+
+### Generic funcs ideas
+
+```
+type Pair<A B> { a: A, b: B }
+
+let make_pair: { <A B> A -> { B -> Pair<A B> } } = { a -> { b -> new Pair { a: a, b: b } } }
+#       equiv: { <A> A -> { <B> B -> Pair<A B> } }
+#almost equiv: type _F<A B> = { B -> Pair<A B> } and { <A B> A -> _F<A B> }
+# the issue with above type aliasing is that now the outer function must be fully specified to be called because types cannot be partially specified
+# compiler would complain that is doesn't have enough information to infer type of B, necessary to fully instantiate _F
+let make_hello_pair: { <B> B -> Pair<String B> } = (make_pair "hello")
+let hello_2_pair: Pair<String Number> = (make_hello_pair 2)
+
+```
+
+Automatic partial specialization
+
+```
+# Given f...
+let f: { <A B> A B -> Pair<A B> } = (TODO)
+# ...all of the following automatic partial specializations should be valid
+let g: { <B> String B -> Pair<String B> } = f
+let h1: { String Number -> Pair<String Number> } = f
+let h2: { String Number -> Pair<String Number> } = g
+```
