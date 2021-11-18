@@ -26,3 +26,15 @@ let fill_list: { <T> Default<T> Number -> List<T> } = { { default } n ->
 
 let number_default = new Default<Number> { default: { -> 0 } }
 let zeros = (fill_list number_default 5) # [0 0 0 0 0]
+
+type ToString { to_string: { -> String } }
+namespace Number {
+    let to_string: { Number -> String } = (TODO)
+    let impl_to_string = { it: Number -> new ToString { to_string: { -> (to_string it) } } }
+}
+namespace String {
+    let impl_to_string = { it: String -> new ToString { to_string: { -> it } } }
+}
+
+let stringables: List<ToString> = [(Number.impl_to_string 55) (String.impl_to_string "shfifty five")]
+(for_each { { to_string } -> (println (to_string)) } stringables)

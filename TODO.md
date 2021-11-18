@@ -239,20 +239,64 @@ type Pair<A B> { a: A, b: B }
 let make_pair: { <A B> A -> { B -> Pair<A B> } } = { a -> { b -> new Pair { a: a, b: b } } }
 #       equiv: { <A> A -> { <B> B -> Pair<A B> } }
 #almost equiv: type _F<A B> = { B -> Pair<A B> } and { <A B> A -> _F<A B> }
-# the issue with above type aliasing is that now the outer function must be fully specified to be called because types cannot be partially specified
-# compiler would complain that is doesn't have enough information to infer type of B, necessary to fully instantiate _F
 let make_hello_pair: { <B> B -> Pair<String B> } = (make_pair "hello")
 let hello_2_pair: Pair<String Number> = (make_hello_pair 2)
 
 ```
 
-Automatic partial specialization
+Any function type appearing within a generic function type automatically inherits or extends the generic parameters of 
+the outer function. (Does this apply to types in both the parameter and return positions?)
+
+`(make_pair "hello")` partially instantiates `make_pair` to become `{ <B> String -> { B -> Pair<String B> } }`. 
+Because the inner function type has inherited the type parameter, calling it returns `{ <B> B -> Pair<String B> }`.
+
+`{ <A B> A -> { B -> Pair<A B> } }` is almost equavalent to `{ <A B> A -> _F<A B> }` with the type alias 
+`type _F<A B> = { B -> Pair<A B> }`. This doesn't quite work because now the outer function must be fully specified to 
+be called because types cannot be partially specified. The compiler would complain that is doesn't have enough 
+information to infer type of B, necessary to fully instantiate _F. Calling the type would return `_F<String B>` but B 
+is not known and cannot exist freely. This shows that generic function types are special in that they can be partially 
+specialized while other types cannot. In other words, you cannot define a type `F<A B>` that fully simulates a generic 
+function type.
+
+In fact, function types are special because they can exist *unspecializd*. `{ <A B> A -> B }` is merely the 
+unspecialized form of `{ A -> B }` for any A and B. A generic function must be partially specialized up to its 
+parameters, and its return type must be fully specified if not a function type, in order to be callable.
+
+#### Function type normalization
+
+The types `{ <A B> A -> B }` and `{ <A B> B -> A }` are identical. Names and declaration order of generic parameters do 
+not matter, only usage. Both of these examples would get resolved to something like 
+`Func { num_params: 2, params: vec![TypeParam(0)], return_type: TypeParam(1) }`
+
+Type parameters are stripped of their names and the ordering is normalized by usage order, not declaration order.
+
+Another example: `{ <A> A -> { <B> B -> Pair<A B> } }` becomes
 
 ```
-# Given f...
+Func { 
+    num_params: 2,
+    params: vec![TypeParam(0)], 
+    return_type: Func { 
+        num_params: 2, 
+        params: vec![TypeParam(1)],
+        return_type: Id(Pair, vec![TypeParam(0), TypeParam(1)]),
+    },
+}
+```
+
+#### Automatic partial specialization
+
+Given f...
+
+```
 let f: { <A B> A B -> Pair<A B> } = (TODO)
-# ...all of the following automatic partial specializations should be valid
+```
+
+...all of the following automatic partial specializations should be valid.
+
+```
 let g: { <B> String B -> Pair<String B> } = f
+let g2: { <A> A Number -> Pair<A Number> } = f
 let h1: { String Number -> Pair<String Number> } = f
 let h2: { String Number -> Pair<String Number> } = g
 ```
