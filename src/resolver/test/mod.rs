@@ -459,7 +459,6 @@ fn nested_generic_funcs() {
 }
 
 #[test]
-#[ignore] // TODO needs generic functions
 fn pair_constructor() {
     assert_no_errs(resolve_from_src(include_str!("pair_constructor.snek")));
 }

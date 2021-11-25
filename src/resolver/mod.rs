@@ -156,10 +156,12 @@ fn make_builtins() -> ModuleDecls {
         ],
         globals: vec![
             make_builtin_global("println", ResolvedType::Func {
+                num_type_params: 0,
                 params: vec![ResolvedType::Any],
                 return_type: Box::new(ResolvedType::Unit)
             }),
             make_builtin_global("TODO", ResolvedType::Func {
+                num_type_params: 0,
                 params: Vec::new(),
                 return_type: Box::new(ResolvedType::Nothing)
             }),
@@ -416,6 +418,7 @@ impl Resolver<'_> {
 
     // given a ast TypeName and a scope, resolve the type
     fn resolve_field_type(&mut self, type_name: &TypeName, type_params: &[String], scope: &LookupScope<TypeDeclLookup>, nothing_allowed: bool) -> ResolvedType {
+        //todo!("move to TypeResolver");
         match &type_name.type_name_type {
             TypeNameType::Named(nt) => {
                 // If the name has is not a qualified name and has no args of its own, it may be a type param
@@ -455,6 +458,7 @@ impl Resolver<'_> {
                     .collect();
                 let return_type = self.resolve_field_type(&ft.return_type, type_params, scope, true);
                 ResolvedType::Func {
+                    num_type_params: ft.type_params.len(),
                     params,
                     return_type: Box::new(return_type)
                 }
@@ -661,56 +665,30 @@ impl Resolver<'_> {
         }
     }
 
-    fn resolve_binding_type(&mut self, type_name: &TypeName, type_params: &[String], scope: &LookupScope<TypeDeclLookup>) -> ResolvedType {
-        match &type_name.type_name_type {
-            TypeNameType::Named(nt) => {
-                self.resolve_named_type(nt, type_params, scope, type_name.line, type_name.col)
-            },
-            TypeNameType::Func(ft) => {
-                // TODO type params
-                let params = ft.params.iter().map(|it| self.resolve_binding_type(it, type_params, scope)).collect();
-                let return_type = Box::new(self.resolve_binding_type(&ft.return_type, type_params, scope));
-
-                ResolvedType::Func { params, return_type }
-            },
-            TypeNameType::Unit => ResolvedType::Unit,
-            TypeNameType::Any => ResolvedType::Any,
-            TypeNameType::Nothing => ResolvedType::Nothing,
-            TypeNameType::Inferred => ResolvedType::Inferred,
+    fn resolve_binding_type(
+        &mut self,
+        type_name: &TypeName,
+        f_type_params: &[String],
+        scope: &LookupScope<TypeDeclLookup>,
+    ) -> ResolvedType {
+        struct Context<'a, 'b, 'c, 'd, 'e, 'f, 'g> {
+            resolver: &'a mut Resolver<'b>,
+            scope: &'c LookupScope<'d, 'e, 'f, TypeDeclLookup>,
         }
-    }
-
-    fn resolve_named_type(&mut self, named_type: &NamedType, type_params: &[String], scope: &LookupScope<TypeDeclLookup>, line: u32, col: u32) -> ResolvedType {
-        // If the name is not a qualified name and has no args of its own, it may be a type param
-        let tp = if named_type.name.parts.len() == 1 && named_type.type_args.is_empty() {
-            let name = &named_type.name.parts[0];
-            type_params.iter().position(|p| p == name)
-        } else {
-            None
-        };
-
-        if let Some(tpi) = tp {
-            ResolvedType::TypeParam(tpi)
-        } else if let Some((id, visible)) = scope.get(&named_type.name.parts) {
-            if !visible {
-                self.errors.push(Error {
-                    message: format!("Cannot access type '{}'", &named_type.name.parts.join(".")),
-                    line,
-                    col,
-                });
+        impl TypeResolverContext for Context<'_, '_, '_, '_, '_, '_, '_> {
+            fn push_error(&mut self, error: Error) {
+                self.resolver.errors.push(error);
             }
-            let args = named_type.type_args.iter()
-                .map(|arg| self.resolve_binding_type(arg, type_params, scope))
-                .collect();
-            ResolvedType::Id(id, args)
-        } else {
-            self.errors.push(Error {
-                message: format!("Unknown type name '{}'", &named_type.name.parts.join(".")),
-                line,
-                col,
-            });
-            ResolvedType::Error
+
+            fn get_type(&self, qn: &QName) -> Option<(TypeId, bool)> {
+                self.scope.get(&qn.parts)
+            }
+
+            fn get_type_param(&self, name: &str) -> Option<usize> {
+                None
+            }
         }
+        TypeResolver::new(&mut Context { resolver: self, scope }).resolve_binding_type(type_name)
     }
 
     fn define_globals(

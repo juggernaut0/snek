@@ -1,0 +1,10 @@
+type Option<T> = T | None {}
+
+let unwrap = { <T> opt: Option<T> ->
+    (match opt
+        { _: None -> (panic "unwrapped option") }
+        { t: T -> t }
+    )
+}
+let x: Option<String> = "hello"
+(println (unwrap x))

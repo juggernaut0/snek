@@ -185,18 +185,18 @@ let unfoo: { <T> Foo<T> -> T } = { { t } -> t }
     - :Foo { t: ttp.0 }
 3. Binding decls and declared types
     - builtin:println: { * -> () }
-    - :unfoo: { <tp.0> :Foo<tp.0> -> tp.0 }
+    - :unfoo: { <ftp.0.0> :Foo<ftp.0.0> -> ftp.0.0 }
 4. Resolve exprs
-    1. Line 2: Function expr: expected type is "{ <tp.0> :Foo<tp.0> -> tp.0 }"
+    1. Line 2: Function expr: expected type is "{ <ftp.0.0> :Foo<ftp.0.0> -> ftp.0.0 }"
         - create new scope
         - add params to scope
-            - decon pattern, expected type is ":Foo<tp.0>"
-                - t: ttp.0 = tp.0 -> local.0
+            - decon pattern, expected type is ":Foo<ftp.0.0>"
+                - t: ttp.0 = ftp.0.0 -> local.0
         - resolve body
-            - qname expr: expected type is "tp.0"
+            - qname expr: expected type is "ftp.0.0"
                 - resolve to local.0
-                - Unify tp.0 & tp.0 -> tp.0
-                - expr type is tp.0
+                - Unify ftp.0.0 & tp.0 -> ftp.0.0
+                - expr type is ftp.0
             - function body return type is tp.0
         - unify { <tp.0> :Foo<tp.0> -> tp.0 } & { <tp.0> :Foo<tp.0> -> tp.0 } -> { <tp.0> :Foo<tp.0> -> tp.0 }
     1. Line 3: call expr: expected type "_"
@@ -236,31 +236,16 @@ let unfoo: { <T> Foo<T> -> T } = { { t } -> t }
 ```
 type Pair<A B> { a: A, b: B }
 
-let make_pair: { <A B> A -> { B -> Pair<A B> } } = { a -> { b -> new Pair { a: a, b: b } } }
-#       equiv: { <A> A -> { <B> B -> Pair<A B> } }
-#almost equiv: type _F<A B> = { B -> Pair<A B> } and { <A B> A -> _F<A B> }
+let make_pair: { <A> A -> { <B> B -> Pair<A B> } } = { a -> { b -> new Pair { a: a, b: b } } }
 let make_hello_pair: { <B> B -> Pair<String B> } = (make_pair "hello")
 let hello_2_pair: Pair<String Number> = (make_hello_pair 2)
-
 ```
 
-Any function type appearing within a generic function type automatically inherits or extends the generic parameters of 
-the outer function. (Does this apply to types in both the parameter and return positions?)
-
-`(make_pair "hello")` partially instantiates `make_pair` to become `{ <B> String -> { B -> Pair<String B> } }`. 
-Because the inner function type has inherited the type parameter, calling it returns `{ <B> B -> Pair<String B> }`.
-
-`{ <A B> A -> { B -> Pair<A B> } }` is almost equavalent to `{ <A B> A -> _F<A B> }` with the type alias 
-`type _F<A B> = { B -> Pair<A B> }`. This doesn't quite work because now the outer function must be fully specified to 
-be called because types cannot be partially specified. The compiler would complain that is doesn't have enough 
-information to infer type of B, necessary to fully instantiate _F. Calling the type would return `_F<String B>` but B 
-is not known and cannot exist freely. This shows that generic function types are special in that they can be partially 
-specialized while other types cannot. In other words, you cannot define a type `F<A B>` that fully simulates a generic 
-function type.
+`(make_pair "hello")` instantiates `make_pair` to become `{ String -> { <B> B -> Pair<String B> } }`.
 
 In fact, function types are special because they can exist *unspecializd*. `{ <A B> A -> B }` is merely the 
-unspecialized form of `{ A -> B }` for any A and B. A generic function must be partially specialized up to its 
-parameters, and its return type must be fully specified if not a function type, in order to be callable.
+unspecialized form of `{ A -> B }` for any A and B. A generic function must be fully specialized in order to be 
+callable.
 
 #### Function type normalization
 
@@ -274,15 +259,40 @@ Another example: `{ <A> A -> { <B> B -> Pair<A B> } }` becomes
 
 ```
 Func { 
-    num_params: 2,
-    params: vec![TypeParam(0)], 
+    num_params: 1,
+    params: vec![FTypeParam(0, 0)], 
     return_type: Func { 
-        num_params: 2, 
-        params: vec![TypeParam(1)],
-        return_type: Id(Pair, vec![TypeParam(0), TypeParam(1)]),
+        num_params: 1, 
+        params: vec![FTypeParam(0, 1)],
+        return_type: Id(Pair, vec![FTypeParam(0, 0), FTypeParam(0, 1)]),
     },
 }
 ```
+
+`{ <A> { <B> B -> A } -> A }` becomes
+
+```
+Func { 
+    num_params: 1, 
+    params: [
+        Func { 
+            num_params: 1, 
+            params: [FTypeParam(0, 1)],
+            return_type: FTypeParam(0, 0),
+        }
+    ],
+    return_type: FTypeParam(0, 0),
+}
+```
+
+When attempting to call the above like `(f { <B> _: B -> "hello" })`:
+
+expected: `Func { num_params: 1, params: [FTypeParam(0, 0)], return_type: Hole(0) }`
+
+Note that the level 0 FTypeParam became a Hole and all the rest decremented a level. This happens at callee resolving 
+time.
+
+actual: `{ <T> T -> String }` = `Func { num_params: 1, params: [FTypeParam(0, 0)], return_type: Id(String) }`
 
 #### Automatic partial specialization
 
@@ -300,3 +310,19 @@ let g2: { <A> A Number -> Pair<A Number> } = f
 let h1: { String Number -> Pair<String Number> } = f
 let h2: { String Number -> Pair<String Number> } = g
 ```
+
+### Mutability
+
+A binding name that can be assigned to
+
+1. accept `mut <type_name>` in a type context
+2. Add `ResolvedType::Mut(Box<ResolvedType>)` as a resolved type
+   * When unifying two muts, this must be invariant on the inner type
+   * expected Option<T>, actual mut T, fine
+   * expected mut Option<T>, actual mut T, error
+   * expected T, actual mut T, fine
+   * expected mut T, actual T, error
+   * expected mut Box<Option<T>>, actual mut Box<T>, error
+3. Mut is mutable by reference. A mut passed into a function may be modified in the function body, and the changes will
+   be visbile in the original mut binding.
+4. special assignment operator or syntax to assign a value to a mut binding

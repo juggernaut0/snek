@@ -1,0 +1,36 @@
+public let identity = { <T> t: T -> t }
+
+public type Option<T> = T | None
+public type None { dummy: () }
+public let None: None = new { dummy: () }
+
+public namespace Option {
+    public let fold = { <T R> folder: { T -> R } default: { -> R } opt: Option<T> ->
+        (match opt
+            { t: T -> (folder t) }
+            { _: None -> (default) }
+        )
+    }
+
+    public let unwrap = (fold identity { panic("Unwrapped Option") })
+
+    public let map = { <T R> mapper: { T -> R } opt: Option<T> ->
+        (fold mapper { -> None } opt)
+    }
+}
+
+public type List<T> = Cons { head: T, tail: List<T> } | List.Empty
+
+public namespace List {
+    public type Empty { dummy: () }
+    public let Empty: Empty = new { dummy: () }
+
+    public let fold = { <T R> folder: { R T -> R } init: R list: List<T> ->
+        (match list
+            { _: Empty -> init }
+            { { head, tail } ->
+                (. folder (folder init head) tail)
+            }
+        )
+    }
+}

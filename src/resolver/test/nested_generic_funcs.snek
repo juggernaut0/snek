@@ -1,8 +1,9 @@
-let f = { <A> a: A -> # A = NestedTypeParam(0, 0) param index 0, nest level 0
+let f = { <A> a: A -> # A = FTypeParam(0, 0) param index 0, nest level 0
     let g = { <B> b: B -> # B = NestedTypeParam(0, 1) nest level 1
         let aa: A = b # should be type mismatch
         b
-    } # Expr is resolved to have type Func { num_type_params: 1, params: vec![TypeParam(0)], return_type: TypeParam(0) } nest levels are stripped off
+    } # Expr is resolved to have type Func { num_type_params: 1, params: vec![FTypeParam(0)], return_type: FTypeParam(0) }
+    let g2 = { <Unused> a: A -> a } # Func { num_type_params: 1, params: vec![TypeParam(0)], return_type: TypeParam(0) }
     (g a)
 }
 
@@ -11,3 +12,8 @@ let make_default: { <T> T -> { -> T } } = { <A> a: A ->
     g
 }
 let make_2: { -> Number } = (make_default 2)
+
+type Foo<A> {
+    a: { <T> T -> T }, # Func { num_type_params: 1, params: vec![FTypeParam(0)], return_type: FTypeParam(0) }
+    b: { <Unused> A -> A } # Func { num_type_params: 1, params: vec![TypeParam(0)], return_type: TypeParam(0) }
+}

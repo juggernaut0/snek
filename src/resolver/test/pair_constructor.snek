@@ -1,5 +1,11 @@
 type Pair<A B> { a: A, b: B }
 
-let make_pair: { <A B> A -> { B -> Pair<A B> } } = { a -> { b -> new Pair { a: a, b: b } } }
+let make_pair: { <A> A -> { <B> B -> Pair<A B> } } = { a -> { b -> new { a: a, b: b } } }
 let make_hello_pair: { <B> B -> Pair<String B> } = (make_pair "hello")
 let hello_2_pair: Pair<String Number> = (make_hello_pair 2)
+
+{ <A> a: A ->
+    { <B> b: B ->
+        new Pair<A B> { a: a, b: b }
+    }
+}
