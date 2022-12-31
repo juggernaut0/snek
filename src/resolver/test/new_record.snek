@@ -1,0 +1,4 @@
+type Foo { x: Number }
+
+let foo = new Foo { x: 0 }
+let foo2: Foo = new { x: 1 }

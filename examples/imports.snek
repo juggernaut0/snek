@@ -19,7 +19,7 @@ public type T
 
 # A public namespace exports all of its public members
 public namespace A {
-    # Another file cannot import A.A, nor can a namespace A in another file access A implicity
+    # Another file cannot import A.S, nor can a namespace A in another file access S implicity
     type S
     # another file can use T with `import A.T from 'imports.snek'`
     public type T

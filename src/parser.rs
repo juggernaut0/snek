@@ -687,6 +687,14 @@ impl<'a> Parser<'a> {
     fn lambda_expr(&mut self) -> Option<Expr> {
         let (line, col) = self.pos();
         self.advance(); // advance past "{"
+
+        let type_params = if self.current.matches_value(Symbol, "<") {
+            // if type_params failed, try to continue anyway (it already reported the error)
+            self.type_params().unwrap_or(Vec::new())
+        } else {
+            Vec::new()
+        };
+
         let mut params = Vec::new();
         while !self.current.matches_value(Symbol, "->") {
             let param = self.pattern()?;
@@ -697,7 +705,7 @@ impl<'a> Parser<'a> {
         loop {
             {
                 let (line, col) = self.pos();
-                if self.advance_if_matches_value(Symbol, "public") {
+                if self.advance_if_matches_value(Keyword, "public") {
                     self.error(ParseError {
                         message: "A local binding may not be public".to_string(),
                         line,
@@ -710,7 +718,7 @@ impl<'a> Parser<'a> {
             } else {
                 let expr = self.expr()?;
                 if self.advance_if_matches_value(Symbol, "}") {
-                    let expr_type = ExprType::Lambda(LambdaExpr { params, bindings, expr: Box:: new(expr) });
+                    let expr_type = ExprType::Lambda(LambdaExpr { type_params, params, bindings, expr: Box:: new(expr) });
                     return Some(Expr { line, col, expr_type })
                 }
                 let pattern = Pattern { line: expr.line, col: expr.col, pattern: PatternType::Wildcard(None) };

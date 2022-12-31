@@ -223,6 +223,7 @@ impl Resolver<'_> {
         self.resolve_4(ast)
     }
 
+    // Phase 1: Find type declarations
     fn resolve_1<'ast>(&mut self, ast: &'ast Ast) -> Vec<UndefinedType<'ast>> {
         self.import_from_module(&make_builtins(), &[]);
         self.import_names(&ast.imports);
@@ -232,6 +233,7 @@ impl Resolver<'_> {
         undefined_types
     }
 
+    // Phase 2: Define types
     fn resolve_2(&mut self, ast: &Ast) -> TypeDeclLookup {
         let undefined_types = self.resolve_1(ast);
         let type_lookup = TypeDeclLookup::new(&undefined_types, self.types.values().map(Rc::as_ref));
@@ -239,6 +241,7 @@ impl Resolver<'_> {
         type_lookup
     }
 
+    // Phase 3: Find global declarations
     fn resolve_3<'ast>(&mut self, ast: &'ast Ast) -> (Vec<UndefinedGlobalBinding<'ast>>, TypeDeclLookup) {
         let type_lookup = self.resolve_2(ast);
         let mut undefined_globals = Vec::new();
@@ -246,6 +249,7 @@ impl Resolver<'_> {
         (undefined_globals, type_lookup)
     }
 
+    // Phase 4: Resolve statements and define globals
     fn resolve_4(&mut self, ast: &Ast) -> Vec<Statement> {
         let (undefined_globals, type_lookup) = self.resolve_3(ast);
         let global_lookup = GlobalLookup::new(&undefined_globals, self.globals.values().map(Rc::as_ref));
@@ -505,7 +509,7 @@ impl Resolver<'_> {
                     self.find_globals(undefined_globals, ns, namespace.append(&ns.name), vis, can_export && ns.public, scope.enter_scope(&ns.name.parts));
                 },
                 Decl::Binding(b) => {
-                    let resolved_pattern = self.resolve_pattern(&b.pattern, &scope, None);
+                    let resolved_pattern = self.resolve_pattern(&b.pattern, &scope, TYPE_ARG_STACK_ROOT, None);
                     let expected_type = resolved_pattern.resolved_type.clone();
                     let names = resolved_pattern.extract_names();
                     let decls = names
@@ -549,19 +553,20 @@ impl Resolver<'_> {
         &mut self,
         pattern: &Pattern,
         scope: &LookupScope<TypeDeclLookup>,
+        type_args: TypeArgStack,
         expr_type: Option<ResolvedType>,
     ) -> ResolvedPattern {
         match &pattern.pattern {
             ast::PatternType::Wildcard(otn) => {
                 let resolved_type = otn.as_ref()
-                    .map(|tn| self.resolve_binding_type(tn, &[], scope))
+                    .map(|tn| self.resolve_binding_type(tn, scope, type_args))
                     .or(expr_type)
                     .unwrap_or(ResolvedType::Inferred);
                 ResolvedPattern { resolved_type, pattern_type: IrtPatternType::Discard }
             }
             ast::PatternType::Name(np) => {
                 let resolved_type = np.type_name.as_ref()
-                    .map(|it| self.resolve_binding_type(it, &[], scope))
+                    .map(|it| self.resolve_binding_type(it, scope, type_args))
                     .or(expr_type)
                     .unwrap_or(ResolvedType::Inferred);
                 ResolvedPattern { resolved_type, pattern_type: IrtPatternType::Name(np.name.as_str().into()) }
@@ -578,7 +583,7 @@ impl Resolver<'_> {
             }
             ast::PatternType::Destruct(fps, otn) => {
                 let declared_type = otn.as_ref()
-                    .map(|tn| self.resolve_binding_type(tn, &[], scope))
+                    .map(|tn| self.resolve_binding_type(tn, scope, type_args))
                     .or(expr_type);
 
                 let declared_type_fields = declared_type
@@ -633,7 +638,7 @@ impl Resolver<'_> {
                     let resolved_pattern = match field {
                         FieldPattern::Name(np) => {
                             let declared_field_type = np.type_name.as_ref()
-                                .map(|it| self.resolve_binding_type(it, &[], scope))
+                                .map(|it| self.resolve_binding_type(it, scope, type_args))
                                 .unwrap_or(ResolvedType::Inferred);
 
                             let resolved_type = self.unify(declared_field_type, inferred_field_type, None, np.line, np.col);
@@ -644,7 +649,7 @@ impl Resolver<'_> {
                             }
                         },
                         FieldPattern::Binding(subpat, _) => {
-                            let rp = self.resolve_pattern(subpat, scope, None);
+                            let rp = self.resolve_pattern(subpat, scope, type_args, None);
 
                             let resolved_type = self.unify(rp.resolved_type, inferred_field_type, None, subpat.line, subpat.col);
 
@@ -668,14 +673,14 @@ impl Resolver<'_> {
     fn resolve_binding_type(
         &mut self,
         type_name: &TypeName,
-        f_type_params: &[String],
         scope: &LookupScope<TypeDeclLookup>,
+        type_args: TypeArgStack,
     ) -> ResolvedType {
-        struct Context<'a, 'b, 'c, 'd, 'e, 'f, 'g> {
+        struct Context<'a, 'b, 'c, 'd, 'e, 'f> {
             resolver: &'a mut Resolver<'b>,
             scope: &'c LookupScope<'d, 'e, 'f, TypeDeclLookup>,
         }
-        impl TypeResolverContext for Context<'_, '_, '_, '_, '_, '_, '_> {
+        impl TypeResolverContext for Context<'_, '_, '_, '_, '_, '_> {
             fn push_error(&mut self, error: Error) {
                 self.resolver.errors.push(error);
             }
@@ -684,11 +689,11 @@ impl Resolver<'_> {
                 self.scope.get(&qn.parts)
             }
 
-            fn get_type_param(&self, name: &str) -> Option<usize> {
+            fn get_type_arg(&self, name: &str) -> Option<usize> {
                 None
             }
         }
-        TypeResolver::new(&mut Context { resolver: self, scope }).resolve_binding_type(type_name)
+        TypeResolver::new(&mut Context { resolver: self, scope }, type_args).resolve_binding_type(type_name)
     }
 
     fn define_globals(
@@ -718,7 +723,7 @@ impl Resolver<'_> {
             let ns = ugb.namespace.as_slice();
             let type_scope = root_type_scope.enter_scope(ns);
             let global_scope = root_global_scope.enter_scope(ns);
-            let dgr = self.resolve_expr(ugb.expected_type.clone(), &ugb.ast_node.expr, &type_scope, &global_scope);
+            let dgr = self.resolve_top_expr(ugb.expected_type.clone(), &ugb.ast_node.expr, &type_scope, &global_scope);
             match dgr {
                 DefineGlobalResult::NeedsType(id) => {
                     let dep = ugbs_by_gid.get(&id).copied().unwrap();
@@ -749,7 +754,7 @@ impl Resolver<'_> {
                             col: pattern.col,
                         });
                     }
-                    let resolved_pattern = self.resolve_pattern(pattern, &type_scope, Some(irt_expr.resolved_type.clone()));
+                    let resolved_pattern = self.resolve_pattern(pattern, &type_scope, TYPE_ARG_STACK_ROOT, Some(irt_expr.resolved_type.clone()));
                     if !self.exhaustive(std::slice::from_ref(&&resolved_pattern), irt_expr.resolved_type.clone()) {
                         self.errors.push(Error {
                             message: "Binding pattern must be exhaustive".into(),
@@ -788,7 +793,7 @@ impl Resolver<'_> {
             .collect()
     }
 
-    fn resolve_expr(
+    fn resolve_top_expr(
         &mut self,
         expected_type: ResolvedType,
         expr: &Expr,
@@ -817,12 +822,13 @@ impl Resolver<'_> {
                 self.resolver.globals.get(id).map(|it| it.as_ref())
             }
 
-            fn resolve_named_type(&mut self, named_type: &NamedType, type_params: &[String], line: u32, col: u32) -> ResolvedType {
-                self.resolver.resolve_named_type(named_type, type_params, self.type_scope, line, col)
+            fn resolve_new_type(&mut self, named_type: &NamedType, line: u32, col: u32) -> ResolvedType {
+                // TODO somehow need to get a TypeResolver here so I can resolve this NamedType
+                todo!()
             }
 
-            fn resolve_pattern(&mut self, pattern: &Pattern, expr_type: Option<ResolvedType>) -> ResolvedPattern {
-                self.resolver.resolve_pattern(pattern, self.type_scope, expr_type)
+            fn resolve_pattern(&mut self, pattern: &Pattern, expr_type: Option<ResolvedType>, type_args: TypeArgStack) -> ResolvedPattern {
+                self.resolver.resolve_pattern(pattern, self.type_scope, type_args, expr_type)
             }
 
             fn navigate_type_fields(&mut self, path: &FieldPath, base_type: ResolvedType, line: u32, col: u32) -> ResolvedType {
@@ -842,7 +848,7 @@ impl Resolver<'_> {
             }
         }
         let mut context = Context { resolver: self, type_scope, global_scope };
-        ExprResolver::new(&mut context).resolve_top_expr(expected_type, expr)
+        ExprResolver::new_top_resolver(&mut context).resolve_top_expr(expected_type, expr)
     }
 
     fn unify(&mut self, expected: ResolvedType, actual: ResolvedType, holes: Option<&mut [Hole]>, line: u32, col: u32) -> ResolvedType {

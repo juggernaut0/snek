@@ -32,7 +32,7 @@ pub enum ExprType {
     LoadLocal(LocalId),
     LoadCapture(LocalId),
     LoadParam,
-    Call { callee: Box<Expr>, args: Vec<Expr> },
+    Call { callee: Box<Expr>, type_args: Vec<ResolvedType>, args: Vec<Expr> },
     RecCall { args: Vec<Expr>, tail: bool },
     Binary { op: BinaryOp, left: Box<Expr>, right: Box<Expr> },
     Func { id: FunctionId, captures: Vec<FuncCapture> },

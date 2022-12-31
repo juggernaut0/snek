@@ -17,10 +17,11 @@ let as_iterator = { l: List<Number> ->
 (for_each println (as_iterator list))
 
 type Default<T> { default: { -> T } }
-let fill_list: { <T> Default<T> Number -> List<T> } = { { default } n ->
+let get_default: { <T> Default<T> -> T } = { { default } -> (default) }
+let fill_list: { <T> Default<T> Number -> List<T> } = { default n ->
     (match n
         { 0 -> [] }
-        { _ -> (List.cons (default) (make_list default (n - 1)) }
+        { _ -> (List.cons (get_default default) (fill_list default (n - 1)) }
     )
 }
 

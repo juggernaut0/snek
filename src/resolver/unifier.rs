@@ -25,6 +25,7 @@ impl Unifier<'_, '_> {
         errors.is_empty()
     }
 
+    // TODO generalize "allow_any" to also disallow unions
     fn unify_impl(&mut self, errors: &mut Vec<Error>, expected: ResolvedType, actual: ResolvedType, allow_any: bool) -> ResolvedType {
         match (expected, actual) {
             (ResolvedType::Inferred, actual) => actual,
@@ -50,23 +51,38 @@ impl Unifier<'_, '_> {
             (ResolvedType::TypeParam(_), ResolvedType::TypeParam(_)) => {
                 panic!("raw type params should never be compared"); // TODO is this true in a generic function?
             }
-            (ResolvedType::Callable(expected_return_type), ResolvedType::Func { params, mut return_type }) => {
+            (ResolvedType::Callable(expected_return_type), ResolvedType::Func { num_type_params, params, mut return_type }) => {
                 // Reuse the same Box for the return value
                 let actual_return_type = std::mem::replace(return_type.as_mut(), ResolvedType::Error);
                 *return_type = self.unify_impl(errors, *expected_return_type, actual_return_type, true);
-                ResolvedType::Func { params, return_type }
+                ResolvedType::Func { num_type_params, params, return_type }
             }
-            // TODO unify func - Return type can unify as normal, but params must not allow "generalizing" to Any
             (
-                ResolvedType::Func { params: e_params, return_type: e_rt },
-                ResolvedType::Func { params: a_params, return_type: a_rt }
+                ResolvedType::Func { num_type_params: e_num_type_params, params: e_params, return_type: e_rt },
+                ResolvedType::Func { num_type_params: a_num_type_params, params: a_params, return_type: a_rt }
             ) => {
+                if e_num_type_params != a_num_type_params {
+                    errors.push(Error {
+                        message: format!("Generic type parameter mismatch. Expected {} type parameters, found {}", e_num_type_params, a_num_type_params),
+                        line: self.line,
+                        col: self.col,
+                    })
+                }
+
+                if e_params.len() != a_params.len() {
+                    errors.push(Error {
+                        message: format!("Parameter count mismatch. Expected {} parameters, found {}", e_params.len(), a_params.len()),
+                        line: self.line,
+                        col: self.col,
+                    })
+                }
+
                 let params = e_params.into_iter()
                     .zip(a_params)
                     .map(|(ep, ap)| self.unify_impl(errors, ep, ap, false))
                     .collect();
                 let return_type = Box::new(self.unify_impl(errors, *e_rt, *a_rt, true));
-                ResolvedType::Func { params, return_type }
+                ResolvedType::Func { num_type_params: e_num_type_params, params, return_type }
             }
             (expected, actual) => {
                 self.add_unify_error(errors, expected, actual)

@@ -7,7 +7,7 @@ use crate::resolver::{BuiltinTypeNames, DefineGlobalResult, Error, FieldPath, Fu
 use crate::resolver::globals::GlobalDeclaration;
 use crate::resolver::irt::{BinaryOp as IrtBinaryOp, Constant, Expr as IrtExpr, ExprType as IrtExprType, FuncCapture, Save, Statement};
 use crate::resolver::patterns::ExhaustivenessChecker;
-use crate::resolver::types::{Hole};
+use crate::resolver::types::{Hole, TYPE_ARG_STACK_ROOT, TypeArgStack};
 use crate::resolver::unifier::{merge_types, Unifier};
 
 pub(super) trait ExprResolverContext {
@@ -15,48 +15,53 @@ pub(super) trait ExprResolverContext {
     fn get_type_decl(&self, id: &TypeId) -> &TypeDeclaration;
     fn get_global(&self, qn: &QName) -> Option<(GlobalId, bool)>;
     fn get_global_decl(&self, id: &GlobalId) -> Option<&GlobalDeclaration>;
-    fn resolve_named_type(&mut self, named_type: &NamedType, type_params: &[String], line: u32, col: u32) -> ResolvedType;
-    fn resolve_pattern(&mut self, pattern: &Pattern, expr_type: Option<ResolvedType>) -> ResolvedPattern;
+    fn resolve_new_type(&mut self, named_type: &NamedType, line: u32, col: u32) -> ResolvedType;
+    fn resolve_pattern(&mut self, pattern: &Pattern, expr_type: Option<ResolvedType>, type_args: TypeArgStack) -> ResolvedPattern;
     fn navigate_type_fields(&mut self, path: &FieldPath, base_type: ResolvedType, line: u32, col: u32) -> ResolvedType;
     fn is_visible(&self, visibility: &[String]) -> bool;
     fn define_function(&mut self, resolved_type: ResolvedType, statements: Vec<Statement>, captures: Vec<LocalId>) -> FunctionId;
     fn literal_to_constant(&mut self, lit: &Literal, line: u32, col: u32) -> Constant;
 }
 
-pub struct ExprResolver<'ctx> {
+pub struct ExprResolver<'ctx, 'ast, 'arg> {
     context: &'ctx mut dyn ExprResolverContext,
     captures: HashSet<LocalId>,
     locals: HashSet<LocalId>,
+    type_args: TypeArgStack<'ast, 'arg>,
     parameters: Option<Vec<ResolvedType>>,
     expected_return_type: Option<ResolvedType>,
 }
 
-impl ExprResolver<'_> {
-    pub(super) fn new(context: &mut dyn ExprResolverContext) -> ExprResolver {
+impl ExprResolver<'_, '_, '_> {
+    pub(super) fn new_top_resolver(context: &mut dyn ExprResolverContext) -> ExprResolver {
         ExprResolver {
             context,
             captures: HashSet::new(),
             locals: HashSet::new(),
+            type_args: TYPE_ARG_STACK_ROOT,
             parameters: None,
             expected_return_type: None,
         }
     }
+}
 
-    fn new_sub_resolver(&mut self, expected_return_type: ResolvedType) -> ExprResolver {
+impl<'ast> ExprResolver<'_, 'ast, '_> {
+    fn new_sub_resolver(&mut self, expected_return_type: ResolvedType, type_args: &'ast [String]) -> ExprResolver {
         ExprResolver {
             context: self.context,
             captures: HashSet::new(),
             locals: HashSet::new(),
+            type_args: self.type_args.push_level(type_args),
             parameters: None,
             expected_return_type: Some(expected_return_type),
         }
     }
 
-    pub(super) fn resolve_top_expr(&mut self, expected_type: ResolvedType, expr: &Expr) -> DefineGlobalResult {
+    pub(super) fn resolve_top_expr(&mut self, expected_type: ResolvedType, expr: &'ast Expr) -> DefineGlobalResult {
         self.resolve_expr(expected_type, expr, &LocalScope::new(None, false), None, false)
     }
 
-    fn resolve_expr(&mut self, expected_type: ResolvedType, expr: &Expr, scope: &LocalScope, holes: Option<&mut [Hole]>, tail: bool) -> DefineGlobalResult {
+    fn resolve_expr(&mut self, expected_type: ResolvedType, expr: &'ast Expr, scope: &LocalScope, holes: Option<&mut [Hole]>, tail: bool) -> DefineGlobalResult {
         let (actual_type, irt_expr_type) = match &expr.expr_type {
             ExprType::QName(qn) => {
                 if let Some(local) = scope.get_from_qname(qn) {
@@ -174,11 +179,11 @@ impl ExprResolver<'_> {
         &mut self,
         expected_type: ResolvedType,
         expr: &Expr,
-        call_expr: &CallExpr,
+        call_expr: &'ast CallExpr,
         scope: &LocalScope,
         tail: bool,
     ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
-        let (params, return_type, callee) = if let ExprType::Match = &call_expr.callee.expr_type {
+        let (params, return_type, callee, mut holes) = if let ExprType::Match = &call_expr.callee.expr_type {
             return self.resolve_match_expr(expected_type, expr, &call_expr.args, scope, tail);
         } else if let ExprType::Dot = &call_expr.callee.expr_type {
             let params = if let Some(params) = &self.parameters {
@@ -194,7 +199,7 @@ impl ExprResolver<'_> {
 
             let return_type = self.expected_return_type.clone()
                 .filter(|it| it != &ResolvedType::Inferred)
-                .unwrap_or_else(|| if tail { ResolvedType::Nothing } else {ResolvedType::Inferred });
+                .unwrap_or_else(|| if tail { ResolvedType::Nothing } else { ResolvedType::Inferred });
             if return_type.is_inferred() {
                 self.context.push_error(Error {
                     message: "Cannot infer type of recursive call".to_string(),
@@ -203,7 +208,7 @@ impl ExprResolver<'_> {
                 })
             }
 
-            (params, return_type, None)
+            (params, return_type, None, None)
         } else {
             let callee_result = self.resolve_expr(ResolvedType::Callable(Box::new(expected_type)), &call_expr.callee, scope, None, false);
             let callee = match callee_result {
@@ -211,7 +216,24 @@ impl ExprResolver<'_> {
                 DefineGlobalResult::Success(callee_expr) => callee_expr,
             };
             match callee.resolved_type.clone() {
-                ResolvedType::Func { params, return_type } => (params, *return_type, Some(callee)),
+                ResolvedType::Func { num_type_params, params, return_type } => {
+                    let holes: Vec<_> = (0..num_type_params).map(|_| Hole::Empty).collect();
+
+                    let holey_params: Vec<_> = params.into_iter().map(|it| {
+                        match it {
+                            ResolvedType::TypeParam(i) => ResolvedType::Hole(i),
+                            _ => it
+                        }
+                    }).collect();
+
+                    /*let holey_rt = if let ResolvedType::TypeParam(i) = *return_type {
+                        ResolvedType::Hole(i)
+                    } else {
+                        *return_type
+                    };*/
+
+                    (holey_params, *return_type, Some(callee), Some(holes))
+                },
                 ResolvedType::Callable(et) => {
                     self.context.push_error(Error {
                         message: "Unable to infer callee type".into(),
@@ -250,7 +272,8 @@ impl ExprResolver<'_> {
             .chain(repeat(ResolvedType::Inferred))
             .zip(&call_expr.args)
             .map(|(exp_arg_type, arg_expr)| {
-                self.resolve_expr(exp_arg_type, arg_expr, scope, None, false)
+                let holes = holes.as_mut().map(|it| it.as_mut_slice());
+                self.resolve_expr(exp_arg_type, arg_expr, scope, holes, false)
             });
 
         let mut args = Vec::new();
@@ -260,16 +283,41 @@ impl ExprResolver<'_> {
                 DefineGlobalResult::Success(expr) => args.push(expr),
             }
         }
+
+        println!("callee type: {:?}", callee.as_ref().map(|it| &it.resolved_type));
+        println!("{:?}", holes);
+
+        let type_args: Vec<_> = holes.unwrap_or(Vec::new()).into_iter()
+            .map(|hole| {
+                if let Hole::Filled(rt) = hole {
+                    rt
+                } else {
+                    // TODO
+                    // this case happens where there is an unused type parameter in the function
+                    // either we need to detect and report that earlier or report an error here
+                    ResolvedType::Error
+                }
+            })
+            .collect();
+
+        let actual_return_type = if let ResolvedType::TypeParam(i) = return_type {
+            type_args[i].clone()
+        } else {
+            return_type
+        };
+
         let et = if let Some(callee) = callee {
             IrtExprType::Call {
                 callee: Box::new(callee),
+                type_args,
                 args,
             }
         } else {
             IrtExprType::RecCall { args, tail }
         };
+
         Ok((
-            return_type,
+            actual_return_type,
             et,
         ))
     }
@@ -278,7 +326,7 @@ impl ExprResolver<'_> {
         &mut self,
         expected_type: ResolvedType,
         expr: &Expr,
-        args: &[Expr],
+        args: &'ast [Expr],
         scope: &LocalScope,
         tail: bool,
     ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
@@ -299,7 +347,7 @@ impl ExprResolver<'_> {
         let mut patterns: Vec<_> = Vec::new();
         let mut arm_exprs: Vec<_> = Vec::new();
         let mut actual_type = ResolvedType::Inferred;
-        let expected_arm_type = ResolvedType::Func { params: vec![matched_expr.resolved_type.clone()], return_type: Box::new(expected_type) };
+        let expected_arm_type = ResolvedType::Func { num_type_params: 0, params: vec![matched_expr.resolved_type.clone()], return_type: Box::new(expected_type) };
         for arg in &args[1..] {
             let lambda = if let ExprType::Lambda(lambda) = &arg.expr_type {
                 lambda
@@ -321,7 +369,7 @@ impl ExprResolver<'_> {
                 continue
             }
 
-            let pattern = self.context.resolve_pattern(&lambda.params[0], Some(matched_expr.resolved_type.clone()));
+            let pattern = self.context.resolve_pattern(&lambda.params[0], Some(matched_expr.resolved_type.clone()), self.type_args);
             patterns.push(pattern);
 
             let (rrt, statements) = self.resolve_match_arm(expected_arm_type.clone(), arg, lambda, scope, tail)?;
@@ -346,7 +394,7 @@ impl ExprResolver<'_> {
         &mut self,
         expected_type: ResolvedType,
         expr: &Expr,
-        lambda_expr: &LambdaExpr,
+        lambda_expr: &'ast LambdaExpr,
         scope: &LocalScope,
         tail: bool,
     ) -> Result<(ResolvedType, Vec<Statement>), DefineGlobalResult> {
@@ -361,7 +409,7 @@ impl ExprResolver<'_> {
         &mut self,
         expected_type: ResolvedType,
         expr: &Expr,
-        lambda_expr: &LambdaExpr,
+        lambda_expr: &'ast LambdaExpr,
         scope: &LocalScope,
     ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
         let expected_return_type = match &expected_type {
@@ -369,7 +417,13 @@ impl ExprResolver<'_> {
             ResolvedType::Callable(return_type) => return_type.as_ref().clone(),
             _ => ResolvedType::Inferred,
         };
-        let mut sub_resolver = self.new_sub_resolver(expected_return_type);
+
+        let exp_num_type_params = match &expected_type {
+            ResolvedType::Func { num_type_params, .. } => Some(*num_type_params),
+            _ => None
+        };
+
+        let mut sub_resolver = self.new_sub_resolver(expected_return_type, &lambda_expr.type_params);
         let ResolvedLambdaExpr {
             return_type,
             statements,
@@ -387,7 +441,13 @@ impl ExprResolver<'_> {
             .map(|it| if self.locals.contains(&it) { FuncCapture::Local(it) } else { FuncCapture::Capture(it) } )
             .collect();
 
-        let rt = ResolvedType::Func { params, return_type: Box::new(return_type) };
+        let actual_num_type_params = if lambda_expr.type_params.is_empty() {
+            exp_num_type_params.unwrap_or(0)
+        } else {
+            lambda_expr.type_params.len()
+        };
+
+        let rt = ResolvedType::Func { num_type_params: actual_num_type_params, params, return_type: Box::new(return_type) };
         let id = self.context.define_function(rt.clone(), statements, captures);
         let irt_expr_type = IrtExprType::Func { id, captures: func_captures };
         Ok((rt, irt_expr_type))
@@ -397,13 +457,13 @@ impl ExprResolver<'_> {
         &mut self,
         expected_type: ResolvedType,
         expr: &Expr,
-        lambda_expr: &LambdaExpr,
+        lambda_expr: &'ast LambdaExpr,
         parent_scope: &LocalScope,
         capturing: bool,
         tail: bool,
     ) -> Result<ResolvedLambdaExpr, DefineGlobalResult> {
         let (expected_params, expected_return_type) = match expected_type {
-            ResolvedType::Func { params, return_type } => {
+            ResolvedType::Func { params, return_type, .. } => { // TODO do I care about num_type_params here
                 if params.len() != lambda_expr.params.len() {
                     self.context.push_error(Error {
                         message: format!("Parameter count mismatch. Expected {} Actual {}", params.len(), lambda_expr.params.len()),
@@ -432,7 +492,7 @@ impl ExprResolver<'_> {
         let params = lambda_expr.params.iter()
             .zip(expected_params.into_iter().chain(repeat(ResolvedType::Inferred)));
         for (param, expected_param_type) in params {
-            let resolved_pattern = self.context.resolve_pattern(param, Some(expected_param_type));
+            let resolved_pattern = self.context.resolve_pattern(param, Some(expected_param_type), self.type_args);
             // TODO check pattern exhaustiveness when NOT an arm of a match expr
             let resolved_type = resolved_pattern.resolved_type.clone();
             let names = resolved_pattern.extract_names();
@@ -444,7 +504,13 @@ impl ExprResolver<'_> {
                 });
             }
             let irt_expr = IrtExpr { resolved_type: resolved_type.clone(), expr_type: IrtExprType::LoadParam };
-            param_types.push(resolved_type);
+
+            let param_type = match resolved_type {
+                ResolvedType::TypeArg(i, level) if level == self.type_args.level() => ResolvedType::TypeParam(i),
+                _ => resolved_type,
+            };
+            param_types.push(param_type);
+
             let paths: Vec<_> = names.into_iter()
                 .map(|(name, declared_type, path)| {
                     let resolved_type = if path.is_empty() {
@@ -482,7 +548,7 @@ impl ExprResolver<'_> {
             }
 
             let pattern = &binding.pattern;
-            let resolved_pattern = self.context.resolve_pattern(pattern, None);
+            let resolved_pattern = self.context.resolve_pattern(pattern, None, self.type_args);
             let expected_type = resolved_pattern.resolved_type.clone();
             let names = resolved_pattern.extract_names();
             let dgr = self.resolve_expr(expected_type,  &binding.expr, &scope, None, false);
@@ -499,7 +565,7 @@ impl ExprResolver<'_> {
                     col: pattern.col,
                 });
             }
-            let resolved_pattern = self.context.resolve_pattern(pattern, Some(irt_expr.resolved_type.clone()));
+            let resolved_pattern = self.context.resolve_pattern(pattern, Some(irt_expr.resolved_type.clone()), self.type_args);
             if !self.exhaustive(std::slice::from_ref(&&resolved_pattern), irt_expr.resolved_type.clone()) {
                 self.context.push_error(Error {
                     message: "Binding pattern must be exhaustive".into(),
@@ -530,7 +596,12 @@ impl ExprResolver<'_> {
             DefineGlobalResult::NeedsType(_) => return Err(dfg),
             DefineGlobalResult::Success(irt_expr) => irt_expr,
         };
-        let return_type = irt_expr.resolved_type.clone();
+
+        // TODO go into TypeId's type arguments
+        let return_type = match irt_expr.resolved_type.clone() {
+            ResolvedType::TypeArg(i, level) if level == self.type_args.level() => ResolvedType::TypeParam(i),
+            anything_else => anything_else,
+        };
 
         statements.push(Statement::Return(irt_expr));
 
@@ -542,11 +613,11 @@ impl ExprResolver<'_> {
         expected_type: ResolvedType,
         expr: &Expr,
         named_type: Option<&NamedType>,
-        inits: &[FieldInit],
+        inits: &'ast [FieldInit],
         scope: &LocalScope,
     ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
         let actual_type = named_type
-            .map(|nt| self.context.resolve_named_type(nt, &[], expr.line, expr.col))
+            .map(|nt| self.context.resolve_new_type(nt, expr.line, expr.col))
             .unwrap_or(expected_type);
 
         let mut holes = Vec::new();
@@ -583,14 +654,6 @@ impl ExprResolver<'_> {
                     });
                     None
                 }
-            }
-            ResolvedType::TypeParam(_) => {
-                self.context.push_error(Error {
-                    message: "Can not create instance of type parameters using new".to_string(),
-                    line: expr.line,
-                    col: expr.col,
-                });
-                None
             },
             ResolvedType::Inferred => {
                 self.context.push_error(Error {

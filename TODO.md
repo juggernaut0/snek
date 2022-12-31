@@ -231,7 +231,7 @@ let unfoo: { <T> Foo<T> -> T } = { { t } -> t }
         - unify _ & builtin:Unit -> builtin:Unit
         - expr type is builtin:Unit
 
-### Generic funcs ideas
+### Generic funcs ideas - old
 
 ```
 type Pair<A B> { a: A, b: B }
@@ -310,6 +310,32 @@ let g2: { <A> A Number -> Pair<A Number> } = f
 let h1: { String Number -> Pair<String Number> } = f
 let h2: { String Number -> Pair<String Number> } = g
 ```
+
+### Nested Generic functions
+
+```
+let f = { <A> a: A ->
+    # a: TypeArg(0, 0)
+    let g = { <A> aa: A ->
+        # aa: TypeArg(0, 1)
+        aa
+    } # g: Func { num_params: 1, params: [TypeParam(0)], return_type: TypeParam(0) }
+    
+    let g2 = { <A> aa: A ->
+        a
+    } # g2: Func { num_params: 1, params: [TypeParam(0)], return_type: TypeArg(0, 0) }
+    
+    (g a) # g is specialized to Func { num_params: 0, params: [TypeArg(0, 0)], return_type: TypeArg(0, 0) }
+    # inferred return type is TypeArg(0, 0) -> TypeParam(0)
+} # f: Func { num_params: 1, params: [TypeParam(0)], return_type: TypeParam(0) }
+```
+
+TypeArg is a special placeholder ResolvedType variant but is as "concrete" as a TypeId for unification. Perhaps it also 
+holds the type parameter's name for debugging.
+
+If the inferred return-type of a function is a TypeArg with the SAME nesting level as the function's TypeResolver, it 
+gets converted into a TypeParam with the same index. If the return-type TypeArg has a nesting level LESS THAN the 
+TypeResolver, it stays as is (it is "concrete" as far as this nesting level is concerned).
 
 ### Mutability
 

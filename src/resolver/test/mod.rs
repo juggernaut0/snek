@@ -154,9 +154,9 @@ fn func_field() {
     let fields = if let TypeDefinition::Record(fields) = &t.definition { fields } else { panic!() };
     let consume = fields.first().unwrap();
     assert_eq!("consume", consume.name);
-    let (params, return_type) = if let ResolvedType::Func { params, return_type } = &consume.resolved_type { (params, return_type) } else { panic!() };
-    assert_eq!(ResolvedType::TypeParam(0), params[0]);
-    assert_eq!(ResolvedType::TypeParam(0), params[1]);
+    let (params, return_type) = if let ResolvedType::Func { num_type_params: 0, params, return_type } = &consume.resolved_type { (params, return_type) } else { panic!() };
+    assert_eq!(ResolvedType::TypeArg(0, 0), params[0]);
+    assert_eq!(ResolvedType::TypeArg(0, 0), params[1]);
     assert_eq!(&ResolvedType::Unit, return_type.as_ref());
 }
 
@@ -453,18 +453,32 @@ fn shadowing() {
 }
 
 #[test]
+fn basic_generic_funcs() {
+    let ir = assert_no_errs(resolve_from_src(include_str!("basic_generic_func.snek")));
+
+    let n = get_global(&ir.decls, "n");
+    assert_eq!(BuiltinTypeNames::number(), n.resolved_type);
+
+    let s = get_global(&ir.decls, "s");
+    assert_eq!(BuiltinTypeNames::string(), s.resolved_type);
+
+    let b = get_global(&ir.decls, "b");
+    assert_eq!(BuiltinTypeNames::boolean(), b.resolved_type);
+}
+
+#[test]
 #[ignore] // TODO need to reevaluate this file
 fn nested_generic_funcs() {
     assert_no_errs(resolve_from_src(include_str!("nested_generic_funcs.snek")));
 }
 
 #[test]
+#[ignore] // TODO need higher order generic funcs
 fn pair_constructor() {
     assert_no_errs(resolve_from_src(include_str!("pair_constructor.snek")));
 }
 
 #[test]
-#[ignore] // TODO needs generic functions
 fn generic_type_check() {
     assert_no_errs(resolve_from_src(include_str!("generic_type_check.snek")));
 }
@@ -487,6 +501,19 @@ fn tail_rec() {
 #[test]
 fn strange_recursion() {
     assert!(resolve_from_src(include_str!("strange_recursion.snek")).is_err())
+}
+
+#[test]
+fn new_record() {
+    let ir = assert_no_errs(resolve_from_src(include_str!("new_record.snek")));
+    let foo_type = get_type_decl(&ir.decls, "Foo");
+    let foo_type_id = &foo_type.id;
+
+    let foo = get_global(&ir.decls, "foo");
+    assert_eq!(ResolvedType::Id(foo_type_id.clone(), vec![]), foo.resolved_type);
+
+    let foo2 = get_global(&ir.decls, "foo2");
+    assert_eq!(ResolvedType::Id(foo_type_id.clone(), vec![]), foo2.resolved_type);
 }
 
 fn define_types(src: &str) -> Resolver {

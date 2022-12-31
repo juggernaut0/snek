@@ -89,7 +89,7 @@ impl TypeDefinition {
 pub enum ResolvedType {
     Id(TypeId, Vec<ResolvedType>),
     TypeParam(usize),
-    FTypeParam(usize, u32),
+    TypeArg(usize, u32), // (index, nest level)
     Func {
         num_type_params: usize,
         params: Vec<ResolvedType>,
@@ -104,6 +104,7 @@ pub enum ResolvedType {
     Hole(usize),
 }
 
+#[derive(Debug)]
 pub enum Hole {
     Empty,
     Fixed,
@@ -115,7 +116,9 @@ impl ResolvedType {
         match self {
             ResolvedType::Inferred => true,
             ResolvedType::Id(_, args) => args.iter().any(|rt| rt.is_inferred()),
-            ResolvedType::Func { params, return_type, .. } => params.iter().any(|rt| rt.is_inferred()) || return_type.is_inferred(),
+            ResolvedType::Func { params, return_type, .. } => {
+                params.iter().any(|rt| rt.is_inferred()) || return_type.is_inferred()
+            },
             _ => false
         }
     }
@@ -162,8 +165,8 @@ impl Display for ResolvedType {
             ResolvedType::TypeParam(id) => {
                 write!(f, "type param {}", id)
             }
-            ResolvedType::FTypeParam(id, level) => {
-                write!(f, "f type param {} {}", id, level)
+            ResolvedType::TypeArg(id, level) => {
+                write!(f, "type arg {} {}", id, level)
             }
             ResolvedType::Func { num_type_params, params, return_type } => {
                 write!(f, "{{ ")?;
@@ -218,7 +221,7 @@ impl TypeDeclLookup {
             decls: undefined_types
                 .iter()
                 .map(|ut| (ut.id.clone(), ut.visibility.clone()))
-                .chain(imported_types.into_iter().map(|td| (td.id.clone(), Vec::new()))) // Double check that imported types must have root vis
+                .chain(imported_types.into_iter().map(|td| (td.id.clone(), Vec::new())))
                 .collect()
         }
     }
@@ -235,52 +238,84 @@ impl Lookup for TypeDeclLookup {
     }
 }
 
-struct FTypeParamStack<'a> {
-    head: Rc<&'a [String]>
+#[derive(Clone, Copy)]
+pub struct TypeArgStack<'ast, 'parent> {
+    args: &'ast [String],
+    parent: Option<&'parent TypeArgStack<'ast, 'parent>>,
+    level: u32,
+}
+
+pub const TYPE_ARG_STACK_ROOT: TypeArgStack<'static, 'static> = TypeArgStack { args: &[], parent: None, level: 0 };
+
+impl<'ast> TypeArgStack<'ast, '_> {
+    pub fn push_level(&self, args: &'ast [String]) -> TypeArgStack {
+        TypeArgStack {
+            args,
+            parent: Some(self),
+            level: self.level + 1,
+        }
+    }
+
+    pub fn level(&self) -> u32 {
+        self.level
+    }
 }
 
 pub(super) trait TypeResolverContext {
     fn push_error(&mut self, error: Error);
     fn get_type(&self, qn: &QName) -> Option<(TypeId, bool)>;
-    fn get_type_param(&self, name: &str) -> Option<usize>;
+    fn get_type_arg(&self, name: &str) -> Option<usize>;
 }
 
 // turns Ast TypeName into ResolvedType
-pub(super) struct TypeResolver<'ctx, 'ftp> {
+pub(super) struct TypeResolver<'ctx, 'ast, 'args> {
     context: &'ctx mut dyn TypeResolverContext,
     function_nest_level: u32,
-    f_type_params: FTypeParamStack<'ftp>,
+    type_params: Vec<&'ast [String]>,
+    type_args: TypeArgStack<'ast, 'args>,
 }
 
-impl TypeResolver<'_, '_> {
-    pub(super) fn new<'ctx>(context: &'ctx mut dyn TypeResolverContext) -> TypeResolver<'ctx, 'static> {
+impl TypeResolver<'_, '_, '_> {
+    pub(super) fn new<'ctx, 'ast, 'args>(context: &'ctx mut dyn TypeResolverContext, type_args: TypeArgStack<'ast, 'args>) -> TypeResolver<'ctx, 'ast, 'args> {
         TypeResolver {
             context,
             function_nest_level: 0,
-            f_type_params: Vec::new(),
+            type_params: Vec::new(),
+            type_args,
         }
     }
+}
 
-    fn new_child(&mut self, f_type_params: &[String]) -> TypeResolver {
-        let f_type_params = {
-            let mut tmp: Vec<_> = self.f_type_params.iter().cloned().collect();
+impl<'ast> TypeResolver<'_, 'ast, '_> {
+    fn new_child(&mut self, f_type_params: &'ast [String]) -> TypeResolver {
+        let type_params = {
+            let mut tmp: Vec<_> = self.type_params.iter().cloned().collect();
             tmp.push(f_type_params);
             tmp
         };
         TypeResolver {
-            context: &mut self.context,
+            context: self.context,
             function_nest_level: self.function_nest_level + 1,
-            f_type_params,
+            type_params,
+            type_args: self.type_args,
         }
     }
 
-    pub(super) fn resolve_binding_type(&mut self, type_name: &TypeName) -> ResolvedType {
+    pub(super) fn resolve_binding_type(&mut self, type_name: &'ast TypeName) -> ResolvedType {
         match &type_name.type_name_type {
             TypeNameType::Named(nt) => {
                 self.resolve_named_type(nt, type_name.line, type_name.col)
             },
             TypeNameType::Func(ft) => {
                 let num_type_params = ft.type_params.len();
+
+                if self.function_nest_level > 0 && num_type_params > 0 {
+                    self.context.push_error(Error {
+                        message: "Generic functions as function parameters or return types are not supported".to_string(),
+                        line: type_name.line,
+                        col: type_name.col,
+                    })
+                }
 
                 let mut subresolver = self.new_child(&ft.type_params);
                 let params = ft.params.iter()
@@ -297,20 +332,36 @@ impl TypeResolver<'_, '_> {
         }
     }
 
-    fn resolve_named_type(&mut self, named_type: &NamedType, line: u32, col: u32) -> ResolvedType {
-        // If the name is not a qualified name and has no args of its own, it may be a type param
+    // resolve the NamedType that appears in a "new" expression
+    pub(super) fn resolve_new_type(&mut self, named_type: &'ast NamedType, line: u32, col: u32) -> ResolvedType {
+        match self.resolve_named_type(named_type, line, col) {
+            ResolvedType::TypeArg(_, _) => {
+                self.context.push_error(Error {
+                    message: "Can not create instance of type arguments using new".to_string(),
+                    line,
+                    col,
+                });
+                ResolvedType::Error
+            },
+            ok @ (ResolvedType::Error | ResolvedType::Id(_, _)) => ok,
+            otherwise => panic!("unexpected resolved type from resolved_named_type: {:?}", otherwise)
+        }
+    }
+
+    fn resolve_named_type(&mut self, named_type: &'ast NamedType, line: u32, col: u32) -> ResolvedType {
+        // If the name is not a qualified name and has no args of its own, it may be a type param or a type arg
         if named_type.name.parts.len() == 1 && named_type.type_args.is_empty() {
             let name = &named_type.name.parts[0];
-            if let Some(tpi) = self.find_type_param(name) {
+            if let Some((tpi, _)) = self.find_type_param(name) {
                 return ResolvedType::TypeParam(tpi);
-            } else if let Some((tpi, level)) = self.find_f_tye_param(name) {
-                return ResolvedType::FTypeParam(tpi, level);
+            } else if let Some((tai, level)) = self.find_type_arg(name) {
+                return ResolvedType::TypeArg(tai, level);
             }
         }
 
         if let Some((id, visible)) = self.context.get_type(&named_type.name) {
             if !visible {
-                self.errors.push(Error {
+                self.context.push_error(Error {
                     message: format!("Cannot access type '{}'", &named_type.name.parts.join(".")),
                     line,
                     col,
@@ -321,7 +372,7 @@ impl TypeResolver<'_, '_> {
                 .collect();
             ResolvedType::Id(id, args)
         } else {
-            self.errors.push(Error {
+            self.context.push_error(Error {
                 message: format!("Unknown type name '{}'", &named_type.name.parts.join(".")),
                 line,
                 col,
@@ -330,11 +381,23 @@ impl TypeResolver<'_, '_> {
         }
     }
 
-    fn find_f_tye_param(&self, name: &str) -> Option<(usize, u32)> {
-        for (level, names) in self.f_type_params.iter().rev().enumerate() {
+    fn find_type_param(&self, name: &str) -> Option<(usize, u32)> {
+        for (level, names) in self.type_params.iter().rev().enumerate() {
             if let Some(i) = names.iter().position(|it| name == it) {
                 return Some((i, level as u32))
             }
+        }
+        None
+    }
+
+    fn find_type_arg(&self, name: &str) -> Option<(usize, u32)> {
+        let mut opt_head = Some(self.type_args);
+        while let Some(head) = opt_head {
+            let i = head.args.iter().position(|it| it.as_str() == name);
+            if let Some(i) = i {
+                return Some((i, head.level));
+            }
+            opt_head = head.parent.copied()
         }
         None
     }

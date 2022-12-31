@@ -44,7 +44,7 @@ binary_op = '+' | '-' | '*' | '/' | '<=' | '<' | '>=' | '>' | '==' | '!=' | '&&'
 unary_expr = unary_op* expr
 unary_op = '+' | '-' | '!'
 qualified_name = IDENT ('.' IDENT)*
-lambda = '{' pattern* '->' block '}'
+lambda = '{' type_params? pattern* '->' block '}'
 list_expr = '[' expr* ']'
 const_literal = NUMBER | STRING | 'true' | 'false' | '(' ')'
 

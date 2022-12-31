@@ -93,7 +93,7 @@ impl ExhaustivenessChecker<'_> {
                     matches!(&pattern.pattern_type, PatternType::Constant(Constant::Unit))
                 })
             }
-            ResolvedType::TypeParam(_) | ResolvedType::Func { .. } | ResolvedType::Callable(_) | ResolvedType::Any => false,
+            ResolvedType::TypeParam(_) | ResolvedType::TypeArg(_, _) | ResolvedType::Func { .. } | ResolvedType::Callable(_) | ResolvedType::Any => false,
             ResolvedType::Nothing => true,
             ResolvedType::Inferred => false,
             ResolvedType::Hole(_) => false,

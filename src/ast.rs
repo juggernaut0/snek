@@ -238,6 +238,7 @@ pub struct CallExpr {
 }
 
 pub struct LambdaExpr {
+    pub type_params: Vec<String>,
     pub params: Vec<Pattern>,
     pub bindings: Vec<Binding>,
     pub expr: Box<Expr>

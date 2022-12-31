@@ -6,3 +6,6 @@ let f = { <A B> e: Either<A B> ->
         { _: B -> (println "It was the second") }
     )
 }
+
+let n: Either<Number String> = 1
+let _ = (f n)

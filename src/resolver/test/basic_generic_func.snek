@@ -1,0 +1,9 @@
+let f: { <T> T -> T } = { t -> t }
+let n = (f 2)
+let s = (f "")
+
+let g = { <T> t: T ->
+    let t2: T = t
+    t2
+}
+let b = (g true)
