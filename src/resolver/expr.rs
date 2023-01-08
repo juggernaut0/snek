@@ -505,11 +505,11 @@ impl<'ast> ExprResolver<'_, 'ast, '_> {
             }
             let irt_expr = IrtExpr { resolved_type: resolved_type.clone(), expr_type: IrtExprType::LoadParam };
 
-            let param_type = match resolved_type {
-                ResolvedType::TypeArg(i, level) if level == self.type_args.level() => ResolvedType::TypeParam(i),
-                _ => resolved_type,
-            };
-            param_types.push(param_type);
+            if capturing {
+                let mut param_type = resolved_type;
+                param_type.generify(self.type_args.level());
+                param_types.push(param_type);
+            }
 
             let paths: Vec<_> = names.into_iter()
                 .map(|(name, declared_type, path)| {
@@ -597,11 +597,10 @@ impl<'ast> ExprResolver<'_, 'ast, '_> {
             DefineGlobalResult::Success(irt_expr) => irt_expr,
         };
 
-        // TODO go into TypeId's type arguments
-        let return_type = match irt_expr.resolved_type.clone() {
-            ResolvedType::TypeArg(i, level) if level == self.type_args.level() => ResolvedType::TypeParam(i),
-            anything_else => anything_else,
-        };
+        let mut return_type = irt_expr.resolved_type.clone();
+        if capturing {
+            return_type.generify(self.type_args.level());
+        }
 
         statements.push(Statement::Return(irt_expr));
 
@@ -616,6 +615,8 @@ impl<'ast> ExprResolver<'_, 'ast, '_> {
         inits: &'ast [FieldInit],
         scope: &LocalScope,
     ) -> Result<(ResolvedType, IrtExprType), DefineGlobalResult> {
+        println!("resolving new expr exp: {:?}", expected_type);
+
         let actual_type = named_type
             .map(|nt| self.context.resolve_new_type(nt, expr.line, expr.col))
             .unwrap_or(expected_type);
@@ -623,26 +624,19 @@ impl<'ast> ExprResolver<'_, 'ast, '_> {
         let mut holes = Vec::new();
         let fields = match actual_type.clone() {
             ResolvedType::Id(id, args) => {
-                holes = args.iter()
+                let typ = self.context.get_type_decl(&id);
+                let holey_args: Vec<_> = (0..args.len()).map(|i| ResolvedType::Hole(i)).collect();
+                let def = typ.definition.clone().instantiate_into(&holey_args);
+
+                holes = args.into_iter()
                     .map(|arg| {
                         match arg {
                             ResolvedType::Inferred => Hole::Empty,
-                            ResolvedType::Hole(_) => Hole::Empty,
-                            _ => Hole::Fixed
+                            ResolvedType::Hole(_) => Hole::Empty, // TODO make a note of when this happens
+                            _ => Hole::Fixed(arg)
                         }
                     })
                     .collect();
-                let typ = self.context.get_type_decl(&id);
-                let holey_args: Vec<_> = args.into_iter()
-                    .enumerate()
-                    .map(|(i, arg)| {
-                        match arg {
-                            ResolvedType::Inferred => ResolvedType::Hole(i),
-                            _ => arg
-                        }
-                    })
-                    .collect();
-                let def = typ.definition.clone().instantiate_into(&holey_args);
 
                 if let TypeDefinition::Record(fields) = def {
                     Some((fields, typ))
@@ -703,11 +697,13 @@ impl<'ast> ExprResolver<'_, 'ast, '_> {
             let v = init_to_field.remove(field_name).expect("field in order but not map");
             match v {
                 (Some(init_expr), Some(expected_field_type)) => {
+                    println!("resolving init_expr {} exp: {:?}", field_name, expected_field_type);
                     let dgr = self.resolve_expr(expected_field_type, init_expr, scope, Some(&mut holes), false);
                     let e = match dgr {
                         DefineGlobalResult::Success(e) => e,
                         _ => return Err(dgr)
                     };
+                    println!("init_expr {} has type {:?}", field_name, e.resolved_type);
                     field_inits.push((field_name.clone(), e));
                 }
                 (None, Some(_)) => {
@@ -740,7 +736,7 @@ impl<'ast> ExprResolver<'_, 'ast, '_> {
                     .map(|(arg, hole)| {
                         match hole {
                             Hole::Empty => panic!("unfilled hole"),
-                            Hole::Fixed => arg,
+                            Hole::Fixed(t) => t,
                             Hole::Filled(t) => t,
                         }
                     })
@@ -749,6 +745,8 @@ impl<'ast> ExprResolver<'_, 'ast, '_> {
             }
             _ => actual_type
         };
+
+        println!("new expr had resolved type {:?}", resolved_type);
 
         Ok((resolved_type, IrtExprType::New { field_inits }))
     }

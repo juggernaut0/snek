@@ -374,6 +374,11 @@ fn nested_holes() {
 }
 
 #[test]
+fn nested_holes_crazy() {
+    assert_no_errs(resolve_from_src(include_str!("nested_holes_crazy.snek")));
+}
+
+#[test]
 fn merged_holes() {
     assert_no_errs(resolve_from_src(include_str!("merged_holes.snek")));
 }
@@ -396,6 +401,11 @@ fn union_case_unification() {
 #[test]
 fn union_case_mismatch() {
     assert!(resolve_from_src(include_str!("union_case_mismatch.snek")).is_err());
+}
+
+#[test]
+fn union_reassign() {
+    assert_no_errs(resolve_from_src(include_str!("union_reassign.snek")));
 }
 
 #[test]

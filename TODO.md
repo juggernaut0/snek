@@ -231,6 +231,73 @@ let unfoo: { <T> Foo<T> -> T } = { { t } -> t }
         - unify _ & builtin:Unit -> builtin:Unit
         - expr type is builtin:Unit
 
+### Holes is currently broken for new expr and functions
+
+Need to rewrite algorithm to below:
+
+Example 1:
+
+```
+type A<T> { t: T }
+type B<T U> { u: U, a: A<T> }
+
+let x: B<_ _> = new { u: true, a: new { t: 0 } }
+```
+
+```
+resolve new expr: expected B<_ _>
+    B type is looked up, has two type params
+    holes = [hole(0), hole(1)]
+    field map created: { u: _ + hole(1), a: A<_ + hole(0)> }
+    resolve field init of u: expected type _ + hole(1)
+        resolve boolean literal: expected _ + hole(1) actual Boolean
+            resolved: Boolean
+            fill hole(1) with Boolean
+    resolve field init of a: exp A<_ + hole(0)>
+        resolve new expr: expected A<_ + hole(0)>
+            A type is looked up, has one type param
+            holes = [hole(42)]
+            field map: { t: _ + hole(0) + hole(42) }
+            resolve field init of t: expected type _ + hole(0) + hole(42)
+                resolve Number literal
+                    resolved: Number
+                    fill hole(42) with Number
+                    fill Hole(0) with Number
+            extract filled holes: [Number]
+            resolved A<Number>
+    extract filled holes: [A<Number, Boolean]
+    resolved: B<A<Number> Boolean>
+```
+
+Example 2:
+
+```
+type A<T> { t: T }
+type B<T U> { u: U, a: T }
+
+let x: B<A<_> _> = new { u: true, a: new { t: 0 } }
+```
+
+```
+resolve new expr: expected B<A<_> _>
+    B type is looked up, has two type params
+    holes = [hole(0), hole(1)]
+    field map created: { u: _ + hole(1), a: A<_> + hole(0) }
+    resolve field init of u: expected type _ + hole(1)
+        resolve boolean literal: expected _ + hole(1) actual Boolean
+            resolved: Boolean
+            fill hole(1) with Boolean
+    resolve field init of a: exp A<_> + hole(0)
+        resolve new expr: expected A<_> + hole(0)
+            A type is looked up, has one type param
+            ...
+            resolved A<Number>
+            fill hole(0) with A<Number>
+    extract filled holes: [A<Number, Boolean]
+    resolved: B<A<Number> Boolean>
+```
+
+
 ### Generic funcs ideas - old
 
 ```

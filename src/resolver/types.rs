@@ -107,8 +107,8 @@ pub enum ResolvedType {
 #[derive(Debug)]
 pub enum Hole {
     Empty,
-    Fixed,
-    Filled(ResolvedType),
+    Fixed(ResolvedType), // predetermined type that will not merge
+    Filled(ResolvedType), // filled by unification, can merge
 }
 
 impl ResolvedType {
@@ -146,6 +146,23 @@ impl ResolvedType {
                 return_type.instantiate(args);
             },
             _other => {}
+        }
+    }
+
+    pub fn generify(&mut self, level: u32) {
+        match self {
+            ResolvedType::TypeArg(i, l) if *l == level => *self = ResolvedType::TypeParam(*i),
+            ResolvedType::Id(_, my_args) => {
+                my_args.iter_mut().for_each(|it| it.generify(level));
+            },
+            ResolvedType::Func { params, return_type, .. } => {
+                params.iter_mut().for_each(|it| it.generify(level));
+                return_type.generify(level);
+            }
+            ResolvedType::Callable(return_type) => {
+                return_type.generify(level);
+            }
+            _ => {}
         }
     }
 }

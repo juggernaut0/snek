@@ -25,19 +25,42 @@ impl Unifier<'_, '_> {
         errors.is_empty()
     }
 
+    fn require_holes(&mut self) -> &mut [Hole] {
+        self.holes.as_mut().expect("tried to get a hole but there were none")
+    }
+
     // TODO generalize "allow_any" to also disallow unions
     fn unify_impl(&mut self, errors: &mut Vec<Error>, expected: ResolvedType, actual: ResolvedType, allow_any: bool) -> ResolvedType {
+        #[cfg(debug_assertions)]
+        {
+            println!("unify exp: {:?} actual: {:?}", expected, actual);
+        }
+        if let ResolvedType::Hole(_) = actual {
+            panic!("hole in actual")
+        }
         match (expected, actual) {
             (ResolvedType::Inferred, actual) => actual,
             (ResolvedType::Hole(i), actual) => {
-                if let Some(holes) = &mut self.holes {
+                let holes = self.require_holes();
+                let ex =
                     match &mut holes[i] {
-                        hole @ Hole::Empty => *hole = Hole::Filled(actual.clone()),
-                        Hole::Filled(ex) => merge(ex, actual.clone()),
-                        Hole::Fixed => panic!("tried to fill a fixed hole"),
-                    }
+                        hole @ Hole::Empty => {
+                            *hole = Hole::Filled(actual.clone());
+                            None
+                        },
+                        Hole::Filled(ex) => {
+                            merge(ex, actual.clone());
+                            None
+                        },
+                        Hole::Fixed(ex) => Some(ex.clone()),
+                    };
+                if let Some(ex) = ex {
+                    let rt = self.unify_impl(errors, ex, actual.clone(), allow_any);
+                    self.require_holes()[i] = Hole::Fixed(rt.clone());
+                    rt
+                } else {
+                    actual
                 }
-                actual
             },
             (ResolvedType::Any, _) if allow_any => ResolvedType::Any,
             (expected, ResolvedType::Nothing) => expected,
@@ -93,32 +116,26 @@ impl Unifier<'_, '_> {
     fn unify_id(&mut self, errors: &mut Vec<Error>, e_id: TypeId, e_type_args: Vec<ResolvedType>, actual: ResolvedType, allow_any: bool) -> ResolvedType {
         let def = self.type_store.get_type(&e_id).definition.clone().instantiate_into(&e_type_args);
 
-        match def {
-            TypeDefinition::Record(_) | TypeDefinition::Primitive => {
-                if let ResolvedType::Id(a_id, a_type_args) = actual {
-                    if e_id != a_id {
-                        self.add_unify_error(errors, ResolvedType::Id(e_id, e_type_args), ResolvedType::Id(a_id, a_type_args))
-                    } else {
-                        let unified_args = e_type_args
-                            .into_iter()
-                            .zip(a_type_args)
-                            .map(|(e, a)| self.unify_impl(errors, e, a, allow_any))
-                            .collect();
-                        ResolvedType::Id(e_id, unified_args)
-                    }
-                } else {
-                    self.add_unify_error(errors, ResolvedType::Id(e_id, e_type_args), actual)
-                }
-            }
-            TypeDefinition::Union(cases) => {
-                for case in cases {
-                    if self.unifies(case, actual.clone()) {
-                        return ResolvedType::Id(e_id, e_type_args)
-                    }
-                }
-                self.add_unify_error(errors, ResolvedType::Id(e_id, e_type_args), actual)
+        if let ResolvedType::Id(a_id, a_type_args) = actual.clone() {
+            if e_id == a_id {
+                let unified_args = e_type_args
+                    .into_iter()
+                    .zip(a_type_args)
+                    .map(|(e, a)| self.unify_impl(errors, e, a, allow_any))
+                    .collect();
+                return ResolvedType::Id(e_id, unified_args)
             }
         }
+
+        if let TypeDefinition::Union(cases) = def {
+            for case in cases {
+                if self.unifies(case, actual.clone()) {
+                    return ResolvedType::Id(e_id, e_type_args)
+                }
+            }
+        }
+
+        self.add_unify_error(errors, ResolvedType::Id(e_id, e_type_args), actual)
     }
 
     fn add_unify_error(&self, errors: &mut Vec<Error>, expected: ResolvedType, actual: ResolvedType) -> ResolvedType {
